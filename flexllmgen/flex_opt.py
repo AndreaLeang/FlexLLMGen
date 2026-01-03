@@ -678,6 +678,7 @@ class OptLM:
         self.layers[j].init_cache_one_gpu_batch(self.cache_home[j][k])
 
     def load_cache(self, i, j, k, overlap=True):
+        print("loading cache rn")
         # Handle corner cases
         if i == 0:  # prefill, no cache
             return
@@ -698,6 +699,7 @@ class OptLM:
             self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
 
     def store_cache(self, i, j, k, overlap=True):
+        print("storing cache rn")
         # Handle corner cases
         if k == -1:
             k = self.num_gpu_batches - 1
@@ -726,6 +728,7 @@ class OptLM:
                 x.delete()
 
     def load_hidden(self, i, j, k):
+        
         # Handle corner cases
         if k == self.num_gpu_batches:
             k = 0
