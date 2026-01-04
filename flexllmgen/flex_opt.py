@@ -1235,6 +1235,10 @@ def run_flexllmgen(args):
                                       group_dim=2, symmetric=False))
     assert not (args.compress_cache and args.attn_sparsity < 1.0), "Not implemented"
 
+    print(f"policy gpu cache percent: {policy.cache_gpu_percent}")
+    print(f"policy cpu cache percent: {policy.cache_cpu_percent}")
+    
+
     opt_config = get_opt_config(args.model)
     cache_size = opt_config.cache_bytes(num_prompts, prompt_len + gen_len)
     hidden_size = opt_config.hidden_bytes(num_prompts, prompt_len + gen_len)
