@@ -678,7 +678,7 @@ class OptLM:
         self.layers[j].init_cache_one_gpu_batch(self.cache_home[j][k])
 
     def load_cache(self, i, j, k, overlap=True):
-        print("loading cache rn")
+        # print("loading cache rn")
         # Handle corner cases
         if i == 0:  # prefill, no cache
             return
@@ -699,7 +699,7 @@ class OptLM:
             self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
 
     def store_cache(self, i, j, k, overlap=True):
-        print("storing cache rn")
+        
         # Handle corner cases
         if k == -1:
             k = self.num_gpu_batches - 1
@@ -1184,6 +1184,7 @@ def run_flexllmgen(args):
     if args.model == "facebook/galactica-30b":
         tokenizer = AutoTokenizer.from_pretrained("facebook/galactica-30b", padding_side="left")
     else:
+        # tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
         tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", padding_side="left")
     num_prompts = args.num_gpu_batches * args.gpu_batch_size
     prompt_len, gen_len, cut_gen_len = args.prompt_len, args.gen_len, args.cut_gen_len
