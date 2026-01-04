@@ -29,21 +29,52 @@ class OptConfig:
     layer_norm_eps: float = 0.00001
     pad_token_id: int = 1
     dtype: type = np.float16
+    # For GQA (Grouped-Query Attention) models like Qwen3
+    # If None, assumes standard multi-head attention (num_kv_heads = n_head)
+    num_kv_heads: int = None
 
     def model_bytes(self):
         h = self.input_dim
-        return 	2 * (self.num_hidden_layers * (
-        # self-attention
-        h * (3 * h + 1) + h * (h + 1) +
-        # mlp
-        h * (4 * h + 1) + h * 4 * (h + 1) +
-        # layer norm
-        h * 4) +
-        # embedding
-        self.vocab_size * (h + 1))
+        # Check if this is a GQA model (Qwen3 architecture)
+        if self.num_kv_heads is not None and self.num_kv_heads != self.n_head:
+            # Qwen3 architecture with GQA
+            # Attention weights:
+            # Q: (num_query_heads * head_dim) x hidden_size = h x h, with bias h
+            # K: (num_kv_heads * head_dim) x hidden_size = (h * num_kv_heads/n_head) x h, with bias (h * num_kv_heads/n_head)
+            # V: same as K
+            # Out: h x h, with bias h
+            kv_dim = h * self.num_kv_heads // self.n_head
+            attention_bytes = (h * h + h) + (kv_dim * h + kv_dim) + (kv_dim * h + kv_dim) + (h * h + h)
+            # MLP: gate_proj (h*ffn), up_proj (h*ffn), down_proj (ffn*h)
+            # Qwen typically has biases for gate and up, but not down
+            mlp_bytes = (h * self.ffn_embed_dim + self.ffn_embed_dim) + (h * self.ffn_embed_dim + self.ffn_embed_dim) + (self.ffn_embed_dim * h)
+            # RMSNorm: weight only (h), 2 per layer (attention norm + MLP norm)
+            norm_bytes = h * 2
+            # Embedding: input embedding only (output embedding is separate in Qwen)
+            embedding_bytes = self.vocab_size * h
+            return 2 * (self.num_hidden_layers * (attention_bytes + mlp_bytes + norm_bytes) + embedding_bytes)
+        else:
+            # Standard OPT architecture
+            return 	2 * (self.num_hidden_layers * (
+            # self-attention
+            h * (3 * h + 1) + h * (h + 1) +
+            # mlp
+            h * (4 * h + 1) + h * 4 * (h + 1) +
+            # layer norm
+            h * 4) +
+            # embedding
+            self.vocab_size * (h + 1))
 
     def cache_bytes(self, batch_size, seq_len):
-        return 2 * batch_size * seq_len * self.num_hidden_layers * self.input_dim * 2
+        # For GQA models, KV cache is smaller (only num_kv_heads instead of n_head)
+        if self.num_kv_heads is not None and self.num_kv_heads != self.n_head:
+            # GQA: cache size is reduced by ratio of num_kv_heads / n_head
+            kv_ratio = self.num_kv_heads / self.n_head
+            # K and V cache: batch_size * seq_len * num_hidden_layers * (input_dim * kv_ratio) * 2
+            return 2 * batch_size * seq_len * self.num_hidden_layers * self.input_dim * kv_ratio * 2
+        else:
+            # Standard multi-head attention
+            return 2 * batch_size * seq_len * self.num_hidden_layers * self.input_dim * 2
 
     def hidden_bytes(self, batch_size, seq_len):
         return batch_size * seq_len * self.input_dim * 2
@@ -118,6 +149,20 @@ def get_opt_config(name, **kwargs):
         config = OptConfig(name=name,
             max_seq_len=2048, num_hidden_layers=24, n_head=96,
             hidden_size=12288, input_dim=12288, ffn_embed_dim=12288 * 4,
+        )
+    elif arch_name == "qwen3-8b" or arch_name == "qwen3-8b-base":
+        config = OptConfig(name=name,
+            max_seq_len=32768,  # Native context length, can be limited to 2048 for compatibility
+            num_hidden_layers=36,
+            n_head=32,  # Number of query heads
+            num_kv_heads=8,  # Number of key-value heads (GQA)
+            hidden_size=4096,
+            input_dim=4096,
+            ffn_embed_dim=12288,  # 3x hidden_size (not 4x like OPT)
+            vocab_size=151936,
+            activation_fn='silu',  # SiLU instead of ReLU
+            layer_norm_eps=1e-6,  # RMSNorm epsilon
+            pad_token_id=151643,  # Qwen3 pad token ID
         )
     else:
         raise ValueError(f"Invalid model name: {name}")

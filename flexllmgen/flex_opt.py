@@ -335,7 +335,7 @@ class SelfAttention:
         cache = device.init_cache_one_gpu_batch(self.config, self.task, self.policy)
         cache_home.store(cache)
 
-    def load_cache(self, cache_home, cache_read_buf, i):
+    def load_cache(self, cache_home, cache_read_buf, i, decoding=False):
         if i == 0:  # prefill, no cache
             return
 
@@ -402,7 +402,7 @@ class SelfAttention:
         else:
             raise ValueError(f"Invalid path: {path}")
 
-    def store_cache(self, cache_home, cache_write_buf, i):
+    def store_cache(self, cache_home, cache_write_buf, i, decoding=False):
         # shape: (s, b * n_head, head_dim)
         k_home, v_home = cache_home.val
         k_new, v_new = cache_write_buf.pop()
@@ -413,13 +413,14 @@ class SelfAttention:
         if i == 0:  # prefill
             indices = (slice(0, k_new.shape[0]),
                        slice(0, k_new.shape[1]))
+            kv_copy = 0 # prefill, not kv cache storage
         else:  # decoding
             pos = self.task.prompt_len + i
             indices = (slice(pos - k_new.shape[0], pos),
                        slice(0, k_new.shape[1]))
-
-        general_copy(k_home, indices, k_new, None, 2)
-        general_copy(v_home, indices, v_new, None, 2)
+            kv_copy = 2 # kv cache storage
+        general_copy(k_home, indices, k_new, None, kv_copy)
+        general_copy(v_home, indices, v_new, None, kv_copy)
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
         return (batch_size, seq_len, self.config.input_dim), self.config.dtype
@@ -677,7 +678,8 @@ class OptLM:
     def init_cache(self, j, k):
         self.layers[j].init_cache_one_gpu_batch(self.cache_home[j][k])
 
-    def load_cache(self, i, j, k, overlap=True):
+    def load_cache(self, i, j, k, overlap=True, decodingLoadTimer=None):
+        # timer to record loading cache is used here
         # print("loading cache rn")
         # Handle corner cases
         if i == 0:  # prefill, no cache
@@ -691,15 +693,19 @@ class OptLM:
             if i == self.execute_gen_len:
                 return
 
+        if decodingLoadTimer is not None:
+            decodingLoadTimer.start()
         # Load from cache_home to cache_read_buf
         if overlap:
             with torch.cuda.stream(self.load_cache_stream):
                 self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
         else:
             self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
+        if decodingLoadTimer is not None:
+            decodingLoadTimer.stop()
 
-    def store_cache(self, i, j, k, overlap=True):
-        
+    def store_cache(self, i, j, k, overlap=True, decodingStoreTimer=None):
+        # timer to record storing cache is used here
         # Handle corner cases
         if k == -1:
             k = self.num_gpu_batches - 1
@@ -713,6 +719,8 @@ class OptLM:
             self.cache_write_buf[j][k].pop()
             return
 
+        if decodingStoreTimer is not None:
+            decodingStoreTimer.start()
         # Store cache_write_buf to cache_home
         # Delete cache_write_buf
         if overlap:
@@ -720,6 +728,8 @@ class OptLM:
                 self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i)
         else:
             self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i)
+        if decodingStoreTimer is not None:
+            decodingStoreTimer.stop()
 
     def delete_cache(self, j, k):
         v = self.cache_home[j][k].pop()
@@ -943,6 +953,9 @@ class OptLM:
         timers("store_cache_decoding").reset()
         timers("compute_layer_prefill").reset()
         timers("compute_layer_decoding").reset()
+
+        timers("decodingKVLoadTimer").reset()
+        timers("decodingKVStoreTimer").reset()
         load_weight_timer = timers("load_weight")
 
         for i in range(self.execute_gen_len):
@@ -951,10 +964,14 @@ class OptLM:
                 load_cache_timer = timers("load_cache_prefill")
                 store_cache_timer = timers("store_cache_prefill")
                 compute_layer_timer = timers("compute_layer_prefill")
+                load_kv_cache_timer = None
+                store_kv_cache_timer = None
             else:
                 load_cache_timer = timers("load_cache_decoding")
                 store_cache_timer = timers("store_cache_decoding")
                 compute_layer_timer = timers("compute_layer_decoding")
+                load_kv_cache_timer = timers("decodingKVLoadTimer")
+                store_kv_cache_timer = timers("decodingKVStoreTimer")
 
             for k in range(self.num_gpu_batches):
                 self.update_attention_mask(i, k)
@@ -969,7 +986,7 @@ class OptLM:
 
                 for k in range(self.num_gpu_batches):
                     load_cache_timer.start(self.sync)
-                    self.load_cache(i, j, k)
+                    self.load_cache(i, j, k, load_kv_cache_timer)
                     load_cache_timer.stop(self.sync)
                     self.load_hidden(i, j, k)
                     compute_layer_timer.start(self.sync)
@@ -977,7 +994,7 @@ class OptLM:
                     compute_layer_timer.stop(self.sync)
                     self.store_hidden(i, j, k)
                     store_cache_timer.start(self.sync)
-                    self.store_cache(i, j, k)
+                    self.store_cache(i, j, k, store_kv_cache_timer)
                     store_cache_timer.stop(self.sync)
 
                 if i > 0:
@@ -1010,6 +1027,10 @@ class OptLM:
                 name = func + "_" + stage
                 costs = timers(name).costs
                 print(f"{name:22s} (per-batch): {np.mean(costs):.6f} s")
+        print(f"KV Cache Load Time: "
+              f"{np.mean(timers('decodingKVLoadTimer').costs):.6f} s")
+        print(f"KV Cache Store Time: "
+              f"{np.mean(timers('decodingKVStoreTimer').costs):.6f} s")
 
     def generation_loop_overlap_single_batch(self):
         # Prologue
@@ -1184,8 +1205,8 @@ def run_flexllmgen(args):
     if args.model == "facebook/galactica-30b":
         tokenizer = AutoTokenizer.from_pretrained("facebook/galactica-30b", padding_side="left")
     else:
-        # tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
-        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", padding_side="left")
+        tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
+        # tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", padding_side="left")
     num_prompts = args.num_gpu_batches * args.gpu_batch_size
     prompt_len, gen_len, cut_gen_len = args.prompt_len, args.gen_len, args.cut_gen_len
 
@@ -1270,7 +1291,7 @@ def run_flexllmgen(args):
 
     log_str = write_benchmark_log(filename,
         opt_config.model_bytes(), cache_size, hidden_size,
-        gpu_peak_mem, projected, prefill_latency, prefill_throughput,
+        gpu_peak_mem, cpu_peak_mem, projected, prefill_latency, prefill_throughput,
         decode_latency, decode_throughput, total_latency, total_throughput)
     if args.verbose >= 1:
         print(log_str)
