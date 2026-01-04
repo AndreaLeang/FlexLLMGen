@@ -508,10 +508,10 @@ class MLP:
     def init_cache_one_gpu_batch(self, cache_home):
         pass  # do nothing
 
-    def load_cache(self, cache_home, cache_read_buf, i):
+    def load_cache(self, cache_home, cache_read_buf, i, KVLoadTimer=None):
         pass  # do nothing
 
-    def store_cache(self, cache_home, cache_write_buf, i):
+    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
         pass  # do nothing
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
@@ -562,11 +562,11 @@ class TransformerLayer:
     def init_cache_one_gpu_batch(self, cache_home):
         self.attention.init_cache_one_gpu_batch(cache_home)
 
-    def load_cache(self, cache_home, cache_read_buf, i):
-        self.attention.load_cache(cache_home, cache_read_buf, i)
+    def load_cache(self, cache_home, cache_read_buf, i, KVLoadTimer=None):
+        self.attention.load_cache(cache_home, cache_read_buf, i, KVLoadTimer=KVLoadTimer)
 
-    def store_cache(self, cache_home, cache_write_buf, i):
-        self.attention.store_cache(cache_home, cache_write_buf, i)
+    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
+        self.attention.store_cache(cache_home, cache_write_buf, i, KVStoreTimer=KVStoreTimer)
 
     def forward(self, hidden, cache_read_buf, weight_read_buf, attention_mask,
                 cache_write_buf, i, k):
@@ -680,7 +680,7 @@ class OptLM:
     def init_cache(self, j, k):
         self.layers[j].init_cache_one_gpu_batch(self.cache_home[j][k])
 
-    def load_cache(self, i, j, k, overlap=True, decodingLoadTimer=None):
+    def load_cache(self, i, j, k, overlap=True, KVLoadTimer=None):
         # timer to record loading cache is used here
         # Handle corner cases
         if i == 0:  # prefill, no cache
@@ -695,18 +695,16 @@ class OptLM:
                 return
 
         print(f"loading cache rn")
-        print(f"decodingLoadTimer: {decodingLoadTimer}")
-        if decodingLoadTimer is not None:
-            decodingLoadTimer.start()
+        print(f"KVLoadTimer: {KVLoadTimer}")
         # Load from cache_home to cache_read_buf
         if overlap:
             with torch.cuda.stream(self.load_cache_stream):
-                self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i, decodingLoadTimer)
+                self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i, KVLoadTimer)
         else:
-            self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i, decodingLoadTimer)
+            self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i, KVLoadTimer)
         
 
-    def store_cache(self, i, j, k, overlap=True, decodingStoreTimer=None):
+    def store_cache(self, i, j, k, overlap=True, KVStoreTimer=None):
         # timer to record storing cache is passed here
         # Handle corner cases
         if k == -1:
@@ -725,9 +723,9 @@ class OptLM:
         # Delete cache_write_buf
         if overlap:
             with torch.cuda.stream(self.store_cache_stream):
-                self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, decodingStoreTimer)
+                self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer)
         else:
-            self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, decodingStoreTimer)
+            self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer)
         
 
     def delete_cache(self, j, k):
