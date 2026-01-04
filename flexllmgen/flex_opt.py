@@ -168,10 +168,10 @@ class InputEmbed:
     def init_cache_one_gpu_batch(self, cache_home):
         pass  # do nothing
 
-    def load_cache(self, cache_home, cache_read_buf, i):
+    def load_cache(self, cache_home, cache_read_buf, i, KVLoadTimer=None):
         pass  # do nothing
 
-    def store_cache(self, cache_home, cache_write_buf, i):
+    def store_cache(self, cache_home, cache_write_buf, i, kvStoreTimer=None):
         pass  # do nothing
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
@@ -236,10 +236,10 @@ class OutputEmbed:
     def init_cache_one_gpu_batch(self, cache_home):
         pass  # do nothing
 
-    def load_cache(self, cache_home, cache_read_buf, i):
+    def load_cache(self, cache_home, cache_read_buf, i, KVLoadTimer=None):
         pass  # do nothing
 
-    def store_cache(self, cache_home, cache_write_buf, i):
+    def store_cache(self, cache_home, cache_write_buf, i, kvStoreTimer=None):
         pass  # do nothing
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
