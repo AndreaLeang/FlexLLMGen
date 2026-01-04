@@ -335,7 +335,7 @@ class SelfAttention:
         cache = device.init_cache_one_gpu_batch(self.config, self.task, self.policy)
         cache_home.store(cache)
 
-    def load_cache(self, cache_home, cache_read_buf, i, decoding=False):
+    def load_cache(self, cache_home, cache_read_buf, i, KVLoadTimer=None):
         if i == 0:  # prefill, no cache
             return
 
@@ -363,12 +363,12 @@ class SelfAttention:
 
             if self.policy.attn_sparsity >= 1.0:
                 cache_read_buf.store((
-                    k_home.smart_copy(dst, indices, 1),
-                    v_home.smart_copy(dst, indices, 1),
+                    k_home.smart_copy(dst, indices, 1, KVLoadTimer),
+                    v_home.smart_copy(dst, indices, 1, KVLoadTimer),
                 ))
             else:
                 cache_read_buf.store((
-                    k_home.smart_copy(dst, indices, 1),
+                    k_home.smart_copy(dst, indices, 1, KVLoadTimer),
                     (v_home, False),
                 ))
         elif path == 1:  # Copy to CPU temporary workspace
@@ -376,10 +376,10 @@ class SelfAttention:
             k_buf, v_buf = dst.next_attention_compute_workspace()
             indices = (slice(0, self.task.prompt_len + i - 1),
                        slice(0, k_home.shape[1]))
-            general_copy(k_buf, indices, k_home, indices, 1)
+            general_copy(k_buf, indices, k_home, indices, kv_copy=1, KVLoadTimer=KVLoadTimer)
 
             if self.policy.attn_sparsity >= 1.0:
-                general_copy(v_buf, indices, v_home, indices, 1)
+                general_copy(v_buf, indices, v_home, indices, kv_copy=1, KVLoadTimer=KVLoadTimer)
                 cache_read_buf.store(((k_buf, False), (v_buf, False)))
             else:
                 cache_read_buf.store(((k_buf, False), ((v_home, v_buf), False)))
@@ -394,15 +394,15 @@ class SelfAttention:
             k_buf, v_buf = dst.next_attention_compute_workspace()
             indices = (slice(0, self.task.prompt_len + i - 1),
                        slice(gpu_k_buf.shape[1], k_home.shape[1]))
-            general_copy(k_buf, indices, k_home, indices, 1)
-            general_copy(v_buf, indices, v_home, indices, 1)
+            general_copy(k_buf, indices, k_home, indices, kv_copy=1, KVLoadTimer=KVLoadTimer)
+            general_copy(v_buf, indices, v_home, indices, kv_copy=1, KVLoadTimer=KVLoadTimer)
             cache_read_buf.store((((gpu_k_buf, k_buf,), False),
                                   ((gpu_v_buf, v_buf,), False)))
             assert self.policy.attn_sparsity >= 1.0
         else:
             raise ValueError(f"Invalid path: {path}")
 
-    def store_cache(self, cache_home, cache_write_buf, i, decoding=False):
+    def store_cache(self, cache_home, cache_write_buf, i, kvStoreTimer=None):
         # shape: (s, b * n_head, head_dim)
         k_home, v_home = cache_home.val
         k_new, v_new = cache_write_buf.pop()
@@ -419,8 +419,8 @@ class SelfAttention:
             indices = (slice(pos - k_new.shape[0], pos),
                        slice(0, k_new.shape[1]))
             kv_copy = 2 # kv cache storage
-        general_copy(k_home, indices, k_new, None, kv_copy)
-        general_copy(v_home, indices, v_new, None, kv_copy)
+        general_copy(k_home, indices, k_new, None, kv_copy, kvStoreTimer=kvStoreTimer)
+        general_copy(v_home, indices, v_new, None, kv_copy, kvStoreTimer=kvStoreTimer)
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
         return (batch_size, seq_len, self.config.input_dim), self.config.dtype
@@ -682,7 +682,6 @@ class OptLM:
 
     def load_cache(self, i, j, k, overlap=True, decodingLoadTimer=None):
         # timer to record loading cache is used here
-        # print("loading cache rn")
         # Handle corner cases
         if i == 0:  # prefill, no cache
             return
@@ -695,19 +694,20 @@ class OptLM:
             if i == self.execute_gen_len:
                 return
 
+        print(f"loading cache rn")
+        print(f"decodingLoadTimer: {decodingLoadTimer}")
         if decodingLoadTimer is not None:
             decodingLoadTimer.start()
         # Load from cache_home to cache_read_buf
         if overlap:
             with torch.cuda.stream(self.load_cache_stream):
-                self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
+                self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i, decodingLoadTimer)
         else:
-            self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i)
-        if decodingLoadTimer is not None:
-            decodingLoadTimer.stop()
+            self.layers[j].load_cache(self.cache_home[j][k], self.cache_read_buf[j][k], i, decodingLoadTimer)
+        
 
     def store_cache(self, i, j, k, overlap=True, decodingStoreTimer=None):
-        # timer to record storing cache is used here
+        # timer to record storing cache is passed here
         # Handle corner cases
         if k == -1:
             k = self.num_gpu_batches - 1
@@ -721,17 +721,14 @@ class OptLM:
             self.cache_write_buf[j][k].pop()
             return
 
-        if decodingStoreTimer is not None:
-            decodingStoreTimer.start()
         # Store cache_write_buf to cache_home
         # Delete cache_write_buf
         if overlap:
             with torch.cuda.stream(self.store_cache_stream):
-                self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i)
+                self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, decodingStoreTimer)
         else:
-            self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i)
-        if decodingStoreTimer is not None:
-            decodingStoreTimer.stop()
+            self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, decodingStoreTimer)
+        
 
     def delete_cache(self, j, k):
         v = self.cache_home[j][k].pop()

@@ -124,7 +124,7 @@ class TorchTensor:
         else:
             self.load_from_np(np.load(filename))
 
-    def copy(self, dst, src_indices=None, kv_copy: int = 0):
+    def copy(self, dst, src_indices=None, kv_copy: int = 0, KVLoadTimer=None, KVStoreTimer=None):
         if src_indices:
             assert all(x.step is None for x in src_indices)
             shape = tuple(x.stop - x.start for x in src_indices
@@ -136,13 +136,13 @@ class TorchTensor:
             ret = dst.allocate(shape, torch_dtype_to_np_dtype[self.dtype], self.data[2])
         else:
             ret = dst.allocate(shape, torch_dtype_to_np_dtype[self.dtype])
-        general_copy(ret, None, self, src_indices, kv_copy)
+        general_copy(ret, None, self, src_indices, kv_copy, KVLoadTimer, KVStoreTimer)
         return ret
 
-    def smart_copy(self, dst, src_indices=None, kv_copy: int = 0):
+    def smart_copy(self, dst, src_indices=None, kv_copy: int = 0, KVLoadTimer=None, KVStoreTimer=None):
         if self.device == dst:
             return self, False
-        return self.copy(dst, src_indices=src_indices, kv_copy=kv_copy), True
+        return self.copy(dst, src_indices=src_indices, kv_copy=kv_copy, KVLoadTimer=KVLoadTimer, KVStoreTimer=KVStoreTimer), True
 
     def move(self, dst):
         if self.device == dst:
@@ -789,7 +789,8 @@ class TorchLink:
 
 
 def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
-                 src: TorchTensor, src_indices: Tuple[slice], kv_copy: int = 0):
+                 src: TorchTensor, src_indices: Tuple[slice], 
+                 kv_copy: int = 0, KVLoadTimer=None, KVStoreTimer=None):
     """Launch a general asynchronous copy between two tensors.
     It is equivalent to `dst[dst_indices] = src[src_indices]` in numpy syntax.
     The copy is asynchronous. To wait for the copy to complete, you need to call
@@ -809,7 +810,7 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
             tmp_src_indices = cut_indices(src_indices, seg_points[i], seg_points[i+1])
             tmp_dst_indices = cut_indices(dst_indices, seg_points[i], seg_points[i+1],
                 base=seg_points[i])
-            general_copy(dst.data[0][i], tmp_dst_indices, src, tmp_src_indices, kv_copy)
+            general_copy(dst.data[0][i], tmp_dst_indices, src, tmp_src_indices, kv_copy, KVLoadTimer, KVStoreTimer)
     elif src.device.device_type == DeviceType.MIXED:
         # The tensor is on mixed devices, do recursive calls
         assert dst.device.device_type != DeviceType.MIXED
@@ -823,7 +824,7 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
             tmp_src_indices = cut_indices(src_indices, seg_points[i], seg_points[i+1],
                 base=seg_points[i])
             tmp_dst_indices = cut_indices(dst_indices, seg_points[i], seg_points[i+1])
-            general_copy(dst, tmp_dst_indices, src.data[0][i], tmp_src_indices)
+            general_copy(dst, tmp_dst_indices, src.data[0][i], tmp_src_indices, KVLoadTimer, KVStoreTimer)
     elif (src.device.device_type == DeviceType.COMPRESSED or
           dst.device.device_type == DeviceType.COMPRESSED):
         # The tensor is compressed, do recursive calls
@@ -839,15 +840,34 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
           not dst.data.is_pinned() and src.shape[0] > 1):
         # The cpu tensor is not pinned, dispatch to copy threads and use pin_memory
         # as a relay
+        # add recording of time for kv cache offloading
+        if kv_copy == 1 and KVLoadTimer is not None:
+            KVLoadTimer.start()
+        elif kv_copy == 2 and KVStoreTimer is not None:
+            KVStoreTimer.start()
         global_disk_device.submit_copy(dst, dst_indices, src, src_indices)
+        if kv_copy == 1 and KVLoadTimer is not None:
+            KVLoadTimer.stop()
+        elif kv_copy == 2 and KVStoreTimer is not None:
+            KVStoreTimer.stop()
     elif (src.device.device_type == DeviceType.CPU and
           dst.device.device_type == DeviceType.CUDA and
           not src.data.is_pinned()):
         # The cpu tensor is not pinned, use pin_memory as a relay
+        # add recording of time for kv cache offloading
+        if kv_copy == 1 and KVLoadTimer is not None:
+            KVLoadTimer.start()
+        elif kv_copy == 2 and KVStoreTimer is not None:
+            KVStoreTimer.start()
         src = src.data[src_indices] if src_indices else src.data
         dst = dst.data[dst_indices] if dst_indices else dst.data
         src = src.pin_memory()
         dst.copy_(src, non_blocking=True)
+        
+        if kv_copy == 1 and KVLoadTimer is not None:
+            KVLoadTimer.stop()
+        elif kv_copy == 2 and KVStoreTimer is not None:
+            KVStoreTimer.stop()
     else:
         # The normal path
         src = src.data[src_indices] if src_indices else src.data
