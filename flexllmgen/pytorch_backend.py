@@ -842,15 +842,12 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
         # The cpu tensor is not pinned, dispatch to copy threads and use pin_memory
         # as a relay
         # add recording of time for kv cache offloading
-        
-        if kv_copy == 1 and KVLoadTimer is not None:
-            KVLoadTimer.start()
-        elif kv_copy == 2 and KVStoreTimer is not None:
+
+        if kv_copy == 2 and KVStoreTimer is not None:
             KVStoreTimer.start()
         global_disk_device.submit_copy(dst, dst_indices, src, src_indices)
-        if kv_copy == 1 and KVLoadTimer is not None:
-            KVLoadTimer.stop()
-        elif kv_copy == 2 and KVStoreTimer is not None:
+        
+        if kv_copy == 2 and KVStoreTimer is not None:
             KVStoreTimer.stop()
     elif (src.device.device_type == DeviceType.CPU and
           dst.device.device_type == DeviceType.CUDA and
@@ -859,8 +856,6 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
         # add recording of time for kv cache offloading
         if kv_copy == 1 and KVLoadTimer is not None:
             KVLoadTimer.start()
-        elif kv_copy == 2 and KVStoreTimer is not None:
-            KVStoreTimer.start()
         src = src.data[src_indices] if src_indices else src.data
         dst = dst.data[dst_indices] if dst_indices else dst.data
         src = src.pin_memory()
@@ -868,8 +863,6 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
         
         if kv_copy == 1 and KVLoadTimer is not None:
             KVLoadTimer.stop()
-        elif kv_copy == 2 and KVStoreTimer is not None:
-            KVStoreTimer.stop()
     else:
         # The normal path
         src = src.data[src_indices] if src_indices else src.data
