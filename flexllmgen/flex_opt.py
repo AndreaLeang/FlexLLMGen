@@ -694,8 +694,6 @@ class OptLM:
             if i == self.execute_gen_len:
                 return
 
-        print(f"loading cache rn")
-        print(f"KVLoadTimer: {KVLoadTimer}")
         # Load from cache_home to cache_read_buf
         if overlap:
             with torch.cuda.stream(self.load_cache_stream):
@@ -951,8 +949,8 @@ class OptLM:
         timers("compute_layer_prefill").reset()
         timers("compute_layer_decoding").reset()
 
-        timers("decodingKVLoadTimer").reset()
-        timers("decodingKVStoreTimer").reset()
+        timers("KVLoadTimer").reset()
+        timers("KVStoreTimer").reset()
         load_weight_timer = timers("load_weight")
 
         for i in range(self.execute_gen_len):
@@ -1025,9 +1023,9 @@ class OptLM:
                 costs = timers(name).costs
                 print(f"{name:22s} (per-batch): {np.mean(costs):.6f} s")
         print(f"KV Cache Load Time: "
-              f"{timers('decodingKVLoadTimer').costs} s")
+              f"{timers('KVLoadTimer').costs} s")
         print(f"KV Cache Store Time: "
-              f"{timers('decodingKVStoreTimer').costs} s")
+              f"{timers('KVStoreTimer').costs} s")
 
     def generation_loop_overlap_single_batch(self):
         # Prologue

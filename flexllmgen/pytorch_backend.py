@@ -797,6 +797,7 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
     >>> env.disk.synchronize()
     >>> torch.cuda.synchronize()
     """
+    print(f"kv_copy: {kv_copy}, KVLoadTimer: {KVLoadTimer}, KVStoreTimer: {KVStoreTimer}")
     if dst.device.device_type == DeviceType.MIXED:
         # The tensor is on mixed devices, do recursive calls
         assert src.device.device_type != DeviceType.MIXED
