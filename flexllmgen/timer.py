@@ -30,6 +30,7 @@ class _Timer:
 
     def stop(self, sync_func: Callable = None):
         """Stop the timer."""
+        print(f"stop timer {self.name}")
         assert self.started, f"timer {self.name} is not started."
         if sync_func:
             sync_func()
@@ -38,6 +39,7 @@ class _Timer:
         self.costs.append(stop_time - self.start_time)
         self.stop_times.append(stop_time)
         self.started = False
+        print(f"costs of timer {self.name}: {self.costs}")
 
     def reset(self):
         """Reset timer."""

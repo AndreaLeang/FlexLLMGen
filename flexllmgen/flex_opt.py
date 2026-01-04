@@ -965,8 +965,8 @@ class OptLM:
                 load_cache_timer = timers("load_cache_decoding")
                 store_cache_timer = timers("store_cache_decoding")
                 compute_layer_timer = timers("compute_layer_decoding")
-                load_kv_cache_timer = timers("decodingKVLoadTimer")
-                store_kv_cache_timer = timers("decodingKVStoreTimer")
+                load_kv_cache_timer = timers("KVLoadTimer")
+                store_kv_cache_timer = timers("KVStoreTimer")
 
             for k in range(self.num_gpu_batches):
                 self.update_attention_mask(i, k)
