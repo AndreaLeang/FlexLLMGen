@@ -825,7 +825,7 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
             tmp_src_indices = cut_indices(src_indices, seg_points[i], seg_points[i+1],
                 base=seg_points[i])
             tmp_dst_indices = cut_indices(dst_indices, seg_points[i], seg_points[i+1])
-            general_copy(dst, tmp_dst_indices, src.data[0][i], tmp_src_indices, KVLoadTimer, KVStoreTimer)
+            general_copy(dst, tmp_dst_indices, src.data[0][i], tmp_src_indices, kv_copy=kv_copy, KVLoadTimer=KVLoadTimer, KVStoreTimer=KVStoreTimer)
     elif (src.device.device_type == DeviceType.COMPRESSED or
           dst.device.device_type == DeviceType.COMPRESSED):
         # The tensor is compressed, do recursive calls

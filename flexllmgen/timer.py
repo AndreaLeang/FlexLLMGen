@@ -19,6 +19,7 @@ class _Timer:
 
     def start(self, sync_func: Callable = None):
         """Start the timer."""
+        print(f"start timer {self.name}")
         assert not self.started, f"timer {self.name} has already been started."
         if sync_func:
             sync_func()
