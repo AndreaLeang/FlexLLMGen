@@ -363,12 +363,12 @@ class SelfAttention:
 
             if self.policy.attn_sparsity >= 1.0:
                 cache_read_buf.store((
-                    k_home.smart_copy(dst, indices),
-                    v_home.smart_copy(dst, indices),
+                    k_home.smart_copy(dst, indices, 1),
+                    v_home.smart_copy(dst, indices, 1),
                 ))
             else:
                 cache_read_buf.store((
-                    k_home.smart_copy(dst, indices),
+                    k_home.smart_copy(dst, indices, 1),
                     (v_home, False),
                 ))
         elif path == 1:  # Copy to CPU temporary workspace
@@ -376,10 +376,10 @@ class SelfAttention:
             k_buf, v_buf = dst.next_attention_compute_workspace()
             indices = (slice(0, self.task.prompt_len + i - 1),
                        slice(0, k_home.shape[1]))
-            general_copy(k_buf, indices, k_home, indices)
+            general_copy(k_buf, indices, k_home, indices, 1)
 
             if self.policy.attn_sparsity >= 1.0:
-                general_copy(v_buf, indices, v_home, indices)
+                general_copy(v_buf, indices, v_home, indices, 1)
                 cache_read_buf.store(((k_buf, False), (v_buf, False)))
             else:
                 cache_read_buf.store(((k_buf, False), ((v_home, v_buf), False)))
@@ -394,8 +394,8 @@ class SelfAttention:
             k_buf, v_buf = dst.next_attention_compute_workspace()
             indices = (slice(0, self.task.prompt_len + i - 1),
                        slice(gpu_k_buf.shape[1], k_home.shape[1]))
-            general_copy(k_buf, indices, k_home, indices)
-            general_copy(v_buf, indices, v_home, indices)
+            general_copy(k_buf, indices, k_home, indices, 1)
+            general_copy(v_buf, indices, v_home, indices, 1)
             cache_read_buf.store((((gpu_k_buf, k_buf,), False),
                                   ((gpu_v_buf, v_buf,), False)))
             assert self.policy.attn_sparsity >= 1.0
@@ -418,8 +418,8 @@ class SelfAttention:
             indices = (slice(pos - k_new.shape[0], pos),
                        slice(0, k_new.shape[1]))
 
-        general_copy(k_home, indices, k_new, None)
-        general_copy(v_home, indices, v_new, None)
+        general_copy(k_home, indices, k_new, None, 2)
+        general_copy(v_home, indices, v_new, None, 2)
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
         return (batch_size, seq_len, self.config.input_dim), self.config.dtype
