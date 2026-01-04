@@ -983,7 +983,7 @@ class OptLM:
 
                 for k in range(self.num_gpu_batches):
                     load_cache_timer.start(self.sync)
-                    self.load_cache(i, j, k, load_kv_cache_timer)
+                    self.load_cache(i, j, k, KVLoadTimer=load_kv_cache_timer)
                     load_cache_timer.stop(self.sync)
                     self.load_hidden(i, j, k)
                     compute_layer_timer.start(self.sync)
@@ -991,7 +991,7 @@ class OptLM:
                     compute_layer_timer.stop(self.sync)
                     self.store_hidden(i, j, k)
                     store_cache_timer.start(self.sync)
-                    self.store_cache(i, j, k, store_kv_cache_timer)
+                    self.store_cache(i, j, k, KVStoreTimer=store_kv_cache_timer)
                     store_cache_timer.stop(self.sync)
 
                 if i > 0:
