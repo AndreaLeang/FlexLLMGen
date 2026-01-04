@@ -615,6 +615,8 @@ class OptLM:
         else:
             raise NotImplementedError()
 
+        print(f"act_home: {self.act_home}")
+
         # CUDA streams
         self.load_weight_stream = torch.cuda.Stream()
         self.load_cache_stream = torch.cuda.Stream()
