@@ -171,7 +171,7 @@ class InputEmbed:
     def load_cache(self, cache_home, cache_read_buf, i, KVLoadTimer=None):
         pass  # do nothing
 
-    def store_cache(self, cache_home, cache_write_buf, i, kvStoreTimer=None):
+    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
         pass  # do nothing
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
@@ -239,7 +239,7 @@ class OutputEmbed:
     def load_cache(self, cache_home, cache_read_buf, i, KVLoadTimer=None):
         pass  # do nothing
 
-    def store_cache(self, cache_home, cache_write_buf, i, kvStoreTimer=None):
+    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
         pass  # do nothing
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
@@ -402,7 +402,7 @@ class SelfAttention:
         else:
             raise ValueError(f"Invalid path: {path}")
 
-    def store_cache(self, cache_home, cache_write_buf, i, kvStoreTimer=None):
+    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
         # shape: (s, b * n_head, head_dim)
         k_home, v_home = cache_home.val
         k_new, v_new = cache_write_buf.pop()
@@ -419,8 +419,8 @@ class SelfAttention:
             indices = (slice(pos - k_new.shape[0], pos),
                        slice(0, k_new.shape[1]))
             kv_copy = 2 # kv cache storage
-        general_copy(k_home, indices, k_new, None, kv_copy, kvStoreTimer=kvStoreTimer)
-        general_copy(v_home, indices, v_new, None, kv_copy, kvStoreTimer=kvStoreTimer)
+        general_copy(k_home, indices, k_new, None, kv_copy, KVStoreTimer=KVStoreTimer)
+        general_copy(v_home, indices, v_new, None, kv_copy, KVStoreTimer=KVStoreTimer)
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
         return (batch_size, seq_len, self.config.input_dim), self.config.dtype
