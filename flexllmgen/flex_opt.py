@@ -1266,8 +1266,7 @@ def run_flexllmgen(args):
             try:
                 output_ids = model.generate(
                     inputs, max_new_tokens=args.gen_len,
-                    debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose,
-                    profiler=prof)
+                    debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
             finally:
                 prof.stop()
 
