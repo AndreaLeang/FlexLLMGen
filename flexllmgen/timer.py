@@ -39,7 +39,7 @@ class _Timer:
         self.costs.append(stop_time - self.start_time)
         self.stop_times.append(stop_time)
         self.started = False
-        print(f"costs of timer {self.name}: {self.costs}")
+        # print(f"costs of timer {self.name}: {self.costs}")
 
     def reset(self):
         """Reset timer."""
