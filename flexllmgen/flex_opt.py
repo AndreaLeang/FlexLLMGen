@@ -1022,10 +1022,10 @@ class OptLM:
                 name = func + "_" + stage
                 costs = timers(name).costs
                 print(f"{name:22s} (per-batch): {np.mean(costs):.6f} s")
-        print(f"KV Cache Load Time: "
-              f"{timers('KVLoadTimer').costs} s")
-        print(f"KV Cache Store Time: "
-              f"{timers('KVStoreTimer').costs} s")
+        print(f"KV Cache Load Time: (per-batch)"
+              f"{np.mean(timers('KVLoadTimer').costs):.6f} s")
+        print(f"KV Cache Store Time: (per-batch)"
+              f"{np.mean(timers('KVStoreTimer').costs):.6f} s")
 
     def generation_loop_overlap_single_batch(self):
         # Prologue
