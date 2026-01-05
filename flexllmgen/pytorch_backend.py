@@ -867,9 +867,18 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
             KVLoadTimer.stop()
     else:
         # The normal path
+        if (src.device.device_type == DeviceType.CUDA and
+          dst.device.device_type == DeviceType.CPU and
+          kv_copy == 2 and KVStoreTimer is not None):
+            KVStoreTimer.start()
         src = src.data[src_indices] if src_indices else src.data
         dst = dst.data[dst_indices] if dst_indices else dst.data
         dst.copy_(src, non_blocking=True)
+        
+        if (src.device.device_type == DeviceType.CUDA and
+          dst.device.device_type == DeviceType.CPU and
+          kv_copy == 2 and KVStoreTimer is not None):
+            KVStoreTimer.stop()
 
 
 def cut_indices(indices, start, stop, base=0):
