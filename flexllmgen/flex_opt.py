@@ -838,8 +838,7 @@ class OptLM:
                  stop: Optional[int] = None,
                  debug_mode: Optional[str] = None,
                  cut_gen_len: Optional[int] = None,
-                 verbose: int = 0,
-                 profiler: Optional[Any] = None):
+                 verbose: int = 0):
         task = Task(
             inputs=inputs,
             prompt_len=len(inputs[0]),
