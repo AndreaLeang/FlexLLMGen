@@ -274,7 +274,8 @@ def download_opt_weights(model_name, path):
         hf_model_name = "facebook/" + model_name
     elif "galactica" in model_name:
         hf_model_name = "facebook/" + model_name
-
+    elif "Qwen3" in model_name:
+        hf_model_name = "Qwen/" + model_name
     folder = snapshot_download(hf_model_name, allow_patterns="*.bin")
     bin_files = glob.glob(os.path.join(folder, "*.bin"))
 
