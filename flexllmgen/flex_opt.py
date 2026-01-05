@@ -838,7 +838,8 @@ class OptLM:
                  stop: Optional[int] = None,
                  debug_mode: Optional[str] = None,
                  cut_gen_len: Optional[int] = None,
-                 verbose: int = 0):
+                 verbose: int = 0,
+                 profiler: Optional[Any] = None):
         task = Task(
             inputs=inputs,
             prompt_len=len(inputs[0]),
@@ -884,7 +885,7 @@ class OptLM:
                 self.init_cache(j, k)
         if self.policy.cpu_cache_compute:
             self.env.cpu.init_attention_compute_workspace(self.config, self.task, self.policy)
-
+        
         # Generate
         if debug_mode is None:
             if not overlap:
@@ -1249,9 +1250,44 @@ def run_flexllmgen(args):
 
         print("benchmark - generate")
         timers("generate").reset()
-        output_ids = model.generate(
-            inputs, max_new_tokens=args.gen_len,
-            debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
+        
+        # PyTorch profiler setup
+        if args.profiler_trace_dir is not None:
+            prof = torch.profiler.profile(
+                activities=[
+                    torch.profiler.ProfilerActivity.CPU,
+                    torch.profiler.ProfilerActivity.CUDA,
+                ],
+                schedule=torch.profiler.schedule(wait=0, warmup=0, active=gen_len, repeat=1),
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=True
+            )
+            prof.start()
+            try:
+                output_ids = model.generate(
+                    inputs, max_new_tokens=args.gen_len,
+                    debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose,
+                    profiler=prof)
+            finally:
+                prof.stop()
+
+            # get actual folder
+            home_dir = Path(__file__).parent.parent.absolute()
+            profiler_dir = home_dir / args.profiler_trace_dir
+            os.makedirs(profiler_dir, exist_ok=True)
+            print(f"Traces will be saved to: {profiler_dir}")
+            # save file
+            filename = get_filename(args) + ".json"
+            chrome_trace_path = os.path.join(profiler_dir, filename)
+            prof.export_chrome_trace(chrome_trace_path)
+            print(f"Chrome trace exported to: {chrome_trace_path}")
+
+        else:
+            output_ids = model.generate(
+                inputs, max_new_tokens=args.gen_len,
+                debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
+        
         costs = timers("generate").costs
     finally:
         env.close_copy_threads()
@@ -1339,6 +1375,9 @@ def add_parser_arguments(parser):
 
     parser.add_argument("--overlap", type=str2bool, nargs='?',
         const=True, default=True)
+    
+    parser.add_argument("--profiler-trace-dir", type=str, default=None,
+        help="Directory to save PyTorch profiler traces. If None, profiling is disabled.")
 
 
 if __name__ == "__main__":
