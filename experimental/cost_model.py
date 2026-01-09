@@ -528,6 +528,26 @@ def solve(config, solve_lp, args):
                            best_policy.gpu_batch_size, compress_w=compress_w, verbose=True, debug=debug, percent=percent)
     return best_policy, max_throughput
 
+def get_optimal_policy(config, gpu_mem, cpu_mem, nvme_mem, args):
+    config = CostModelConfig()
+
+    opt_config = get_opt_config(args.model)
+    config.l = opt_config.num_hidden_layers
+    config.h1 = opt_config.hidden_size
+    config.h2 = opt_config.ffn_embed_dim
+    config.nh = opt_config.n_head
+
+    config.s = args.prompt_len
+    config.n = args.gen_len
+
+    config.gmem = gpu_mem * GB
+    config.cmem = cpu_mem * GB
+    config.nmem = nvme_mem * GB
+
+    best_policy, max_throughput = solve(config, solve_lp, vars(args))
+    print(f"Calculated optimal policy: {best_policy}")
+    return best_policy, max_throughput
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

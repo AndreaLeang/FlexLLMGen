@@ -25,6 +25,8 @@ from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     torch_mem_stats, torch_dtype_to_np_dtype, write_benchmark_log,
     read_benchmark_log)
 
+from experimental.cost_model import get_optimal_policy
+
 fix_recursive_import()
 
 DUMMY_WEIGHT = "_DUMMY_"  # Use dummy weights for benchmark purposes
@@ -1214,18 +1216,24 @@ def run_flexllmgen(args):
     disk = TorchDisk(args.offload_dir)
     env = ExecutionEnv(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]))
 
-    policy = Policy(args.gpu_batch_size, args.num_gpu_batches,
-                    args.percent[0], args.percent[1],
-                    args.percent[2], args.percent[3],
-                    args.percent[4], args.percent[5],
-                    args.overlap, args.sep_layer, args.pin_weight,
-                    args.cpu_cache_compute, args.attn_sparsity,
-                    args.compress_weight,
-                    CompressionConfig(num_bits=4, group_size=64,
-                                      group_dim=0, symmetric=False),
-                    args.compress_cache,
-                    CompressionConfig(num_bits=4, group_size=64,
-                                      group_dim=2, symmetric=False))
+    use_optimal = args.check_optimal
+    if use_optimal:
+        args.percent = [100, 0, None, None, 100, 0]
+        policy, est_max_throughput = get_optimal_policy(args.model, args.gpu_batch_size, args.num_gpu_batches, args.gpu_mem, args.cpu_mem, args.nvme_mem)
+    else:
+        policy = Policy(args.gpu_batch_size, args.num_gpu_batches,
+                        args.percent[0], args.percent[1],
+                        args.percent[2], args.percent[3],
+                        args.percent[4], args.percent[5],
+                        args.overlap, args.sep_layer, args.pin_weight,
+                        args.cpu_cache_compute, args.attn_sparsity,
+                        args.compress_weight,
+                        CompressionConfig(num_bits=4, group_size=64,
+                                        group_dim=0, symmetric=False),
+                        args.compress_cache,
+                        CompressionConfig(num_bits=4, group_size=64,
+                                        group_dim=2, symmetric=False))
+
     assert not (args.compress_cache and args.attn_sparsity < 1.0), "Not implemented"
 
     print(f"policy gpu cache percent: {policy.cache_gpu_percent}")
@@ -1294,6 +1302,12 @@ def run_flexllmgen(args):
         decode_latency, decode_throughput, total_latency, total_throughput)
     if args.verbose >= 1:
         print(log_str)
+    if use_optimal:
+        print(f"Estimated max throughput: {est_max_throughput:.2f} token/s")
+        print(f"Real Total Throughput: {total_throughput:.2f} token/s")
+        print(f"Prefill Throughput: {prefill_throughput:.2f} token/s")
+        print(f"Decode Throughput: {decode_throughput:.2f} token/s")
+
 
 
 def add_parser_arguments(parser):
@@ -1339,6 +1353,12 @@ def add_parser_arguments(parser):
 
     parser.add_argument("--overlap", type=str2bool, nargs='?',
         const=True, default=True)
+
+    parser.add_argument("--check-optimal", action="store_true",
+        help="Calculate optimal policy then execute it")
+    parser.add_argument("--gpu-mem", type=int, default=48)
+    parser.add_argument("--cpu-mem", type=int, default=64)
+    parser.add_argument("--nvme-mem", type=int, default=0)
 
 
 if __name__ == "__main__":
