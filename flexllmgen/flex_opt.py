@@ -1219,7 +1219,7 @@ def run_flexllmgen(args):
     use_optimal = args.check_optimal
     if use_optimal:
         args.gbs = args.gpu_batch_size
-        args.ngbs = args.num_gpu_batches
+        args.num_gb = args.num_gpu_batches
         args.percent = [100, 0, None, None, 100, 0]
         args.wg = None
         args.wc = None
