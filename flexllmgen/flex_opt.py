@@ -1366,6 +1366,11 @@ def add_parser_arguments(parser):
     parser.add_argument("--gpu-mem", type=int, default=48)
     parser.add_argument("--cpu-mem", type=int, default=64)
     parser.add_argument("--nvme-mem", type=int, default=0)
+    parser.add_argument("--compress-w", action="store_true")
+
+    parser.add_argument("--alpha-g", type=float)
+    parser.add_argument("--alpha-c", type=float)
+    parser.add_argument("--alpha-n", type=float)
 
 
 if __name__ == "__main__":
