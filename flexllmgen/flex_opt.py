@@ -1218,6 +1218,8 @@ def run_flexllmgen(args):
 
     use_optimal = args.check_optimal
     if use_optimal:
+        args.gbs = args.gpu_batch_size
+        args.ngbs = args.num_gpu_batches
         args.percent = [100, 0, None, None, 100, 0]
         args.wg = None
         args.wc = None
@@ -1331,8 +1333,8 @@ def add_parser_arguments(parser):
         help="Cut generation length for fast debugging.")
     parser.add_argument("--debug-mode", type=str,
         choices=["fewer_batch", "breakdown"])
-    parser.add_argument("--gbs", "--gpu-batch-size", type=int, default=4)
-    parser.add_argument("--ngbs", "--num-gpu-batches", type=int, default=1)
+    parser.add_argument("--gpu-batch-size", type=int, default=4)
+    parser.add_argument("--num-gpu-batches", type=int, default=1)
     parser.add_argument("--percent", nargs="+", type=int,
         default=[100, 0, 100, 0, 100, 0],
         help="Six numbers. They are "
