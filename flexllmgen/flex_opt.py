@@ -1219,6 +1219,7 @@ def run_flexllmgen(args):
     use_optimal = args.check_optimal
     if use_optimal:
         args.percent = [100, 0, None, None, 100, 0]
+        print("going to calc optimal policy...")
         policy, est_max_throughput = get_optimal_policy(args.model, args.gpu_batch_size, args.num_gpu_batches, args.gpu_mem, args.cpu_mem, args.nvme_mem)
     else:
         policy = Policy(args.gpu_batch_size, args.num_gpu_batches,
