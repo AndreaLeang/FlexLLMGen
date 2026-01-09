@@ -15,12 +15,12 @@ from tqdm import tqdm
 import torch
 from transformers import AutoTokenizer
 
-from flexllmgen.compression import CompressionConfig
+from flexllmgen.compression import CompressionConfig, Policy
 from flexllmgen.opt_config import OptConfig, get_opt_config, download_opt_weights
 from flexllmgen.pytorch_backend import (TorchDevice, TorchDisk, TorchLink,
     TorchMixedDevice, DeviceType, general_copy, fix_recursive_import)
 from flexllmgen.timer import timers
-from flexllmgen.utils import (Policy, Task, ExecutionEnv, GB, T, ValueHolder,
+from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     array_1d, array_2d, array_3d, str2bool, project_decode_latency,
     torch_mem_stats, torch_dtype_to_np_dtype, write_benchmark_log,
     read_benchmark_log)
