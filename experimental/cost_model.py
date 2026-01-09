@@ -528,7 +528,7 @@ def solve(config, solve_lp, args):
                            best_policy.gpu_batch_size, compress_w=compress_w, verbose=True, debug=debug, percent=percent)
     return best_policy, max_throughput
 
-def get_optimal_policy(config, gpu_mem, cpu_mem, nvme_mem, args):
+def get_optimal_policy(gpu_mem, cpu_mem, nvme_mem, args):
     config = CostModelConfig()
 
     opt_config = get_opt_config(args.model)
