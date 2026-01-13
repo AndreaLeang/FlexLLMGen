@@ -38,7 +38,7 @@ import pulp
 from flexllmgen.compression import CompressionConfig, Policy
 from flexllmgen.opt_config import get_opt_config
 # from flexllmgen.flex_opt import Policy
-from flexllmgen.utils import GB, T, Policy
+from flexllmgen.utils import GB, T
 
 alpha_g = 0.8
 alpha_c = 0.8
