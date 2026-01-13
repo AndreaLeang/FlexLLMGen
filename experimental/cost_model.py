@@ -421,10 +421,11 @@ def solve_lp(config, bls, gbs, compress_w=False, verbose=1, debug=False, percent
               f"generated = {bls * n} tokens")
         print(f"throughput = {throughput:.2f} token/s")
     
+    # multiply by 100 to get percent 
     policy = Policy(gbs, bls // gbs,
-                    pulp.value(wg), pulp.value(wc),
-                    pulp.value(cg), pulp.value(cc),
-                    pulp.value(hg), pulp.value(hc),
+                    pulp.value(wg)*100, pulp.value(wc)*100,
+                    pulp.value(cg)*100, pulp.value(cc)*100,
+                    pulp.value(hg)*100, pulp.value(hc)*100,
                     overlap=True, sep_layer=False, pin_weight=False,
                     cpu_cache_compute=True, attn_sparsity=1,
                     compress_weight=False, comp_weight_config=
