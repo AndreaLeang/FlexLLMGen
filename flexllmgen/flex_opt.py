@@ -87,6 +87,7 @@ def init_weight_list(weight_specs, policy, env):
         ret.append(weight)
     return ret
 
+
 class InputEmbed:
     def __init__(self, config, env, policy):
         self.config = config
@@ -1335,5 +1336,5 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     assert len(args.percent) == 6
-
+    print("got args")
     run_flexllmgen(args)
