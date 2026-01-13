@@ -1190,7 +1190,7 @@ def run_flexllmgen(args):
                         args.percent[4], args.percent[5],
                         args.overlap, args.sep_layer, args.pin_weight,
                         args.cpu_cache_compute, args.attn_sparsity,
-                        args.compress_weight,init_weight_list
+                        args.compress_weight,
                         CompressionConfig(num_bits=4, group_size=64,
                                         group_dim=0, symmetric=False),
                         args.compress_cache,
