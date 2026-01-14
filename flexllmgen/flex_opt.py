@@ -1319,7 +1319,7 @@ def add_parser_arguments(parser):
     parser.add_argument("--cut-gen-len", type=int,
         help="Cut generation length for fast debugging.")
     parser.add_argument("--debug-mode", type=str,
-        choices=["fewer_batch", "breakdown"], default=None)
+        choices=["fewer_batch", "breakdown"])
     parser.add_argument("--gpu-batch-size", type=int, default=4)
     parser.add_argument("--num-gpu-batches", type=int, default=1)
     parser.add_argument("--percent", nargs="+", type=int,
@@ -1363,12 +1363,15 @@ def add_parser_arguments(parser):
     parser.add_argument("--alpha-n", type=float)
 
     # profile generation
-    parser.add_argument("--profile", action="store_true")
+    parser.add_argument("--profile", action="store_true",
+        help="Profile generation")
 
 
 if __name__ == "__main__":
+    print("starting main")
     parser = argparse.ArgumentParser()
     add_parser_arguments(parser)
+
     args = parser.parse_args()
 
     assert len(args.percent) == 6
