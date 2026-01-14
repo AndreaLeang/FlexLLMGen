@@ -985,6 +985,7 @@ class OptLM:
               f"{np.mean(timers('KVStoreTimer').costs):.6f} s")
 
     def generation_loop_overlap_single_batch(self):
+        print("starting generation loop overlap single batch")
         # Prologue
         for k in range(self.num_gpu_batches):
             self.load_weight(0, 0, k)
@@ -1213,20 +1214,23 @@ def run_flexllmgen(args):
 
     print("init weight...")
     model = OptLM(opt_config, env, args.path, policy)
+    if args.profile:
+        costs, output_ids = run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len, env)
+    else:
+        # regular warmup + generate
+        try:
+            print("warmup - generate")
+            output_ids = model.generate(
+                warmup_inputs, max_new_tokens=1, verbose=args.verbose)
 
-    try:
-        print("warmup - generate")
-        output_ids = model.generate(
-            warmup_inputs, max_new_tokens=1, verbose=args.verbose)
-
-        print("benchmark - generate")
-        timers("generate").reset()
-        output_ids = model.generate(
-            inputs, max_new_tokens=args.gen_len,
-            debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
-        costs = timers("generate").costs
-    finally:
-        env.close_copy_threads()
+            print("benchmark - generate")
+            timers("generate").reset()
+            output_ids = model.generate(
+                inputs, max_new_tokens=args.gen_len,
+                debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
+            costs = timers("generate").costs
+        finally:
+            env.close_copy_threads()
 
     # Log output
     prefill_latency = costs[0]
@@ -1273,6 +1277,34 @@ def run_flexllmgen(args):
         print(f"Decode Throughput: {decode_throughput:.2f} token/s")
 
 
+def run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len, env):
+
+    try:
+        print("warmup - generate")
+        output_ids = model.generate(
+            warmup_inputs, max_new_tokens=1, verbose=args.verbose)
+
+        print("benchmark - generate")
+        timers("generate").reset()
+        with profile(
+            activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+            record_shapes=True, 
+            profile_memory=True, 
+            with_stack=True, 
+            with_modules=True
+        ) as prof:        
+                output_ids = model.generate(
+                    inputs, max_new_tokens=args.gen_len,
+                    debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
+        costs = timers("generate").costs
+        
+    finally:
+        env.close_copy_threads()
+
+    filename = get_filename(args) + ".json"
+        prof.export_chrome_trace(filename)
+    return costs, output_ids
+
 
 def add_parser_arguments(parser):
     parser.add_argument("--model", type=str, default="facebook/opt-6.7b",
@@ -1318,6 +1350,7 @@ def add_parser_arguments(parser):
     parser.add_argument("--overlap", type=str2bool, nargs='?',
         const=True, default=True)
 
+    # caclulate and run optimal policy
     parser.add_argument("--check-optimal", action="store_true",
         help="Calculate optimal policy then execute it")
     parser.add_argument("--gpu-mem", type=int, default=48)
@@ -1328,6 +1361,9 @@ def add_parser_arguments(parser):
     parser.add_argument("--alpha-g", type=float)
     parser.add_argument("--alpha-c", type=float)
     parser.add_argument("--alpha-n", type=float)
+
+    # profile generation
+    parser.add_argument("--profile", action="store_true")
 
 
 if __name__ == "__main__":
