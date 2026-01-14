@@ -843,8 +843,7 @@ class OptLM:
             self.env.cpu.init_attention_compute_workspace(self.config, self.task, self.policy)
 
         # Generate
-        if debug_mode == "None":
-            print("debug is None")
+        if debug_mode is None:
             if not overlap:
                 # No overlap, easy to understand, suitable for debugging
                 self.generation_loop_normal()
@@ -864,7 +863,7 @@ class OptLM:
             # No overlap, fewer batches, execution time breakdown
             self.generation_loop_debug_normal()
         else:
-            raise ValueError("Invalid debug mode: {debug_mode}")
+            raise ValueError(f"Invalid debug mode: {debug_mode}")
 
         # Delete cache
         for j in range(num_layers):
