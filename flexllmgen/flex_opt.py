@@ -843,7 +843,7 @@ class OptLM:
             self.env.cpu.init_attention_compute_workspace(self.config, self.task, self.policy)
 
         # Generate
-        if debug_mode is None:
+        if debug_mode =="None":
             if not overlap:
                 # No overlap, easy to understand, suitable for debugging
                 self.generation_loop_normal()
@@ -1319,7 +1319,7 @@ def add_parser_arguments(parser):
     parser.add_argument("--cut-gen-len", type=int,
         help="Cut generation length for fast debugging.")
     parser.add_argument("--debug-mode", type=str,
-        choices=["fewer_batch", "breakdown"])
+        choices=["fewer_batch", "breakdown"], default="None")
     parser.add_argument("--gpu-batch-size", type=int, default=4)
     parser.add_argument("--num-gpu-batches", type=int, default=1)
     parser.add_argument("--percent", nargs="+", type=int,
