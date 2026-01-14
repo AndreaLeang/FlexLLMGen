@@ -953,8 +953,8 @@ class OptLM:
                     timers("decoding_gpu_batch").stop()
                     pbar.update(1)
                     batch_ct += 1
-                if batch_ct >= execute_num_batches: break
-            if batch_ct >= execute_num_batches: break
+            #     if batch_ct >= execute_num_batches: break
+            # if batch_ct >= execute_num_batches: break
             if i == 0: timers("prefill_total").stop(self.sync)
 
         # Convert "decoding_gpu_batch" timer to "generate" timer
