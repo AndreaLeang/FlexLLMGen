@@ -843,7 +843,8 @@ class OptLM:
             self.env.cpu.init_attention_compute_workspace(self.config, self.task, self.policy)
 
         # Generate
-        if debug_mode =="None":
+        if debug_mode == "None":
+            print("debug is None")
             if not overlap:
                 # No overlap, easy to understand, suitable for debugging
                 self.generation_loop_normal()
@@ -1280,11 +1281,11 @@ def run_flexllmgen(args):
 def run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len, env):
 
     try:
-        print("warmup - generate")
+        print("warmup - generate profile after")
         output_ids = model.generate(
             warmup_inputs, max_new_tokens=1, verbose=args.verbose)
 
-        print("benchmark - generate")
+        print("benchmark - generate w profile")
         timers("generate").reset()
         with profile(
             activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
@@ -1368,7 +1369,6 @@ def add_parser_arguments(parser):
 
 
 if __name__ == "__main__":
-    print("starting main")
     parser = argparse.ArgumentParser()
     add_parser_arguments(parser)
 
