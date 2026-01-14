@@ -1302,7 +1302,7 @@ def run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len,
         env.close_copy_threads()
 
     filename = get_filename(args) + ".json"
-        prof.export_chrome_trace(filename)
+    prof.export_chrome_trace(filename)
     return costs, output_ids
 
 
