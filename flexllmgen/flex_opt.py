@@ -1275,7 +1275,7 @@ def run_flexllmgen(args):
         print(f"Real Total Throughput: {total_throughput:.2f} token/s")
         print(f"Prefill Throughput: {prefill_throughput:.2f} token/s")
         print(f"Decode Throughput: {decode_throughput:.2f} token/s")
-
+    return None
 
 def run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len, env):
 

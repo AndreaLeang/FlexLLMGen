@@ -82,8 +82,8 @@ class CostModelConfig:
 
 
 def solve_lp(config, bls, gbs, compress_w=False, verbose=1, debug=False, percent=None):
-    assert bls > 0 and gbs > 0
-    assert bls >= gbs and bls % gbs == 0
+    assert bls > 0 and gbs > 0, "cost model: bls and gbs must be greater than 0"
+    assert bls >= gbs and bls % gbs == 0, "cost model: bls must be greater than or equal to gbs and bls must be divisible by gbs"
 
     ## Constants
     s = config.s
@@ -157,7 +157,7 @@ def solve_lp(config, bls, gbs, compress_w=False, verbose=1, debug=False, percent
 
     if debug:
         ## DEBUG
-        assert percent is not None
+        assert percent is not None, "cost model debug: percent is None"
         if percent[0] is not None:
             prob += wg == percent[0] / 100
         if percent[1] is not None:
@@ -453,7 +453,7 @@ def get_nb_ub(config, gbs, solve_lp, compress_w=False, debug=None, percent=None)
             left = mid + 1
         elif status == -1:
             right = mid
-    assert left == right
+    assert left == right, "cost model: left is not equal to right"
     nb_ub = left
 
     return nb_ub - 1
@@ -574,7 +574,7 @@ if __name__ == "__main__":
     parser.add_argument("--alpha-c", type=float)
     parser.add_argument("--alpha-n", type=float)
     args = parser.parse_args()
-    assert not (args.percent and (args.wg or args.wc or args.cg or args.cc or args.hg or args.hc))
+    assert not (args.percent and (args.wg or args.wc or args.cg or args.cc or args.hg or args.hc)), "cost model: percent and other arguments are not compatible"
 
     if args.alpha_g:
         alpha_g = args.alpha_g

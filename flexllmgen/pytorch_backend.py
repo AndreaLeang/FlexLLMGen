@@ -76,7 +76,7 @@ class TorchTensor:
 
     def __init__(self, shape, dtype, data, device, name=None):
         if isinstance(data, torch.Tensor):
-            assert data.device == device.dev
+            assert data.device == device.dev, "data device is not equal to device dev"
 
         self.shape = shape
         self.dtype = dtype
@@ -126,7 +126,7 @@ class TorchTensor:
 
     def copy(self, dst, src_indices=None, kv_copy: int = 0, KVLoadTimer=None, KVStoreTimer=None):
         if src_indices:
-            assert all(x.step is None for x in src_indices)
+            assert all(x.step is None for x in src_indices), "src indices have step"
             shape = tuple(x.stop - x.start for x in src_indices
                 ) + self.shape[len(src_indices):]
         else:
@@ -441,7 +441,7 @@ class TorchDevice:
                         attention_mask.data, b, src_s, tgt_s, n_head, head_dim,
                         attn_sparsity).cuda().half()
         else:  # Mixed device attention
-            assert attn_sparsity >= 1.0
+            assert attn_sparsity >= 1.0, "attn sparsity is less than 1.0"
             value = self._mixed_device_attention(q, k_cache, v_cache,
                 k_new, v_new, attention_mask.data, b, src_s, tgt_s,
                 n_head, head_dim)
@@ -630,7 +630,7 @@ class TorchDisk:
         self.compressed_device = TorchCompressedDevice(self)
 
         if os.path.exists(self.path):
-            assert os.path.isdir(self.path)
+            assert os.path.isdir(self.path), "path is not a directory"
         else:
             os.makedirs(self.path)
 
@@ -710,8 +710,8 @@ class TorchMixedDevice:
         self.base_devices = base_devices
 
     def allocate(self, shape, dtype, seg_lengths, pin_memory=None, name=None):
-        assert sum(seg_lengths) == shape[SEG_DIM]
-        assert len(seg_lengths) == len(self.base_devices)
+        assert sum(seg_lengths) == shape[SEG_DIM], "seg lengths sum is not equal to shape[SEG_DIM]"
+        assert len(seg_lengths) == len(self.base_devices), "seg lengths length is not equal to base devices length"
         seg_points = [0]
         for l in seg_lengths:
             seg_points.append(seg_points[-1] + l)
@@ -774,10 +774,10 @@ class TorchLink:
 
     def io_time(self, src, dst, size):
         if src == self.a:
-            assert dst == self.b
+            assert dst == self.b, "dst is not b"
             bandwidth = self.a_to_b_bandwidth
         elif src == self.b:
-            assert dst == self.a
+            assert dst == self.a, "dst is not a"
             bandwidth = self.b_to_a_bandwidth
         else:
             raise ValueError(f"Invalid source {src}")
@@ -816,7 +816,7 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
             general_copy(dst.data[0][i], tmp_dst_indices, src, tmp_src_indices, kv_copy, KVLoadTimer, KVStoreTimer)
     elif src.device.device_type == DeviceType.MIXED:
         # The tensor is on mixed devices, do recursive calls
-        assert dst.device.device_type != DeviceType.MIXED
+        assert dst.device.device_type != DeviceType.MIXED, "dst device type is mixed"
         seg_points = src.data[1]
 
         for i in range(len(src.device.base_devices)):
@@ -882,7 +882,7 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
 
 
 def cut_indices(indices, start, stop, base=0):
-    assert all(x.step is None for x in indices)
+    assert all(x.step is None for x in indices), "indices have step"
     seg = indices[SEG_DIM]
     return (indices[:SEG_DIM] +
             (slice(max(seg.start, start) - base, min(seg.stop, stop) - base),) +
