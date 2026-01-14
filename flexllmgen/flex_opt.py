@@ -38,7 +38,7 @@ DUMMY_WEIGHT = "_DUMMY_"  # Use dummy weights for benchmark purposes
 
 def get_choice(cur_percent, percents, choices):
     percents = np.cumsum(percents)
-    assert np.abs(percents[-1] - 100) < 1e-5
+    assert np.abs(percents[-1] - 100) < 1e-5, "percent sum is not 100"
 
     for i in range(len(percents)):
         if cur_percent < percents[i]:
@@ -286,7 +286,7 @@ class SelfAttention:
             device = self.env.mixed
 
         if self.policy.compress_cache:
-            assert device.device_type != DeviceType.MIXED
+            assert device.device_type != DeviceType.MIXED, "device type is mixed for compress cache"
             device = device.compressed_device
 
         cache = device.init_cache_one_gpu_batch(self.config, self.task, self.policy)
@@ -355,7 +355,7 @@ class SelfAttention:
             general_copy(v_buf, indices, v_home, indices, kv_copy=1, KVLoadTimer=KVLoadTimer)
             cache_read_buf.store((((gpu_k_buf, k_buf,), False),
                                   ((gpu_v_buf, v_buf,), False)))
-            assert self.policy.attn_sparsity >= 1.0
+            assert self.policy.attn_sparsity >= 1.0, "attn sparsity is less than 1.0"
         else:
             raise ValueError(f"Invalid path: {path}")
 
@@ -771,7 +771,7 @@ class OptLM:
     def update_attention_mask(self, i, k):
         if i > 0:
             mask = self.attention_mask[k]
-            assert mask.val is not None
+            assert mask.val is not None, "mask value is None"
             mask.val = mask.val.device.extend_attention_mask(mask.val, [True])
             return
 
@@ -817,7 +817,7 @@ class OptLM:
             self.config.pad_token_id, dtype=np.int32)
         self.stopped = np.zeros((len(task.inputs), 1), dtype=bool)
         self.output_ids[:, :prompt_len] = np.asarray(task.inputs)
-        assert gpu_batch_size * num_gpu_batches == len(task.inputs)
+        assert gpu_batch_size * num_gpu_batches == len(task.inputs), "gpu batch size * num gpu batches is not equal to len of task inputs"
 
         # Intermediate tensors
         # The following buffers store values used
@@ -892,7 +892,7 @@ class OptLM:
             timers("generate").stop()
 
     def generation_loop_debug_normal(self):
-        execute_num_batches = 20
+        execute_num_batches = self.execute_gen_len
         batch_ct = 0
         pbar = tqdm(total=execute_num_batches)
         timers("prefill_total").reset()
@@ -1373,6 +1373,6 @@ if __name__ == "__main__":
 
     args = parser.parse_args()
 
-    assert len(args.percent) == 6
+    assert len(args.percent) == 6, "need 6 arguments in percent"
     print("got args")
     run_flexllmgen(args)

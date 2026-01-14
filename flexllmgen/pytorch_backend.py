@@ -802,7 +802,7 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
     #     print(f"kv store src device: {src.device.device_type}, dst device: {dst.device.device_type}")
     if dst.device.device_type == DeviceType.MIXED:
         # The tensor is on mixed devices, do recursive calls
-        assert src.device.device_type != DeviceType.MIXED
+        assert src.device.device_type != DeviceType.MIXED, "src device type is mixed"
         seg_points = dst.data[1]
 
         for i in range(len(dst.device.base_devices)):
