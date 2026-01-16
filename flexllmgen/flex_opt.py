@@ -862,6 +862,11 @@ class OptLM:
         elif debug_mode == "breakdown":
             # No overlap, fewer batches, execution time breakdown
             self.generation_loop_debug_normal()
+        elif debug_mode == "kv_timers":
+            if num_gpu_batches == 1:
+                self.generation_loop_overlap_single_batch_debug_kv_timers()
+            else:
+                self.generation_loop_overlap_multi_batch_debug_kv_timers()
         else:
             raise ValueError(f"Invalid debug mode: {debug_mode}")
 
@@ -1008,6 +1013,37 @@ class OptLM:
             if self.task.stop and np.all(self.stopped):
                 break
 
+    def generation_loop_overlap_single_batch_debug_kv_timers(self):
+        print("starting generation loop overlap single batch w kv timers")
+        # Prologue
+        for k in range(self.num_gpu_batches):
+            self.load_weight(0, 0, k)
+        self.sync()
+
+        # Generate
+        for i in range(self.execute_gen_len):
+            if i > 0:
+                load_kv_cache_timer = timers("KVLoadTimer")
+                store_kv_cache_timer = timers("KVStoreTimer")
+            else:
+                load_kv_cache_timer = None
+                store_kv_cache_timer = None
+
+            timers("generate").start()
+            self.update_attention_mask(i, 0)
+            for j in range(self.num_layers):
+                self.load_weight(i, j+1, 0)
+                self.load_cache(i, j+1, 0, KVLoadTimer=load_kv_cache_timer)
+                self.load_hidden(i, j, 0)
+                self.compute_layer(i, j, 0)
+                self.store_cache(i, j-1, 0, KVStoreTimer=store_kv_cache_timer)
+                self.store_hidden(i, j, 0)
+                self.sync()
+            timers("generate").stop()
+
+            if self.task.stop and np.all(self.stopped):
+                break
+
     def generation_loop_overlap_multi_batch(self):
         # Prologue
         for k in range(self.num_gpu_batches):
@@ -1034,6 +1070,42 @@ class OptLM:
         # Epilogue
         self.store_hidden(
             self.execute_gen_len-1, self.num_layers-1, self.num_gpu_batches-1)
+
+    def generation_loop_overlap_multi_batch_debug_kv_timers(self):
+        print("starting generation loop overlap single batch w kv timers")
+        # Prologue
+        for k in range(self.num_gpu_batches):
+            self.load_weight(0, 0, k)
+        self.load_hidden(0, 0, 0)
+        self.sync()
+
+        # Generate
+        for i in range(self.execute_gen_len):
+            if i > 0:
+                load_kv_cache_timer = timers("KVLoadTimer")
+                store_kv_cache_timer = timers("KVStoreTimer")
+            else:
+                load_kv_cache_timer = None
+                store_kv_cache_timer = None
+            timers("generate").start()
+            for k in range(self.num_gpu_batches):
+                self.update_attention_mask(i, k)
+            for j in range(self.num_layers):
+                for k in range(self.num_gpu_batches):
+                    self.load_weight(i, j+1, k)
+                    self.load_cache(i, j, k+1, KVLoadTimer=load_kv_cache_timer)
+                    self.store_hidden(i, j, k-1)
+                    self.load_hidden(i, j, k+1)
+                    self.compute_layer(i, j, k)
+                    self.store_cache(i, j, k-1, KVStoreTimer=store_kv_cache_timer)
+                    self.sync()
+            timers("generate").stop()
+
+        # Epilogue
+        self.store_hidden(
+            self.execute_gen_len-1, self.num_layers-1, self.num_gpu_batches-1)
+
+    
 
     def generation_loop_debug_single_batch(self):
         execute_num_batches = 20
@@ -1320,7 +1392,7 @@ def add_parser_arguments(parser):
     parser.add_argument("--cut-gen-len", type=int,
         help="Cut generation length for fast debugging.")
     parser.add_argument("--debug-mode", type=str,
-        choices=["fewer_batch", "breakdown", "none"])
+        choices=["fewer_batch", "breakdown", "kv_timers", "none"])
     parser.add_argument("--gpu-batch-size", type=int, default=4)
     parser.add_argument("--num-gpu-batches", type=int, default=1)
     parser.add_argument("--percent", nargs="+", type=int,
