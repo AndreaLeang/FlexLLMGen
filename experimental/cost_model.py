@@ -614,7 +614,7 @@ if __name__ == "__main__":
             print(f"sweeping cpu: {i}%")
             print(best_policy)
             print(f"max_throughput: {max_throughput:.2f} token/s")
-            all_policies.append((i, max_throughput, best_policy))
+            all_policies.append((i, max_throughput))
         print(f"all policies: {all_policies}")
     else:
         best_policy, max_throughput = solve(config, solve_lp, vars(args))
