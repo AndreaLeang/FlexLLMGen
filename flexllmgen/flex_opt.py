@@ -1246,14 +1246,15 @@ def run_flexllmgen(args):
     _, gpu_peak_mem = gpu.mem_stats()
     _, cpu_peak_mem = cpu.mem_stats()
 
-    if DUMMY_WEIGHT not in args.path:
-        outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
-        show_str = "Outputs:\n" + 70 * '-' + "\n"
-        for i in [0, len(outputs)-1]:
-            show_str += f"{i}: {outputs[i]}\n"
-            show_str += "-" * 70 + "\n"
-        if args.verbose >= 2:
-            print(show_str)
+    # printing outputs
+    # if DUMMY_WEIGHT not in args.path:
+    #     outputs = tokenizer.batch_decode(output_ids, skip_special_tokens=True)
+    #     show_str = "Outputs:\n" + 70 * '-' + "\n"
+    #     for i in [0, len(outputs)-1]:
+    #         show_str += f"{i}: {outputs[i]}\n"
+    #         show_str += "-" * 70 + "\n"
+    #     if args.verbose >= 2:
+    #         print(show_str)
 
     gpu.print_stats()
     cpu.print_stats()
@@ -1362,6 +1363,8 @@ def add_parser_arguments(parser):
     parser.add_argument("--alpha-c", type=float)
     parser.add_argument("--alpha-n", type=float)
 
+    parser.add_argument("--sweep-cpu", action="store_true")
+
     # profile generation
     parser.add_argument("--profile", action="store_true",
         help="Profile generation")
@@ -1375,4 +1378,10 @@ if __name__ == "__main__":
 
     assert len(args.percent) == 6, "need 6 arguments in percent"
     print("got args")
-    run_flexllmgen(args)
+    if args.sweep_cpu:
+        for i in range(0, 110, 10):
+            args.percent = [100, 0, 100-i, i, 100, 0]
+            print(f"sweeping cpu: {i}%")
+            run_flexllmgen(args)
+    else:   
+        run_flexllmgen(args)
