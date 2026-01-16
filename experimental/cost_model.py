@@ -573,6 +573,8 @@ if __name__ == "__main__":
     parser.add_argument("--alpha-g", type=float)
     parser.add_argument("--alpha-c", type=float)
     parser.add_argument("--alpha-n", type=float)
+    parser.add_argument("--sweep-cpu", action="store_true")
+
     args = parser.parse_args()
     assert not (args.percent and (args.wg or args.wc or args.cg or args.cc or args.hg or args.hc)), "cost model: percent and other arguments are not compatible"
 
@@ -598,7 +600,15 @@ if __name__ == "__main__":
     config.cmem = args.cpu_mem * GB
     config.nmem = args.nvme_mem * GB
 
-    best_policy, max_throughput = solve(config, solve_lp, vars(args))
-    print(best_policy)
-    print(f"max_throughput: {max_throughput:.2f} token/s")
+    if args.sweep_cpu:
+        for i in range(0, 110, 10):
+            args.percent = [100, 0, 100-i, i, 100, 0]
+            best_policy, max_throughput = solve(config, solve_lp, vars(args))
+            print(f"sweeping cpu: {i}%")
+            print(best_policy)
+            print(f"max_throughput: {max_throughput:.2f} token/s")
+    else:
+        best_policy, max_throughput = solve(config, solve_lp, vars(args))
+        print(best_policy)
+        print(f"max_throughput: {max_throughput:.2f} token/s")
  
