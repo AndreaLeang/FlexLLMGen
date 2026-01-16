@@ -1043,6 +1043,10 @@ class OptLM:
 
             if self.task.stop and np.all(self.stopped):
                 break
+        print(f"KV Cache Load Time (per-batch): "
+            f"{np.mean(timers('KVLoadTimer').costs):.6f} s")
+        print(f"KV Cache Store Time (per-batch): "
+            f"{np.mean(timers('KVStoreTimer').costs):.6f} s")
 
     def generation_loop_overlap_multi_batch(self):
         # Prologue
@@ -1100,6 +1104,11 @@ class OptLM:
                     self.store_cache(i, j, k-1, KVStoreTimer=store_kv_cache_timer)
                     self.sync()
             timers("generate").stop()
+        
+        print(f"KV Cache Load Time (per-batch): "
+            f"{np.mean(timers('KVLoadTimer').costs):.6f} s")
+        print(f"KV Cache Store Time (per-batch): "
+            f"{np.mean(timers('KVStoreTimer').costs):.6f} s")
 
         # Epilogue
         self.store_hidden(
