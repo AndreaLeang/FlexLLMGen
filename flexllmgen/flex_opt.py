@@ -1276,7 +1276,7 @@ def run_flexllmgen(args):
         print(f"Real Total Throughput: {total_throughput:.2f} token/s")
         print(f"Prefill Throughput: {prefill_throughput:.2f} token/s")
         print(f"Decode Throughput: {decode_throughput:.2f} token/s")
-    return None
+    return total_throughput
 
 def run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len, env):
 
@@ -1379,9 +1379,12 @@ if __name__ == "__main__":
     assert len(args.percent) == 6, "need 6 arguments in percent"
     print("got args")
     if args.sweep_cpu:
+        all_policies = []
         for i in range(0, 110, 10):
             args.percent = [100, 0, 100-i, i, 100, 0]
             print(f"sweeping cpu: {i}%")
-            run_flexllmgen(args)
+            tot_throughput = run_flexllmgen(args)
+            all_policies.append((i, tot_throughput))
+        print(f"all policies: {all_policies}")
     else:   
         run_flexllmgen(args)

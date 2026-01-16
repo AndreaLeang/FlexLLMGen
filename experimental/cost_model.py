@@ -601,12 +601,21 @@ if __name__ == "__main__":
     config.nmem = args.nvme_mem * GB
 
     if args.sweep_cpu:
+        all_policies = []
         for i in range(0, 110, 10):
-            args.percent = [100, 0, 100-i, i, 100, 0]
+            if args.percent is not None:
+                args.percent[2] = 100 - i
+                args.percent[3] = i
+            else:
+                # args.percent = [100, 0, 100-i, i, 100, 0]
+                args.cg = 100 - i
+                args.cc = i
             best_policy, max_throughput = solve(config, solve_lp, vars(args))
             print(f"sweeping cpu: {i}%")
             print(best_policy)
             print(f"max_throughput: {max_throughput:.2f} token/s")
+            all_policies.append((i, max_throughput, best_policy))
+        print(f"all policies: {all_policies}")
     else:
         best_policy, max_throughput = solve(config, solve_lp, vars(args))
         print(best_policy)
