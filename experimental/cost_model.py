@@ -574,6 +574,7 @@ if __name__ == "__main__":
     parser.add_argument("--alpha-c", type=float)
     parser.add_argument("--alpha-n", type=float)
     parser.add_argument("--sweep-cpu", action="store_true")
+    parser.add_argument("--sweep-cpu-start", type=int, default=0)
 
     args = parser.parse_args()
     assert not (args.percent and (args.wg or args.wc or args.cg or args.cc or args.hg or args.hc)), "cost model: percent and other arguments are not compatible"
@@ -602,7 +603,7 @@ if __name__ == "__main__":
 
     if args.sweep_cpu:
         all_policies = []
-        for i in range(0, 110, 10):
+        for i in range(args.sweep_cpu_start, 110, 10):
             if args.percent is not None:
                 args.percent[2] = 100 - i
                 args.percent[3] = i

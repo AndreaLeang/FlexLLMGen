@@ -1364,6 +1364,7 @@ def add_parser_arguments(parser):
     parser.add_argument("--alpha-n", type=float)
 
     parser.add_argument("--sweep-cpu", action="store_true")
+    parser.add_argument("--sweep-cpu-start", type=int, default=0)
 
     # profile generation
     parser.add_argument("--profile", action="store_true",
@@ -1380,7 +1381,7 @@ if __name__ == "__main__":
     print("got args")
     if args.sweep_cpu:
         all_policies = []
-        for i in range(0, 110, 10):
+        for i in range(args.sweep_cpu_start, 110, 10):
             args.percent = [100, 0, 100-i, i, 100, 0]
             print(f"sweeping cpu: {i}%")
             tot_throughput = run_flexllmgen(args)
