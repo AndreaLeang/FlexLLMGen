@@ -1375,16 +1375,18 @@ def run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len,
             with_stack=True, 
             with_modules=True
         ) as prof:        
-                output_ids = model.generate(
-                    inputs, max_new_tokens=args.gen_len,
-                    debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
+            output_ids = model.generate(
+                inputs, max_new_tokens=args.gen_len,
+                debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
+        
         costs = timers("generate").costs
+        filename = get_filename(args) + ".json"
+        prof.export_chrome_trace(filename)
         
     finally:
         env.close_copy_threads()
 
-    filename = get_filename(args) + ".json"
-    prof.export_chrome_trace(filename)
+    
     return costs, output_ids
 
 
