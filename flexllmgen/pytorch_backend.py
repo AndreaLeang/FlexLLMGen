@@ -869,15 +869,17 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
             KVLoadTimer.stop()
     else:
         # The normal path
-        src = src.data[src_indices] if src_indices else src.data
-        dst = dst.data[dst_indices] if dst_indices else dst.data
-
         started_timer = False
         if (src.device.device_type == DeviceType.CUDA and
           dst.device.device_type == DeviceType.CPU and 
           kv_copy == 2 and KVStoreTimer is not None):
             started_timer = True
+        src = src.data[src_indices] if src_indices else src.data
+        dst = dst.data[dst_indices] if dst_indices else dst.data
+
+        if started_timer:
             KVStoreTimer.start()
+            
         dst.copy_(src, non_blocking=True)
         
         if started_timer:
