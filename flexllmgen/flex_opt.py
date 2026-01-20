@@ -988,9 +988,9 @@ class OptLM:
         print(f"KV Cache Store Time (per-batch): "
               f"{np.mean(timers('KVStoreTimer').costs):.6f} s")
         print(f"KV Cache Load Time (TOTAL): "
-            f"{np.SUM(timers('KVLoadTimer').costs):.6f} s")
+            f"{np.sum(timers('KVLoadTimer').costs):.6f} s")
         print(f"KV Cache Store Time (TOTAL): "
-            f"{np.SUM(timers('KVStoreTimer').costs):.6f} s")
+            f"{np.sum(timers('KVStoreTimer').costs):.6f} s")
 
     def generation_loop_overlap_single_batch(self):
         print("starting generation loop overlap single batch")
@@ -1047,9 +1047,9 @@ class OptLM:
         print(f"KV Cache Store Time (per-batch): "
             f"{np.mean(timers('KVStoreTimer').costs):.6f} s")
         print(f"KV Cache Load Time (TOTAL): "
-            f"{np.SUM(timers('KVLoadTimer').costs):.6f} s")
+            f"{np.sum(timers('KVLoadTimer').costs):.6f} s")
         print(f"KV Cache Store Time (TOTAL): "
-            f"{np.SUM(timers('KVStoreTimer').costs):.6f} s")
+            f"{np.sum(timers('KVStoreTimer').costs):.6f} s")
 
     def generation_loop_overlap_multi_batch(self):
         # Prologue
@@ -1110,9 +1110,9 @@ class OptLM:
         print(f"KV Cache Store Time (per-batch): "
             f"{np.mean(timers('KVStoreTimer').costs):.6f} s")
         print(f"KV Cache Load Time (TOTAL): "
-            f"{np.SUM(timers('KVLoadTimer').costs):.6f} s")
+            f"{np.sum(timers('KVLoadTimer').costs):.6f} s")
         print(f"KV Cache Store Time (TOTAL): "
-            f"{np.SUM(timers('KVStoreTimer').costs):.6f} s")
+            f"{np.sum(timers('KVStoreTimer').costs):.6f} s")
 
         # Epilogue
         self.store_hidden(
