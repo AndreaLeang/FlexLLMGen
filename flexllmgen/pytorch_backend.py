@@ -855,11 +855,12 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
           dst.device.device_type == DeviceType.CUDA and
           not src.data.is_pinned()):
         # The cpu tensor is not pinned, use pin_memory as a relay
+        src = src.data[src_indices] if src_indices else src.data
+        dst = dst.data[dst_indices] if dst_indices else dst.data
         # add recording of time for kv cache offloading
         if kv_copy == 1 and KVLoadTimer is not None:
             KVLoadTimer.start()
-        src = src.data[src_indices] if src_indices else src.data
-        dst = dst.data[dst_indices] if dst_indices else dst.data
+
         src = src.pin_memory()
         # the following is what's actually initiating the cudaMemcpyAsync
         dst.copy_(src, non_blocking=True)
@@ -868,14 +869,15 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
             KVLoadTimer.stop()
     else:
         # The normal path
+        src = src.data[src_indices] if src_indices else src.data
+        dst = dst.data[dst_indices] if dst_indices else dst.data
+
         started_timer = False
         if (src.device.device_type == DeviceType.CUDA and
           dst.device.device_type == DeviceType.CPU and 
           kv_copy == 2 and KVStoreTimer is not None):
             started_timer = True
             KVStoreTimer.start()
-        src = src.data[src_indices] if src_indices else src.data
-        dst = dst.data[dst_indices] if dst_indices else dst.data
         dst.copy_(src, non_blocking=True)
         
         if started_timer:

@@ -921,14 +921,13 @@ class OptLM:
                 load_cache_timer = timers("load_cache_prefill")
                 store_cache_timer = timers("store_cache_prefill")
                 compute_layer_timer = timers("compute_layer_prefill")
-                load_kv_cache_timer = None
-                store_kv_cache_timer = None
             else:
                 load_cache_timer = timers("load_cache_decoding")
                 store_cache_timer = timers("store_cache_decoding")
                 compute_layer_timer = timers("compute_layer_decoding")
-                load_kv_cache_timer = timers("KVLoadTimer")
-                store_kv_cache_timer = timers("KVStoreTimer")
+            load_kv_cache_timer = timers("KVLoadTimer")
+            store_kv_cache_timer = timers("KVStoreTimer")
+                
 
             for k in range(self.num_gpu_batches):
                 self.update_attention_mask(i, k)
@@ -988,6 +987,10 @@ class OptLM:
               f"{np.mean(timers('KVLoadTimer').costs):.6f} s")
         print(f"KV Cache Store Time (per-batch): "
               f"{np.mean(timers('KVStoreTimer').costs):.6f} s")
+        print(f"KV Cache Load Time (TOTAL): "
+            f"{np.SUM(timers('KVLoadTimer').costs):.6f} s")
+        print(f"KV Cache Store Time (TOTAL): "
+            f"{np.SUM(timers('KVStoreTimer').costs):.6f} s")
 
     def generation_loop_overlap_single_batch(self):
         print("starting generation loop overlap single batch")
@@ -1022,12 +1025,8 @@ class OptLM:
 
         # Generate
         for i in range(self.execute_gen_len):
-            if i > 0:
-                load_kv_cache_timer = timers("KVLoadTimer")
-                store_kv_cache_timer = timers("KVStoreTimer")
-            else:
-                load_kv_cache_timer = None
-                store_kv_cache_timer = None
+            load_kv_cache_timer = timers("KVLoadTimer")
+            store_kv_cache_timer = timers("KVStoreTimer")
 
             timers("generate").start()
             self.update_attention_mask(i, 0)
@@ -1047,6 +1046,10 @@ class OptLM:
             f"{np.mean(timers('KVLoadTimer').costs):.6f} s")
         print(f"KV Cache Store Time (per-batch): "
             f"{np.mean(timers('KVStoreTimer').costs):.6f} s")
+        print(f"KV Cache Load Time (TOTAL): "
+            f"{np.SUM(timers('KVLoadTimer').costs):.6f} s")
+        print(f"KV Cache Store Time (TOTAL): "
+            f"{np.SUM(timers('KVStoreTimer').costs):.6f} s")
 
     def generation_loop_overlap_multi_batch(self):
         # Prologue
@@ -1085,12 +1088,9 @@ class OptLM:
 
         # Generate
         for i in range(self.execute_gen_len):
-            if i > 0:
-                load_kv_cache_timer = timers("KVLoadTimer")
-                store_kv_cache_timer = timers("KVStoreTimer")
-            else:
-                load_kv_cache_timer = None
-                store_kv_cache_timer = None
+            load_kv_cache_timer = timers("KVLoadTimer")
+            store_kv_cache_timer = timers("KVStoreTimer")
+            
             timers("generate").start()
             for k in range(self.num_gpu_batches):
                 self.update_attention_mask(i, k)
@@ -1109,6 +1109,10 @@ class OptLM:
             f"{np.mean(timers('KVLoadTimer').costs):.6f} s")
         print(f"KV Cache Store Time (per-batch): "
             f"{np.mean(timers('KVStoreTimer').costs):.6f} s")
+        print(f"KV Cache Load Time (TOTAL): "
+            f"{np.SUM(timers('KVLoadTimer').costs):.6f} s")
+        print(f"KV Cache Store Time (TOTAL): "
+            f"{np.SUM(timers('KVStoreTimer').costs):.6f} s")
 
         # Epilogue
         self.store_hidden(
