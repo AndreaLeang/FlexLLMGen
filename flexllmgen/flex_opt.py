@@ -1079,7 +1079,7 @@ class OptLM:
             self.execute_gen_len-1, self.num_layers-1, self.num_gpu_batches-1)
 
     def generation_loop_overlap_multi_batch_debug_kv_timers(self):
-        print("starting generation loop overlap single batch w kv timers")
+        print("starting generation loop overlap multi batch w kv timers")
         # Prologue
         for k in range(self.num_gpu_batches):
             self.load_weight(0, 0, k)
@@ -1452,6 +1452,7 @@ def add_parser_arguments(parser):
 
     parser.add_argument("--sweep-cpu", action="store_true")
     parser.add_argument("--sweep-cpu-start", type=int, default=0)
+    parser.add_argument("--sweep-average", type=int, default=1)
 
     # profile generation
     parser.add_argument("--profile", action="store_true",
@@ -1470,9 +1471,13 @@ if __name__ == "__main__":
         all_policies = []
         for i in range(args.sweep_cpu_start, 110, 10):
             args.percent = [100, 0, 100-i, i, 100, 0]
+            tot_throughput = 0.0
             print(f"sweeping cpu: {i}%")
-            tot_throughput = run_flexllmgen(args)
+            for j in range(args.sweep_average):
+                cur_throughput = run_flexllmgen(args)
+                tot_throughput += cur_throughput
+            tot_throughput /= float(args.sweep_average)
             all_policies.append((i, tot_throughput))
-        print(f"all policies: {all_policies}")
+        print(f"all percent, avg throughput over {args.sweep_average} iterations: {all_policies}")
     else:   
         run_flexllmgen(args)
