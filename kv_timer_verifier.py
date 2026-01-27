@@ -144,7 +144,7 @@ if __name__ == "__main__":
     # batch_tklqt = [12014.2443359375, 18471.943251953126, 49995.56291894531, 104777.457796875, 232505.366203125, 461461.98833007814]
     for batch_filename in batch_filenames:
         print(f"Processing {batch_filename}")
-        kv_times.append(get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_time))
+        kv_times.append(get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth))
         print(f"Total GPU Loading Cache Time for {batch_filename}: {kv_times[-1][0]} s")
         print(f"Total GPU Storing Cache Time for {batch_filename}: {kv_times[-1][1]} s")
         if args.cpu_time:
