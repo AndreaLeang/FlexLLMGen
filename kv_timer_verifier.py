@@ -144,17 +144,15 @@ if __name__ == "__main__":
     # batch_tklqt = [12014.2443359375, 18471.943251953126, 49995.56291894531, 104777.457796875, 232505.366203125, 461461.98833007814]
     for batch_filename in batch_filenames:
         print(f"Processing {batch_filename}")
-        batch_tklqt.append(get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_time))
-        print(f"Total GPU Loading Cache Time for {batch_filename}: {batch_tklqt[-1][0]} s")
-        print(f"Total GPU Storing Cache Time for {batch_filename}: {batch_tklqt[-1][1]} s")
+        kv_times.append(get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_time))
+        print(f"Total GPU Loading Cache Time for {batch_filename}: {kv_times[-1][0]} s")
+        print(f"Total GPU Storing Cache Time for {batch_filename}: {kv_times[-1][1]} s")
         if args.cpu_time:
-            print(f"Total CPU Loading Cache Time for {batch_filename}: {batch_tklqt[-1][2]} s")
-            print(f"Total CPU Storing Cache Time for {batch_filename}: {batch_tklqt[-1][3]} s")
+            print(f"Total CPU Loading Cache Time for {batch_filename}: {kv_times[-1][2]} s")
+            print(f"Total CPU Storing Cache Time for {batch_filename}: {kv_times[-1][3]} s")
         if args.est_bandwidth:
-            print(f"Estimated Loading Bandwidth for {batch_filename}: {batch_tklqt[-1][4]} GB/s")
-            print(f"Estimated Storing Bandwidth for {batch_filename}: {batch_tklqt[-1][5]} GB/s")
+            print(f"Estimated Loading Bandwidth for {batch_filename}: {kv_times[-1][4]} GB/s")
+            print(f"Estimated Storing Bandwidth for {batch_filename}: {kv_times[-1][5]} GB/s")
     
 
-    # total_tkqlt = get_all_ac2g(str(BERT_DIR / json_filename))
-    # print(f"Total TKQLT: {total_tkqlt} ms")
     
