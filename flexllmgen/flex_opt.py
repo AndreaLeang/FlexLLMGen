@@ -1457,7 +1457,7 @@ def add_parser_arguments(parser):
 
     parser.add_argument("--sweep-prompt-len", action="store_true")
     parser.add_argument("--sweep-gen-len", action="store_true")
-    parser.add_argument("")
+    # parser.add_argument("")
 
     # profile generation
     parser.add_argument("--profile", action="store_true",
