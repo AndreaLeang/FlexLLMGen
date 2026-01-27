@@ -777,6 +777,7 @@ class OptLM:
                 self.delete_weight(j, 0)
             except:
                 print(f"error in delete weight, was not initialized")
+                return
                 
 
     def update_attention_mask(self, i, k):
