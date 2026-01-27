@@ -1528,7 +1528,7 @@ if __name__ == "__main__":
                         for each_iter in range(args.sweep_average):
                             cur_throughput = run_flexllmgen(args)
                             if cur_throughput is None:
-                                continue
+                                break
                             num_valid_iter += 1
                             tot_throughput += cur_throughput
                         if num_valid_iter == 0:
