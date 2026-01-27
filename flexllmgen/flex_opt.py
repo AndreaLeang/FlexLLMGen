@@ -1477,7 +1477,7 @@ if __name__ == "__main__":
     all_cpu_ranges = range(args.sweep_cpu_start, 110, args.sweep_cpu_step)
     all_prompt_len = [512, 1024, 2048, 4096]
     all_gen_len = [512, 1024, 2048, 4096]
-    single_cpu = False 
+    single_cpu = Flse 
     if not args.sweep_model:
         all_models = [args.model]
     if not args.sweep_cpu:
@@ -1500,6 +1500,7 @@ if __name__ == "__main__":
                     for cpu_range in all_cpu_ranges:
                         if not single_cpu: # otherwise, use specified percent
                             args.percent = [100, 0, 100-cpu_range, cpu_range, 100, 0]
+                        print(f"args.percent: {args.percent}")
                         tot_throughput = 0.0
                         for each_iter in range(args.sweep_average):
                             cur_throughput = run_flexllmgen(args)
