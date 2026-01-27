@@ -612,8 +612,8 @@ class OptLM:
         expanded_path = os.path.abspath(os.path.expanduser(
             os.path.join(self.path, f"{self.config.name}-np")))
         check_path = os.path.join(expanded_path, "decoder.embed_positions.weight")
-        if not os.path.exists(check_path) and DUMMY_WEIGHT not in check_path:
-            download_opt_weights(self.config.name, self.path)
+        # if not os.path.exists(check_path) and DUMMY_WEIGHT not in check_path:
+        #     download_opt_weights(self.config.name, self.path)
 
         self.layers[j].init_weight(self.weight_home[j], expanded_path)
 
