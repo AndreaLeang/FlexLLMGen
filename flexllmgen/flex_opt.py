@@ -773,7 +773,11 @@ class OptLM:
 
     def delete_all_weights(self):
         for j in range(self.num_layers):
-            self.delete_weight(j, 0)
+            try:
+                self.delete_weight(j, 0)
+            except:
+                print(f"error in delete weight, was not initialized")
+                
 
     def update_attention_mask(self, i, k):
         if i > 0:
