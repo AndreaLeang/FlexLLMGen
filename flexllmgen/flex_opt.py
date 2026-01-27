@@ -1303,6 +1303,12 @@ def run_flexllmgen(args):
     print(f"model size: {opt_config.model_bytes()/GB:.3f} GB, "
           f"cache size: {cache_size/GB:.3f} GB, "
           f"hidden size (prefill): {hidden_size/GB:.3f} GB")
+    
+    # if the capacity is over the gpu mem, do not run
+    tot_gpu_mem = 39.00 # GB
+    if args.percent[0] / 100.0 * (opt_config.model_bytes()/GB) + args.percent[2] / 100.0 * (cache_size/GB) >= tot_gpu_mem:
+        print(f"the capacity is over the gpu mem, do not run")
+        return None
 
     print("init weight...")
     model = OptLM(opt_config, env, args.path, policy)
@@ -1473,7 +1479,9 @@ if __name__ == "__main__":
     assert len(args.percent) == 6, "need 6 arguments in percent"
     print("got args")
 
-    all_models = ["facebook/opt-6.7b", "facebook/opt-13b", "facebook/opt-30b", "facebook/galactica-30b", "facebook/opt-66b", "facebook/opt-175b"]
+    all_models = ["facebook/opt-6.7b", "facebook/opt-13b", "facebook/opt-30b", "facebook/opt-66b"]
+    # all_model_gb = [12, 25, 55.803, 122.375]
+    # all_model_weight_gpu = [100, 100, 70, 20]
     all_cpu_ranges = range(args.sweep_cpu_start, 110, args.sweep_cpu_step)
     all_prompt_len = [512, 1024, 2048, 4096]
     all_gen_len = [512, 1024, 2048, 4096]
@@ -1500,13 +1508,19 @@ if __name__ == "__main__":
                     for cpu_range in all_cpu_ranges:
                         if not single_cpu: # otherwise, use specified percent
                             args.percent = [100, 0, 100-cpu_range, cpu_range, 100, 0]
-                        print(f"args.percent: {args.percent}")
                         tot_throughput = 0.0
+                        num_valid_iter = 0
                         for each_iter in range(args.sweep_average):
                             cur_throughput = run_flexllmgen(args)
+                            if cur_throughput is None:
+                                continue
+                            num_valid_iter += 1
                             tot_throughput += cur_throughput
-                        tot_throughput /= float(args.sweep_average)
-                        all_policies.append((prompt_len, gen_len, cpu_range, tot_throughput))
+                        if num_valid_iter == 0:
+                            all_policies.append((prompt_len, gen_len, cpu_range, None))
+                        else:
+                            tot_throughput /= float(num_valid_iter)
+                            all_policies.append((prompt_len, gen_len, cpu_range, tot_throughput))
         all_policies_avg[model] = all_policies
 
     for model in all_models:
