@@ -1305,10 +1305,10 @@ def run_flexllmgen(args):
           f"hidden size (prefill): {hidden_size/GB:.3f} GB")
     
     # if the capacity is over the gpu mem, do not run
-    tot_gpu_mem = 39.31 # GB
-    if args.percent[0] / 100.0 * (opt_config.model_bytes()/GB) + args.percent[2] / 100.0 * (cache_size/GB) >= tot_gpu_mem:
-        print(f"the capacity is over the gpu mem, do not run")
-        return None
+    # tot_gpu_mem = 39.31 # GB
+    # if args.percent[0] / 100.0 * (opt_config.model_bytes()/GB) + args.percent[2] / 100.0 * (cache_size/GB) >= tot_gpu_mem:
+    #     print(f"the capacity is over the gpu mem, do not run")
+    #     return None
 
     print("init weight...")
     model = OptLM(opt_config, env, args.path, policy)
