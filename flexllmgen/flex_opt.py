@@ -73,7 +73,7 @@ def init_weight_list(weight_specs, policy, env):
             else:
                 weight.load_from_np(np.ones(shape, dtype))
                 #weight.load_from_np(np.random.rand(*shape).astype(dtype))
-        else:
+        else:term
             weight = home.compressed_device.allocate(
                 shape, dtype, policy.comp_weight_config, pin_memory=pin_memory)
 
