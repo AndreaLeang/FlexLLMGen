@@ -1477,7 +1477,7 @@ if __name__ == "__main__":
     all_cpu_ranges = range(args.sweep_cpu_start, 110, args.sweep_cpu_step)
     all_prompt_len = [512, 1024, 2048, 4096]
     all_gen_len = [512, 1024, 2048, 4096]
-    single_cpu = Flse 
+    single_cpu = False 
     if not args.sweep_model:
         all_models = [args.model]
     if not args.sweep_cpu:
