@@ -1332,8 +1332,12 @@ def run_flexllmgen(args):
                 inputs, max_new_tokens=args.gen_len,
                 debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
             costs = timers("generate").costs
-        finally:
+        except: 
+            print(f"error in generate, do not run")
             env.close_copy_threads()
+            return None 
+        # finally:
+        env.close_copy_threads()
 
     # Log output
     prefill_latency = costs[0]
