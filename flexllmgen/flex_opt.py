@@ -1455,8 +1455,8 @@ def add_parser_arguments(parser):
 
     parser.add_argument("--sweep-model", action="store_true")
 
-    parser.add_argument("--sweep-prompt-len", action="store_true")
-    parser.add_argument("--sweep-gen-len", action="store_true")
+    parser.add_argument("--sweep-prompt-len", action="store_true") # 512, 1024, 2048, 4096
+    parser.add_argument("--sweep-gen-len", action="store_true") # 512, 1024, 2048, 4096
     # parser.add_argument("")
 
     # profile generation
@@ -1475,26 +1475,39 @@ if __name__ == "__main__":
 
     all_models = ["facebook/opt-6.7b", "facebook/opt-13b", "facebook/opt-30b", "facebook/galactica-30b", "facebook/opt-66b", "facebook/opt-175b"]
     all_cpu_ranges = range(args.sweep_cpu_start, 110, args.sweep_cpu_step)
+    all_prompt_len = [512, 1024, 2048, 4096]
+    all_gen_len = [512, 1024, 2048, 4096]
+    single_cpu = False 
     if not args.sweep_model:
         all_models = [args.model]
     if not args.sweep_cpu:
         all_cpu_ranges = [args.percent[3]]
+        single_cpu = True
+    if not args.sweep_prompt_len:
+        all_prompt_len = [args.prompt_len]
+    if not args.sweep_gen_len:
+        all_gen_len = [args.gen_len]
 
     all_policies_avg = {}
 
     for model in all_models:
         args.model = model
         all_policies = []
-        for cpu_range in all_cpu_ranges:
-            args.percent = [100, 0, 100-cpu_range, cpu_range, 100, 0]
-            tot_throughput = 0.0
-            for each_iter in range(args.sweep_average):
-                cur_throughput = run_flexllmgen(args)
-                tot_throughput += cur_throughput
-            tot_throughput /= float(args.sweep_average)
-            all_policies.append((cpu_range, tot_throughput))
+        for prompt_len in all_prompt_len:
+                args.prompt_len = prompt_len
+                for gen_len in all_gen_len:
+                    args.gen_len = gen_len
+                    for cpu_range in all_cpu_ranges:
+                        if not single_cpu: # otherwise, use specified percent
+                            args.percent = [100, 0, 100-cpu_range, cpu_range, 100, 0]
+                        tot_throughput = 0.0
+                        for each_iter in range(args.sweep_average):
+                            cur_throughput = run_flexllmgen(args)
+                            tot_throughput += cur_throughput
+                        tot_throughput /= float(args.sweep_average)
+                        all_policies.append((prompt_len, gen_len, cpu_range, tot_throughput))
         all_policies_avg[model] = all_policies
 
     for model in all_models:
         print(f"model: {model}")
-        print(f"avg throughput over {args.sweep_average} iterations: {all_policies_avg[model]}")
+        print(f"(prompt_len, gen_len, cpu_range, avg throughput) over {args.sweep_average} iterations: {all_policies_avg[model]}")
