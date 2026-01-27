@@ -67,22 +67,29 @@ def init_weight_list(weight_specs, policy, env):
 
         if not compress:
             weight = home.allocate(shape, dtype, pin_memory=pin_memory)
+            weight.load_from_np(np.ones(shape, dtype))
 
-            if DUMMY_WEIGHT not in filename:
-                weight.load_from_np_file(weight_specs[i][2])
-            else:
-                weight.load_from_np(np.ones(shape, dtype))
+            # commented to avoid downloading weights
+            # if DUMMY_WEIGHT not in filename:
+            #     weight.load_from_np_file(weight_specs[i][2])
+            # else:
+            #     weight.load_from_np(np.ones(shape, dtype))
                 #weight.load_from_np(np.random.rand(*shape).astype(dtype))
         else:term
             weight = home.compressed_device.allocate(
                 shape, dtype, policy.comp_weight_config, pin_memory=pin_memory)
-
-            if DUMMY_WEIGHT not in filename:
-                weight.load_from_np_file(weight_specs[i][2])
-            else:
-                for i in range(2):
-                    x = weight.data[i]
-                    x.load_from_np(np.ones(x.shape, torch_dtype_to_np_dtype[x.dtype]))
+            
+            for i in range(2):
+                x = weight.data[i]
+                x.load_from_np(np.ones(x.shape, torch_dtype_to_np_dtype[x.dtype]))
+            
+            # commented to avoid downloading weights  
+            # if DUMMY_WEIGHT not in filename:
+            #     weight.load_from_np_file(weight_specs[i][2])
+            # else:
+            #     for i in range(2):
+            #         x = weight.data[i]
+            #         x.load_from_np(np.ones(x.shape, torch_dtype_to_np_dtype[x.dtype]))
 
         ret.append(weight)
     return ret
