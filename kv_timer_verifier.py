@@ -88,12 +88,12 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         if event['name'] == 'Memcpy HtoD (Pinned -> Device)':
             if event['args']['correlation'] in load_memcpy_correlations:
                 total_loading_cache_time_gpu += event['dur']
-                if estimate_time: 
+                if est_bandwidth: 
                     total_loading_bytes += event['args']['bytes']
         elif event['name'] == 'Memcpy DtoH (Device -> Pageable)':
             if event['args']['correlation'] in store_memcpy_correlations:
                 total_storing_cache_time_gpu += event['dur']
-                if estimate_time: 
+                if est_bandwidth: 
                     total_storing_bytes += event['args']['bytes']
 
     total_loading_cache_time_gpu /= 1000000.0 # originally in microseconds (10^-6)
