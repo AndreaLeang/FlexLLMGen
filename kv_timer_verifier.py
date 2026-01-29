@@ -153,10 +153,10 @@ if __name__ == "__main__":
         if args.est_bandwidth:
             print(f"Total Loading Bytes for {batch_filename}: {all_kv_times[batch_filename][4]} GB")
             print(f"Total Storing Bytes (GB) for {batch_filename}: {all_kv_times[batch_filename][5]} GB")
-    
+    print()
+    print("GPU Load, GPU Store, CPU Load, CPU Store, Loading Bytes, Storing Bytes")
     for batch_filename in batch_filenames:
-        print(f"for file {batch_filename}:")
-        print(f"GPU Loading, CPU Loading, GPU Storing, CPU Storing, Loading Bytes, Storing Bytes: {all_kv_times[batch_filename]}")
+        print(f"for file {batch_filename}: {all_kv_times[batch_filename]}")
     
 
     
