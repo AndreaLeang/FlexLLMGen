@@ -1386,7 +1386,7 @@ def run_flexllmgen(args):
                f"total latency: {total_latency:.3f} s\t"
                f"total throughput: {total_throughput:.3f} token/s")
         
-        print(log_str)
+        # print(log_str)
 
     if use_optimal:
         print(f"Estimated max throughput: {est_max_throughput:.2f} token/s")
