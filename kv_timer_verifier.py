@@ -34,11 +34,11 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     for event_idx in range(num_of_events):
         event = data['traceEvents'][event_idx]
 
-        if event['name'] == 'flex_opt.py(640): load_cache':
+        if event['name'] == 'flex_opt.py(647): load_cache':
             loading_cache_start_time = event['ts']
             loading_cache_end_time = event['ts'] + event['dur']
             load_intervals.append((loading_cache_start_time, loading_cache_end_time))
-        elif event['name'] == 'flex_opt.py(662): store_cache':
+        elif event['name'] == 'flex_opt.py(669): store_cache':
             storing_cache_start_time = event['ts']
             storing_cache_end_time = event['ts'] + event['dur']
             store_intervals.append((storing_cache_start_time, storing_cache_end_time))
