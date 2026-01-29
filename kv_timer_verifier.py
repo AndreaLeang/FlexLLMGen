@@ -108,10 +108,10 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     if est_bandwidth:
         total_loading_bytes /= 1000000000.0 # B --> GB
         total_storing_bytes /= 1000000000.0 # B --> GB
-        est_loading_bandwidth = total_loading_bytes / total_loading_cache_time_gpu # GB / s
-        est_storing_bandwidth = total_storing_bytes / total_storing_cache_time_gpu # GB / s
+    #     est_loading_bandwidth = total_loading_bytes / total_loading_cache_time_gpu # GB / s
+    #     est_storing_bandwidth = total_storing_bytes / total_storing_cache_time_gpu # GB / s
 
-    return total_loading_cache_time_gpu, total_storing_cache_time_gpu, total_loading_cache_time_cpu, total_storing_cache_time_cpu, est_loading_bandwidth, est_storing_bandwidth # in s
+    return total_loading_cache_time_gpu, total_storing_cache_time_gpu, total_loading_cache_time_cpu, total_storing_cache_time_cpu, total_loading_bytes, total_storing_bytes # in s
 
 def get_all_cpu_memcpy_correlations(json_filename):
     # open json file
@@ -140,19 +140,23 @@ if __name__ == "__main__":
 
     batch_filenames = args.files 
     
-    kv_times = []
+    all_kv_times = {}
     # batch_tklqt = [12014.2443359375, 18471.943251953126, 49995.56291894531, 104777.457796875, 232505.366203125, 461461.98833007814]
     for batch_filename in batch_filenames:
         print(f"Processing {batch_filename}")
-        kv_times.append(get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth))
-        print(f"Total GPU Loading Cache Time for {batch_filename}: {kv_times[-1][0]} s")
-        print(f"Total GPU Storing Cache Time for {batch_filename}: {kv_times[-1][1]} s")
+        all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth)
+        print(f"Total GPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][0]} s")
+        print(f"Total GPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][1]} s")
         if args.cpu_time:
-            print(f"Total CPU Loading Cache Time for {batch_filename}: {kv_times[-1][2]} s")
-            print(f"Total CPU Storing Cache Time for {batch_filename}: {kv_times[-1][3]} s")
+            print(f"Total CPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][2]} s")
+            print(f"Total CPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][3]} s")
         if args.est_bandwidth:
-            print(f"Estimated Loading Bandwidth for {batch_filename}: {kv_times[-1][4]} GB/s")
-            print(f"Estimated Storing Bandwidth for {batch_filename}: {kv_times[-1][5]} GB/s")
+            print(f"Total Loading Bytes for {batch_filename}: {all_kv_times[batch_filename][4]} GB")
+            print(f"Total Storing Bytes (GB) for {batch_filename}: {all_kv_times[batch_filename][5]} GB")
+    
+    for batch_filename in batch_filenames:
+        print(f"for file {batch_filename}:")
+        print(f"GPU Loading, CPU Loading, GPU Storing, CPU Storing, Loading Bytes, Storing Bytes: {all_kv_times[batch_filename]}")
     
 
     
