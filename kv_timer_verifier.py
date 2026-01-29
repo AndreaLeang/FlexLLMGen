@@ -96,18 +96,18 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 if est_bandwidth: 
                     total_storing_bytes += event['args']['bytes']
 
-    # total_loading_cache_time_gpu /= 1000000.0 # originally in microseconds (10^-6)
-    # total_storing_cache_time_gpu /= 1000000.0
-    # if get_cpu_time:
-    #     total_loading_cache_time_cpu /= 1000000.0
-    #     total_storing_cache_time_cpu /= 1000000.0
-    # else: 
-    #     total_loading_cache_time_cpu = None
-    #     total_storing_cache_time_cpu = None
+    total_loading_cache_time_gpu /= 1000000.0 # originally in microseconds (10^-6)
+    total_storing_cache_time_gpu /= 1000000.0
+    if get_cpu_time:
+        total_loading_cache_time_cpu /= 1000000.0
+        total_storing_cache_time_cpu /= 1000000.0
+    else: 
+        total_loading_cache_time_cpu = None
+        total_storing_cache_time_cpu = None
 
-    # if est_bandwidth:
-    #     total_loading_bytes /= 1000000000.0 # B --> GB
-    #     total_storing_bytes /= 1000000000.0 # B --> GB
+    if est_bandwidth:
+        total_loading_bytes /= 1000000000.0 # B --> GB
+        total_storing_bytes /= 1000000000.0 # B --> GB
     #     est_loading_bandwidth = total_loading_bytes / total_loading_cache_time_gpu # GB / s
     #     est_storing_bandwidth = total_storing_bytes / total_storing_cache_time_gpu # GB / s
 
