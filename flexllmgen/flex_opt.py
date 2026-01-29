@@ -1509,7 +1509,14 @@ if __name__ == "__main__":
 
     all_models = ["facebook/opt-6.7b", "facebook/opt-13b", "facebook/opt-30b", "facebook/opt-66b"]
     # all_model_gb = [12, 25, 55.803, 122.375]
-    all_model_weight_on_gpu = {"facebook/opt-6.7b": 100, "facebook/opt-13b": 100, "facebook/opt-30b": 70, "facebook/opt-66b": 20}
+    all_model_weight_on_gpu = {"facebook/opt-125m": 100,
+        "facebook/opt-350m": 100,
+        "facebook/opt-1.3b": 100,
+        "facebook/opt-2.7b": 100,
+        "facebook/opt-6.7b": 100, 
+        "facebook/opt-13b": 100, 
+        "facebook/opt-30b": 70, 
+        "facebook/opt-66b": 20}
     # all_model_weight_gpu = [100, 100, 70, 20]
     all_cpu_ranges = range(args.sweep_cpu_start, 110, args.sweep_cpu_step)
     all_prompt_len = [512, 1024, 2048, 4096]
