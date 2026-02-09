@@ -861,7 +861,7 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
         if kv_copy == 1 and KVLoadTimer is not None:
             KVLoadTimer.start()
 
-        src = src.pin_memory()
+        # src = src.pin_memory()
         # the following is what's actually initiating the cudaMemcpyAsync
         dst.copy_(src, non_blocking=True)
         
