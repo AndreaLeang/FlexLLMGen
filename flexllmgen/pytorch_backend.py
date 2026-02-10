@@ -751,6 +751,9 @@ class TorchMixedDevice:
             len_cpu = int(shape[SEG_DIM] * policy.cache_cpu_percent / 100) // num_head * num_head
             len_disk = shape[SEG_DIM] - len_gpu - len_cpu
         lens = [len_gpu, len_cpu, len_disk]
+        print(f"shape[SEG_DIM]: {shape[SEG_DIM]}")
+        print(f"policy.cache_gpu_percent: {policy.cache_gpu_percent}")
+        print(f"int after: {int(shape[SEG_DIM] * policy.cache_gpu_percent / 100)}")
         print(f"lens: {lens}")
 
         pin_memory = False
