@@ -743,6 +743,7 @@ class TorchMixedDevice:
 
         # We have to round to a multiple of `num_head`
         if policy.cache_disk_percent == 0:
+            # len_gpu = int(shape[SEG_DIM] * policy.cache_gpu_percent / 100) // num_head * num_head
             len_gpu = int(shape[SEG_DIM] * policy.cache_gpu_percent / 100) // num_head * num_head
             len_cpu = shape[SEG_DIM]  - len_gpu
             len_disk = 0
