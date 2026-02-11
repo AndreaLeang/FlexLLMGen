@@ -120,9 +120,9 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             writer.writeheader()
 
             for idx in range(cur_loading_idx):
-                writer.writerow({'idx': idx, 'data': loading_events[idx][0] / 1000000000.0, 'bandwidth': loading_events[idx][1]})
+                writer.writerow({'idx': idx, 'data (GB)': loading_events[idx][0] / 1000000000.0, 'bandwidth (GB/s)': loading_events[idx][1]})
             for idx in range(cur_storing_idx):
-                writer.writerow({'idx': idx, 'data': storing_events[idx][0] / 1000000000.0, 'bandwidth': storing_events[idx][1]})
+                writer.writerow({'idx': idx, 'data (GB)': storing_events[idx][0] / 1000000000.0, 'bandwidth (GB/s)': storing_events[idx][1]})
 
     total_loading_cache_time_gpu /= 1000000.0 # originally in microseconds (10^-6)
     total_storing_cache_time_gpu /= 1000000.0
