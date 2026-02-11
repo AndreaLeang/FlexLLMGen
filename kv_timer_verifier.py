@@ -112,7 +112,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     cur_storing_idx += 1
 
     if record_ind_events:
-        cur_filename = json_filename.split('.')[0] + '.csv'
+        cur_filename = json_filename[:-5] + '.csv'
         print(f"cur_filename: {cur_filename}")
         with open(cur_filename, 'w', newline='') as csvfile:
             fieldnames = ['idx', 'data (GB)', 'bandwidth (GB/s)']
