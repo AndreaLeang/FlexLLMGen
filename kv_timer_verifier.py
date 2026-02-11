@@ -76,7 +76,15 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     elif event['ts'] < interval[0]:
                         break
 
-    # get the actual GPU memcpy durations?
+    # get the actual GPU memcpy durations
+
+    if record_ind_events:
+        loading_events = {}
+        storing_events = {}
+        cur_loading_idx = 0
+        cur_storing_idx = 0
+        
+
     for event_idx in range(num_of_events):
         # find the cudaMemcpyAsync events under load_cache and store_cache
         # then find the ac2g connecting that to 
@@ -90,11 +98,30 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 total_loading_cache_time_gpu += event['dur']
                 if est_bandwidth: 
                     total_loading_bytes += event['args']['bytes']
+                if record_ind_events:
+                    loading_events[cur_loading_idx] = (event['args']['bytes'], event['args']['memory bandwidth (GB/s)'])
+                    cur_loading_idx += 1
         elif event['name'] == 'Memcpy DtoH (Device -> Pageable)':
             if event['args']['correlation'] in store_memcpy_correlations:
                 total_storing_cache_time_gpu += event['dur']
                 if est_bandwidth: 
                     total_storing_bytes += event['args']['bytes']
+                if record_ind_events:
+                    storing_events[cur_storing_idx] = (event['args']['bytes'], event['args']['memory bandwidth (GB/s)'])
+                    cur_storing_idx += 1
+
+    if record_ind_events:
+        cur_filename = json_filename.split('.')[0] + '.csv'
+        print(f"cur_filename: {cur_filename}")
+        with open(cur_filename, 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'data (GB)', 'bandwidth (GB/s)']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for idx in range(cur_loading_idx):
+                writer.writerow({'idx': idx, 'data': loading_events[idx][0] / 1000000000.0, 'bandwidth': loading_events[idx][1]})
+            for idx in range(cur_storing_idx):
+                writer.writerow({'idx': idx, 'data': storing_events[idx][0] / 1000000000.0, 'bandwidth': storing_events[idx][1]})
 
     total_loading_cache_time_gpu /= 1000000.0 # originally in microseconds (10^-6)
     total_storing_cache_time_gpu /= 1000000.0
@@ -129,6 +156,8 @@ def add_parser_arguments(parser):
     parser.add_argument('--files', nargs='+', help='List of files (space-separated)')
     parser.add_argument('--cpu-time',action="store_true", help="Measure the CPU data transfer time")
     parser.add_argument('--est-bandwidth', action="store_true", help="Measure the estimated bandwidth of the data transfer")
+    parser.add_argument('--bytes-distribution', action="store_true", help="Measure the distribution of the data transfer bytes")
+    parser.add_argument('--bw_distribution', action="store_true", help="Measure the distribution of the data transfer bandwidth")
 
 if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).parent.absolute()
