@@ -4,7 +4,7 @@ import argparse
 from pathlib import Path
 # import matplotlib.pyplot as plt
 
-def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandwidth=False):
+def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandwidth=False, record_ind_events=False):
     # open json file
     with open(json_filename, 'r') as file:
         # load json file
@@ -156,8 +156,7 @@ def add_parser_arguments(parser):
     parser.add_argument('--files', nargs='+', help='List of files (space-separated)')
     parser.add_argument('--cpu-time',action="store_true", help="Measure the CPU data transfer time")
     parser.add_argument('--est-bandwidth', action="store_true", help="Measure the estimated bandwidth of the data transfer")
-    parser.add_argument('--bytes-distribution', action="store_true", help="Measure the distribution of the data transfer bytes")
-    parser.add_argument('--bw_distribution', action="store_true", help="Measure the distribution of the data transfer bandwidth")
+    parser.add_argument('--event-dist', action="store_true", help="Measure the distribution of the data transfer bytes")
 
 if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -173,7 +172,7 @@ if __name__ == "__main__":
     # batch_tklqt = [12014.2443359375, 18471.943251953126, 49995.56291894531, 104777.457796875, 232505.366203125, 461461.98833007814]
     for batch_filename in batch_filenames:
         print(f"Processing {batch_filename}")
-        all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth)
+        all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth, args.event_dist)
         print(f"Total GPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][0]} s")
         print(f"Total GPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][1]} s")
         if args.cpu_time:
