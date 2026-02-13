@@ -143,7 +143,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         total_storing_bytes /= 1000000000.0 # B --> GB
     #     est_loading_bandwidth = total_loading_bytes / total_loading_cache_time_gpu # GB / s
     #     est_storing_bandwidth = total_storing_bytes / total_storing_cache_time_gpu # GB / s
-    csv_filename = json_filename[:-31]  + '.csv'
+    csv_filename = json_filename[:-41]  + '.csv'
     add_headers = not Path(csv_filename).exists()
     print(f"csv_filename: {csv_filename}")
     kv_gpu_percent = int(json_filename.split('-')[9])
