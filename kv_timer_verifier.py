@@ -150,8 +150,8 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     with open(csv_filename, 'w', newline='') as csvfile:
             fieldnames = ['kv_gpu_percent', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            if add_headers:
-                writer.writeheader()
+            # if add_headers:
+            writer.writeheader()
 
             writer.writerow({'kv_gpu_percent': kv_gpu_percent, 
                 'tot_loading_time_gpu (s)': total_loading_cache_time_gpu, 
