@@ -1,6 +1,7 @@
 import json
 import csv
 import argparse
+import os
 
 from pathlib import Path
 # import matplotlib.pyplot as plt
@@ -142,6 +143,23 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         total_storing_bytes /= 1000000000.0 # B --> GB
     #     est_loading_bandwidth = total_loading_bytes / total_loading_cache_time_gpu # GB / s
     #     est_storing_bandwidth = total_storing_bytes / total_storing_cache_time_gpu # GB / s
+    csv_filename = json_filename[:-31]  + '.csv'
+    add_headers = not Path(csv_filename).exists()
+    print(f"csv_filename: {csv_filename}")
+    kv_gpu_percent = int(json_filename.split('-')[9])
+    with open(csv_filename, 'w', newline='') as csvfile:
+            fieldnames = ['kv_gpu_percent', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            if add_headers:
+                writer.writeheader()
+
+            writer.writerow({'kv_gpu_percent': kv_gpu_percent, 
+                'tot_loading_time_gpu (s)': total_loading_cache_time_gpu, 
+                'tot_storing_time_gpu (s)': total_storing_cache_time_gpu, 
+                'tot_loading_time_cpu (s)': total_loading_cache_time_cpu, 
+                'tot_storing_time_cpu (s)': total_storing_cache_time_cpu, 
+                'total_loading_bytes (GB)': total_loading_bytes, 
+                'total_storing_bytes (GB)': total_storing_bytes})
 
     return total_loading_cache_time_gpu, total_storing_cache_time_gpu, total_loading_cache_time_cpu, total_storing_cache_time_cpu, total_loading_bytes, total_storing_bytes # in s
 
