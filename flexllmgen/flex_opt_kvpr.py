@@ -9,6 +9,7 @@ import os
 import pickle
 import time
 from typing import Union, List, Optional
+import csv
 
 import numpy as np
 from tqdm import tqdm
