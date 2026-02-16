@@ -208,7 +208,7 @@ class OutputEmbed:
     def init_cache_one_gpu_batch(self, cache_home):
         pass  # do nothing
 
-    def load_cache(self, cache_home, cache_read_buf, i, cpu_cache_read_buf, cpu_cache_read_buf, KVLoadTimer=None):
+    def load_cache(self, cache_home, cache_read_buf, i, cpu_cache_read_buf, KVLoadTimer=None):
         pass  # do nothing
 
     #KVPR
@@ -1159,7 +1159,7 @@ class OptLM:
             self.env.cpu.del_attention_compute_workspace()
 
         return self.output_ids
-# currently here 
+
     def generation_loop_normal(self):
         for i in range(self.execute_gen_len):
             timers("generate").start()
