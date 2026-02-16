@@ -1600,9 +1600,9 @@ def run_flexllmgen(args):
     #     return None
 
     if args.kv_partial:
-            recompute_len = min(prompt_len, get_optimal_split_point(prompt_len + gen_len, args.gpu_batch_size, opt_config.input_dim))
-        else:
-            recompute_len = args.recompute_len
+        recompute_len = min(prompt_len, get_optimal_split_point(prompt_len + gen_len, args.gpu_batch_size, opt_config.input_dim))
+    else:
+        recompute_len = args.recompute_len
     print(f"recompute len: {recompute_len}")
 
     print("init weight...")
