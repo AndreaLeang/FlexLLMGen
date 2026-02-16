@@ -301,3 +301,20 @@ def read_benchmark_log(filename):
         decode_latency, decode_throughput,
         total_latency, total_throughput,
     )
+
+# From KVPR
+def get_optimal_split_point(execute_gen_len, gpu_batch_size, input_dim):
+    t_min, optimal_split_point = float('inf'), -1
+    step = 1
+    v_com = 32 * 1e9
+    v_gpu = 312 * 1e12
+    for recompute_len in range(0, execute_gen_len + 1, step):
+        memory_recompute_activations = gpu_batch_size * recompute_len * input_dim * 2
+        N_recompute_flops = 4 * gpu_batch_size * recompute_len * input_dim * input_dim
+        t_recomp = N_recompute_flops / v_gpu
+        memory_kv_cache = 2 * gpu_batch_size * (execute_gen_len - recompute_len) * input_dim * 2
+        t_total = memory_recompute_activations / v_com + max(t_recomp, memory_kv_cache / v_com)
+        if t_total < t_min:
+            t_min = t_total
+            optimal_split_point = recompute_len
+    return optimal_split_point
