@@ -306,7 +306,7 @@ class TorchDevice:
         return k_cache, v_cache
 
     # KVPR
-     def init_cache_recompute_one_gpu_batch(self, config, task, policy):
+    def init_cache_recompute_one_gpu_batch(self, config, task, policy):
         num_head, hidden_size, prompt_len, gen_len, gpu_batch_size = (
             config.n_head, config.input_dim, task.prompt_len, task.gen_len,
             policy.gpu_batch_size)
