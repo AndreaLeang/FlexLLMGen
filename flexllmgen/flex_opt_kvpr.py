@@ -150,7 +150,7 @@ class InputEmbed:
         return (batch_size, seq_len), np.int64
 
     def forward(self, hidden, cache_read_buf, weight_read_buf, attention_mask,
-                cache_write_buf, i, k):
+                cache_write_buf, i, k, hidden_compute_read_buf, cpu_cache_read_buf):
         # Compute input embedding
         donate = [False] * 4
         h, donate[0] = hidden.val, True
@@ -225,7 +225,7 @@ class OutputEmbed:
         return (batch_size, seq_len, self.config.input_dim), self.config.dtype
 
     def forward(self, hidden, cache_read_buf, weight_read_buf, attention_mask,
-                cache_write_buf, i, k):
+                cache_write_buf, i, k, hidden_compute_read_buf, cpu_cache_read_buf):
         donate = [False] * 4
         h, donate[0] = hidden.val, True
 
