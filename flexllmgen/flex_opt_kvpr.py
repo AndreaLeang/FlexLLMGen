@@ -361,7 +361,7 @@ class SelfAttention:
             # KVPR
             indices = (slice(self.recompute_len, self.task.prompt_len + i),
                        slice(0, k_home.shape[1]))
-            print(f"loading indices: {indicies}")
+            print(f"loading indices: {indices}")
 
             if self.policy.attn_sparsity >= 1.0:
                 cache_read_buf.store((
