@@ -258,6 +258,7 @@ class SelfAttention:
         self.task = None
         self.recompute_len = recompute_len
         self.cpu_gpu_compute = cpu_gpu_compute
+        print(self.recompute_len)
 
     def set_task(self, task):
         self.task = task
