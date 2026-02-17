@@ -356,7 +356,10 @@ class SelfAttention:
 
         if path == 0:  # Direct copy
             # shape: (s, b * n_head, head_dim)
-            indices = (slice(0, self.task.prompt_len + i),
+            # indices = (slice(0, self.task.prompt_len + i),
+            #            slice(0, k_home.shape[1]))
+            # KVPR
+            indices = (slice(self.recompute_len, self.task.prompt_len + i),
                        slice(0, k_home.shape[1]))
 
             if self.policy.attn_sparsity >= 1.0:
