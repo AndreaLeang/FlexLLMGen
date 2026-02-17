@@ -1619,22 +1619,22 @@ def run_flexllmgen(args):
         costs, output_ids = run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len, env)
     else:
         # regular warmup + generate
-        try:
-            print("warmup - generate")
-            output_ids = model.generate(
-                warmup_inputs, max_new_tokens=1, verbose=args.verbose)
+        # try:
+        print("warmup - generate")
+        output_ids = model.generate(
+            warmup_inputs, max_new_tokens=1, verbose=args.verbose)
 
-            print("benchmark - generate")
-            timers("generate").reset()
-            output_ids = model.generate(
-                inputs, max_new_tokens=args.gen_len,
-                debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
-            costs = timers("generate").costs
-        except Exception as e: 
-            print(f"error in generate, do not run")
-            print(f"Exception: {e}")
-            env.close_copy_threads()
-            return None 
+        print("benchmark - generate")
+        timers("generate").reset()
+        output_ids = model.generate(
+            inputs, max_new_tokens=args.gen_len,
+            debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
+        costs = timers("generate").costs
+        # except Exception as e: 
+        #     print(f"error in generate, do not run")
+        #     print(f"Exception: {e}")
+        #     env.close_copy_threads()
+        #     return None 
         # finally:
         env.close_copy_threads()
 
