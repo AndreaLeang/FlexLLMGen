@@ -1628,8 +1628,9 @@ def run_flexllmgen(args):
                 inputs, max_new_tokens=args.gen_len,
                 debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
             costs = timers("generate").costs
-        except: 
+        except Exception as e: 
             print(f"error in generate, do not run")
+            print(f"Exception: {e}")
             env.close_copy_threads()
             return None 
         # finally:
