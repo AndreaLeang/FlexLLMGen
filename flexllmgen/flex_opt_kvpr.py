@@ -618,7 +618,8 @@ class SelfAttention:
                     k_cache = k_cache.device.decompress(k_cache)
                     v_cache = v_cache.device.decompress(v_cache)
 
-
+                print(f"k_cache_expanded size: {k_cache_expanded.size()}")
+                print(f"k_cache size: {k_cache.size()}")
                 k_cache_expanded[compute_s:].copy_(k_cache.data)
                 v_cache_expanded[compute_s:].copy_(v_cache.data)
 
