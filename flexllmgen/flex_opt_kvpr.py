@@ -620,6 +620,7 @@ class SelfAttention:
 
                 print(f"k_cache_expanded size: {k_cache_expanded.shape}")
                 print(f"k_cache size: {k_cache.shape}")
+                print(compute_s)
                 k_cache_expanded[compute_s:].copy_(k_cache.data)
                 v_cache_expanded[compute_s:].copy_(v_cache.data)
 
