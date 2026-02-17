@@ -315,8 +315,12 @@ class SelfAttention:
         if self.policy.compress_cache:
             assert device.device_type != DeviceType.MIXED, "device type is mixed for compress cache"
             device = device.compressed_device
+            
+        if self.cpu_gpu_compute:
+            cache = device.init_cache_recompute_one_gpu_batch(self.config, self.task, self.policy)
+        else:
+            cache = device.init_cache_one_gpu_batch(self.config, self.task, self.policy)
 
-        cache = device.init_cache_one_gpu_batch(self.config, self.task, self.policy)
         cache_home.store(cache)
 
     def init_hidden_one_gpu_batch(self, hidden_compute_home):
