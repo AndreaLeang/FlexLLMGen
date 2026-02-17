@@ -258,7 +258,6 @@ class SelfAttention:
         self.task = None
         self.recompute_len = recompute_len
         self.cpu_gpu_compute = cpu_gpu_compute
-        print(self.recompute_len)
 
     def set_task(self, task):
         self.task = task
@@ -362,6 +361,7 @@ class SelfAttention:
             # KVPR
             indices = (slice(self.recompute_len, self.task.prompt_len + i),
                        slice(0, k_home.shape[1]))
+            print(f"loading indices: {indicies}")
 
             if self.policy.attn_sparsity >= 1.0:
                 cache_read_buf.store((
