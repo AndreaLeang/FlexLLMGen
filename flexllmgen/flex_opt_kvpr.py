@@ -362,6 +362,7 @@ class SelfAttention:
             indices = (slice(self.recompute_len, self.task.prompt_len + i),
                        slice(0, k_home.shape[1]))
             print(f"loading indices: {indices}")
+            print(f"cache_read_buf_shape: {cache_read_buf.shape}")
 
             if self.policy.attn_sparsity >= 1.0:
                 cache_read_buf.store((
