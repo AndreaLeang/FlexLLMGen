@@ -362,18 +362,19 @@ class SelfAttention:
             indices = (slice(self.recompute_len, self.task.prompt_len + i),
                        slice(0, k_home.shape[1]))
             print(f"loading indices: {indices}")
-            print(f"cache_read_buf_shape: {cache_read_buf.shape}")
 
             if self.policy.attn_sparsity >= 1.0:
                 cache_read_buf.store((
                     k_home.smart_copy(dst, indices, 1, KVLoadTimer),
                     v_home.smart_copy(dst, indices, 1, KVLoadTimer),
                 ))
+                print(f"k_home shape: {k_home.shape}")
             else:
                 cache_read_buf.store((
                     k_home.smart_copy(dst, indices, 1, KVLoadTimer),
                     (v_home, False),
                 ))
+                
         elif path == 1:  # Copy to CPU temporary workspace
             # shape: (s, b * n_head, head_dim)
             k_buf, v_buf = dst.next_attention_compute_workspace()
