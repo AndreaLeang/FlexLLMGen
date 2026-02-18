@@ -22,7 +22,7 @@ from transformers import AutoTokenizer
 from flexllmgen.compression import CompressionConfig, Policy
 from flexllmgen.opt_config import OptConfig, get_opt_config, download_opt_weights
 from flexllmgen.pytorch_backend import (TorchDevice, TorchDisk, TorchLink,
-    TorchMixedDevice, DeviceType, general_copy, fix_recursive_import)
+    TorchMixedDevice, DeviceType, general_copy, fix_recursive_import, TorchTensor)
 from flexllmgen.timer import timers
 from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     array_1d, array_2d, array_3d, str2bool, project_decode_latency,
@@ -252,7 +252,7 @@ class SelfAttention:
         self.compute = self.env.gpu
         self.weight_load_dst = (self.compute.compressed_device if policy.compress_weight
             else self.compute)
-        self.attention_compute = (self.env.cpu if self.policy.cpu_cache_compute
+        self.attention_compute = (self.env.cpu if self.policy.cpu_cache_compute or cpu_gpu_compute
             else self.env.gpu)
 
         self.task = None
@@ -305,7 +305,7 @@ class SelfAttention:
     def init_cache_one_gpu_batch(self, cache_home):
         if self.policy.cache_gpu_percent == 100:
             device = self.env.gpu
-        elif self.policy.cache_cpu_percent == 100:
+        elif self.policy.cache_cpu_percent == 100 or self.cpu_gpu_compute:
             device = self.env.cpu
         elif self.policy.cache_disk_percent == 100:
             device = self.env.disk
@@ -369,13 +369,13 @@ class SelfAttention:
 
             if self.policy.attn_sparsity >= 1.0:
                 cache_read_buf.store((
-                    k_home.smart_copy(dst, indices, 1, KVLoadTimer),
-                    v_home.smart_copy(dst, indices, 1, KVLoadTimer),
+                    k_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
+                    v_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
                 ))
                 print(f"k_home shape: {k_home.shape}")
             else:
                 cache_read_buf.store((
-                    k_home.smart_copy(dst, indices, 1, KVLoadTimer),
+                    k_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
                     (v_home, False),
                 ))
                 
@@ -642,7 +642,7 @@ class SelfAttention:
                 h, new_k_cache, new_v_cache = self.compute.mha_gen(h, mask, w_q,
                     b_q, w_k, b_k, w_v, b_v, w_out, b_out, w_ln, b_ln, n_head,
                     k_cache, v_cache, donate, self.policy.attn_sparsity,
-                    self.policy.compress_cache, self.policy.comp_cache_config)
+                    self.policy.compress_cache, self.policy.comp_cache_config, self.recompute_len)
             
             cache_write_buf.store((new_k_cache, new_v_cache))
 
@@ -1067,7 +1067,7 @@ class OptLM:
         right = left + gpu_batch_size
         input_ids = self.output_ids[left:right, :self.task.prompt_len]
 
-        attention_compute = (self.env.cpu if self.policy.cpu_cache_compute
+        attention_compute = (self.env.cpu if self.policy.cpu_cache_compute or self.cpu_gpu_compute
             else self.env.gpu)
         val = attention_compute.allocate(
             (self.policy.gpu_batch_size, self.task.prompt_len), bool)
@@ -1133,7 +1133,7 @@ class OptLM:
                 self.init_cache(j, k)
                 if self.recompute_len > 0:
                     self.init_hidden(j, k)
-        if self.policy.cpu_cache_compute:
+        if self.policy.cpu_cache_compute or self.cpu_gpu_compute:
             self.env.cpu.init_attention_compute_workspace(self.config, self.task, self.policy)
 
         # Generate
@@ -1170,7 +1170,7 @@ class OptLM:
                 self.delete_cache(j, k)
                 if self.recompute_len > 0:
                     self.delete_hidden_compute(j, k)
-        if self.policy.cpu_cache_compute:
+        if self.policy.cpu_cache_compute or self.cpu_gpu_compute:
             self.env.cpu.del_attention_compute_workspace()
 
         return self.output_ids
