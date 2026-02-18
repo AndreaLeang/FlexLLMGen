@@ -1012,9 +1012,11 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
         src = src.data[src_indices] if src_indices is not None else src.data
         dst = dst.data[dst_indices] if dst_indices is not None else dst.data
 
+        print(f"src_indices: {src_indices}")
+        print(f"dst_indices: {dst_indices}")
         if started_timer:
             KVStoreTimer.start()
-            
+        
         dst.copy_(src, non_blocking=True)
         
         if started_timer:
