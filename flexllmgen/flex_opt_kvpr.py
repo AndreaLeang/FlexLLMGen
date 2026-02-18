@@ -365,14 +365,12 @@ class SelfAttention:
             # KVPR
             indices = (slice(self.recompute_len, self.task.prompt_len + i),
                        slice(0, k_home.shape[1]))
-            print(f"loading indices: {indices}")
 
             if self.policy.attn_sparsity >= 1.0:
                 cache_read_buf.store((
                     k_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
                     v_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
                 ))
-                print(f"k_home shape: {k_home.shape}")
             else:
                 cache_read_buf.store((
                     k_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
@@ -628,9 +626,6 @@ class SelfAttention:
                     k_cache = k_cache.device.decompress(k_cache)
                     v_cache = v_cache.device.decompress(v_cache)
 
-                print(f"k_cache_expanded size: {k_cache_expanded.shape}")
-                print(f"k_cache size: {k_cache.shape}")
-                print(compute_s)
                 k_cache_expanded[compute_s:].copy_(k_cache.data)
                 v_cache_expanded[compute_s:].copy_(v_cache.data)
 
