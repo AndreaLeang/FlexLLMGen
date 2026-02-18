@@ -24,7 +24,7 @@ from flexllmgen.timer import timers
 from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     array_1d, array_2d, array_3d, str2bool, project_decode_latency,
     torch_mem_stats, torch_dtype_to_np_dtype, write_benchmark_log,
-    read_benchmark_log, write_csv_log, get_optimal_split_point)
+    read_benchmark_log, get_optimal_split_point)
 
 fix_recursive_import()
 
@@ -1543,11 +1543,6 @@ def get_test_inputs(prompt_len, num_prompts, tokenizer):
     return (input_ids[0],) * num_prompts
 
 
-def test_write_csv_log(args):
-    filename = "./output.csv"
-    print(f"filename: {filename}")
-    write_csv_log(filename, args, 1024*1024, 1024, 1024, 1024, True, 123, 12.3, 345, 34.5, 456, 45.6, 512)
-
 
 def run_flexgen(args):
     print(f"<run_flexgen>: args.model: {args.model}")
@@ -1659,10 +1654,7 @@ def run_flexgen(args):
         if args.verbose >= 1:
             print(log_str)
 
-        csv_filename = args.csv_file
-        write_csv_log(csv_filename, args, opt_config.model_bytes(), cache_size,
-            hidden_size, gpu_peak_mem, projected, prefill_latency, prefill_throughput,
-            decode_latency, decode_throughput, total_latency, total_throughput, recompute_len)
+        
 
 
 def add_parser_arguments(parser):
