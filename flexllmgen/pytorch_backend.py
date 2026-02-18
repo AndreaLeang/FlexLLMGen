@@ -1008,6 +1008,8 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
           dst.device.device_type == DeviceType.CPU and 
           kv_copy == 2 and KVStoreTimer is not None):
             started_timer = True
+
+        print(f"src_indicies: {src_indices}")
         src = src.data[src_indices] if src_indices else src.data
         dst = dst.data[dst_indices] if dst_indices else dst.data
 
