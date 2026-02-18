@@ -172,9 +172,6 @@ class TorchDevice:
 
         self.attention_compute_workspace = None
         self.workspace_pt = 0
-        #KVPR
-        self.len_gpu = -1
-        self.len_cpu = -1
 
         if self.device_type == DeviceType.CPU:
             global global_cpu_device
@@ -212,15 +209,8 @@ class TorchDevice:
             # so we only need one workspace instead of two.
             for i in range(1 if policy.sep_layer else 2):
                 shape = (max_seq_len, b * n_head, head_dim)
-                # KVPR ***
-                ratio = b * n_head * self.len_cpu // (self.len_gpu + self.len_cpu)
-                updated_shape = (max_seq_len, b * n_head * self.len_cpu // (self.len_gpu + self.len_cpu), head_dim)
-                k_cache = self.allocate(updated_shape, np.float32, pin_memory=False)
-                v_cache = self.allocate(updated_shape, np.float32, pin_memory=False)
-
-                # # regular
-                # k_cache = self.allocate(shape, np.float32, pin_memory=False)
-                # v_cache = self.allocate(shape, np.float32, pin_memory=False)
+                k_cache = self.allocate(shape, np.float32, pin_memory=False)
+                v_cache = self.allocate(shape, np.float32, pin_memory=False)
                 self.attention_compute_workspace.append((k_cache, v_cache))
         else:
             self.compressed_device.init_attention_compute_workspace(
@@ -305,38 +295,6 @@ class TorchDevice:
         v_cache = self.allocate(shape, np.float16, pin_memory=pin_memory)
         return k_cache, v_cache
 
-    # KVPR
-    def init_cache_recompute_one_gpu_batch(self, config, task, policy):
-        num_head, hidden_size, prompt_len, gen_len, gpu_batch_size = (
-            config.n_head, config.input_dim, task.prompt_len, task.gen_len,
-            policy.gpu_batch_size)
-        shape = (prompt_len + gen_len - 1, gpu_batch_size * num_head, hidden_size // num_head)
-
-        # We have to round to a multiple of `num_head`
-        if policy.cache_disk_percent == 0:
-            len_gpu = int(shape[SEG_DIM] * policy.cache_gpu_percent / 100) // num_head * num_head
-            len_cpu = shape[SEG_DIM]  - len_gpu
-            len_disk = 0
-        else:
-            len_gpu = int(shape[SEG_DIM] * policy.cache_gpu_percent / 100) // num_head * num_head
-            len_cpu = int(shape[SEG_DIM] * policy.cache_cpu_percent / 100) // num_head * num_head
-            len_disk = shape[SEG_DIM] - len_gpu - len_cpu
-        lens = [len_gpu, len_cpu, len_disk]
-        self.len_gpu = len_gpu
-        self.len_cpu = len_cpu
-
-        pin_memory = False
-        k_cache = self.allocate(shape, np.float16, pin_memory=pin_memory)
-        v_cache = self.allocate(shape, np.float16, pin_memory=pin_memory)
-        return k_cache, v_cache
-
-    # KVPR
-    def init_hidden_compute_one_gpu_batch(self, config, recompute_len, policy):
-        shape = (policy.gpu_batch_size, recompute_len, config.input_dim)
-        pin_memory = policy.pin_weight
-        hidden_compute = self.allocate(shape, np.float16, pin_memory=pin_memory)
-        return hidden_compute
-
     def mha(self, inputs, attention_mask, w_q, b_q, w_k, b_k, w_v, b_v,
             w_out, b_out, w_ln, b_ln, n_head, donate, compress_cache, comp_config):
         """Multi-head attention (prefill phase)."""
@@ -408,7 +366,7 @@ class TorchDevice:
 
     def mha_gen(self, inputs, attention_mask, w_q, b_q, w_k, b_k, w_v, b_v,
                 w_out, b_out, w_ln, b_ln, n_head, k_cache, v_cache, donate,
-                attn_sparsity, compress_cache, comp_config, recompute_len=0):
+                attn_sparsity, compress_cache, comp_config):
         """Multi-head attention (decoding phase)."""
         # decompress weights
         if w_q.device.device_type == DeviceType.COMPRESSED:
@@ -440,9 +398,9 @@ class TorchDevice:
         # shape: (1, b * n_head, head_dim)
         v_new = v.permute(1, 0, 2, 3).reshape(tgt_s, b * n_head, head_dim)
 
-        if isinstance(k_cache, TorchTensor) or recompute_len > 0:
+        if isinstance(k_cache, TorchTensor):
             if attn_sparsity >= 1.0:  # Dense attention
-                if compress_cache and recompute_len == 0:
+                if compress_cache:
                     # shape: (s, b * n_head, head_dim)
                     k = k_cache.device.decompress(k_cache)[:src_s]
                     v = v_cache.device.decompress(v_cache)[:src_s]
@@ -487,34 +445,6 @@ class TorchDevice:
             value = self._mixed_device_attention(q, k_cache, v_cache,
                 k_new, v_new, attention_mask.data, b, src_s, tgt_s,
                 n_head, head_dim)
-
-        # shape: (b, 1, h)
-        value = value.transpose(1, 2).view(b, tgt_s, h)
-        value = F.linear(value, w_out.data, bias=b_out.data)
-
-        value.add_(inputs.data)
-
-        if donate[0]: inputs.delete()
-        if donate[1]: attention_mask.delete()
-
-        if compress_cache:
-            if comp_config.group_dim == 0:
-                s_ = src_s // comp_config.group_size * comp_config.group_size
-                k_new = k[:, :, s_:].permute(2, 0, 1)
-                v_new = v[:, s_:, :].permute(1, 0, 2)
-            k_new = self.compressed_device.compress(k_new, comp_config)
-            v_new = self.compressed_device.compress(v_new, comp_config)
-        else:
-            k_new = TorchTensor.create_from_torch(k_new, self)
-            v_new = TorchTensor.create_from_torch(v_new, self)
-
-        return TorchTensor.create_from_torch(value, self), k_new, v_new
-
-    # KVPR
-    def mha_gen_helper(self, value_cpu, value_gpu, b, tgt_s, h, w_out, b_out, inputs, attention_mask, donate,
-        compress_cache, comp_cache_config, src_s, k, v, k_new, v_new):
-        
-        value = torch.cat([value_gpu, value_cpu.cuda().half()], dim=0)
 
         # shape: (b, 1, h)
         value = value.transpose(1, 2).view(b, tgt_s, h)
@@ -589,66 +519,6 @@ class TorchDevice:
 
         # shape: (b * n_head, 1, head_dim)
         return torch.bmm(attn_weights, v).view(b, n_head, tgt_s, head_dim)
-
-    # KVPR 
-    def _mixed_gpu_attention(self, q, k_cache, v_cache, k_new, v_new,
-            mask, b, src_s, tgt_s, n_head, head_dim):
-        k_gpu = k_cache.data
-        v_gpu = v_cache.data
-        seg = k_gpu.shape[1]
-
-        # Compute GPU part
-        b_gpu = seg // n_head
-        q_gpu = q[:seg]
-        # print(f"_mixed_gpu_attention seg: {seg} b_gpu: {b_gpu} q_gpu.shape: {q_gpu.shape}")
-        # shape: (s, b * n_head, head_dim)
-        k_gpu = k_gpu[:src_s, :seg, :]
-        v_gpu = v_gpu[:src_s, :seg, :]
-        k_gpu[src_s-1:src_s, :, :] = k_new[:, :seg, :]
-        v_gpu[src_s-1:src_s, :, :] = v_new[:, :seg, :]
-        # shape: (b * n_head, head_dim, s)
-        k_gpu = k_gpu.permute(1, 2, 0)
-        # shape: (b * n_head, s, head_dim)
-        v_gpu = v_gpu.permute(1, 0, 2)
-
-        mask_gpu = mask[:b_gpu].cuda()
-        # print(f"mask.shape: {mask.shape} mask_gpu.shape: {mask_gpu.shape}")
-        value_gpu = self._attention_value(q_gpu, k_gpu, v_gpu, mask_gpu,
-            b_gpu, src_s, tgt_s, n_head, head_dim)
-        return value_gpu
-
-    #KVPR
-    
-    def _mixed_cpu_attention(self, q, cpu_k_cache, cpu_v_cache, k_new, v_new,
-            mask, b, src_s, tgt_s, n_head, head_dim):
-        # Compute CPU Part
-        k_cpu = cpu_k_cache.data
-        v_cpu = cpu_v_cache.data
-
-        # b_cpu = b - b_gpu
-        # use the last elements to represent k_cpu
-        seg = -k_cpu.shape[1]
-
-        b_cpu = k_cpu.shape[1] // n_head
-        q_cpu = q[seg:].float().cpu()
-        # print(f"_mixed_cpu_attention seg: {seg} b_cpu: {b_cpu} q_cpu.shape: {q_cpu.shape}")
-        # shape: (s, b * n_head, head_dim)
-        k_cpu = k_cpu[:src_s, seg:, :]
-        v_cpu = v_cpu[:src_s, seg:, :]
-        k_cpu[src_s-1:src_s, :, :] = k_new[:, seg:, :]
-        v_cpu[src_s-1:src_s, :, :] = v_new[:, seg:, :]
-        # shape: (b * n_head, head_dim, s)
-        k_cpu = k_cpu.permute(1, 2, 0)
-        # shape: (b * n_head, s, head_dim)
-        v_cpu = v_cpu.permute(1, 0, 2)
-
-        # mask_cpu = mask[b_gpu:]
-        mask_cpu = mask[-b_cpu:]
-        # print(f"mask.shape: {mask.shape} mask_cpu.shape: {mask_cpu.shape}")
-        value_cpu = self._attention_value(q_cpu, k_cpu, v_cpu, mask_cpu,
-            b_cpu, src_s, tgt_s, n_head, head_dim)
-        return value_cpu
-
 
     def _mixed_device_attention(self, q, k_cache, v_cache, k_new, v_new,
             mask, b, src_s, tgt_s, n_head, head_dim):
@@ -1008,15 +878,12 @@ def general_copy(dst: TorchTensor, dst_indices: Tuple[slice],
           dst.device.device_type == DeviceType.CPU and 
           kv_copy == 2 and KVStoreTimer is not None):
             started_timer = True
+        src = src.data[src_indices] if src_indices else src.data
+        dst = dst.data[dst_indices] if dst_indices else dst.data
 
-        src = src.data[src_indices] if src_indices is not None else src.data
-        dst = dst.data[dst_indices] if dst_indices is not None else dst.data
-
-        # print(f"src_indices: {src_indices}")
-        # print(f"dst_indices: {dst_indices}")
         if started_timer:
             KVStoreTimer.start()
-        
+            
         dst.copy_(src, non_blocking=True)
         
         if started_timer:
