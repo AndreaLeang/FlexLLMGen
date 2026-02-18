@@ -441,8 +441,8 @@ class TorchDevice:
         v_new = v.permute(1, 0, 2, 3).reshape(tgt_s, b * n_head, head_dim)
 
         if isinstance(k_cache, TorchTensor) or recompute_len > 0:
-            if attn_sparsity >= 1.0 and recompute_len == 0:  # Dense attention
-                if compress_cache:
+            if attn_sparsity >= 1.0:  # Dense attention
+                if compress_cache and recompute_len == 0:
                     # shape: (s, b * n_head, head_dim)
                     k = k_cache.device.decompress(k_cache)[:src_s]
                     v = v_cache.device.decompress(v_cache)[:src_s]
