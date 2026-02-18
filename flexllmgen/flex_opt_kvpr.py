@@ -1867,6 +1867,7 @@ if __name__ == "__main__":
         all_policies_avg[model] = all_policies
 
     csv_filename = get_filename(args)[:-41]  + 'throughput.csv'
+    print(f"attempt to split csv filename: {get_filename(args).split("-gen")}")
     fieldnames = ['model', 'iter','prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'Throughput (token/s)']
 
     if not os.path.exists(csv_filename):
