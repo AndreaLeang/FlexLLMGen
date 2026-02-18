@@ -1559,6 +1559,22 @@ if __name__ == "__main__":
                             all_policies.append((prompt_len, gen_len, cpu_range, tot_throughput))
         all_policies_avg[model] = all_policies
 
-    for model in all_models:
-        print(f"model: {model}")
-        print(f"(prompt_len, gen_len, cpu_range, avg throughput) over {args.sweep_average} iterations: {all_policies_avg[model]}")
+    csv_filename = get_filename(args).split("gen")[0]  + 'throughput.csv'
+    fieldnames = ['model', 'iter','prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'Throughput (token/s)']
+
+    if not os.path.exists(csv_filename):
+        with open(csv_filename, 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+        
+    with open(csv_filename, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        for model in all_models:
+            cur_prompt_len = all_policies_avg[model][0][0]
+            cur_gen_len = all_policies_avg[model][0][1]
+            cur_kv_gpu_percent = 100-all_policies_avg[model][0][2]
+            cur_kv_cpu_percent = all_policies_avg[model][0][2]
+            cur_throughput = all_policies_avg[model][0][3]
+            writer.writerow({'model': model, 'iter': args.sweep_average, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'Throughput (token/s)': cur_throughput})
+            print(f"model: {model}")
+            print(f"(prompt_len, gen_len, cpu_range, avg throughput) over {args.sweep_average} iterations: {all_policies_avg[model]}")
