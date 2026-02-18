@@ -1866,8 +1866,8 @@ if __name__ == "__main__":
                             all_policies.append((prompt_len, gen_len, cpu_range, tot_throughput))
         all_policies_avg[model] = all_policies
 
-    csv_filename = get_filename(args).split("gen")[0]  + 'throughput.csv'
-    fieldnames = ['model', 'iter','prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'Throughput (token/s)']
+    csv_filename = get_filename(args).split("gbs")[0]  + 'throughput.csv'
+    fieldnames = ['model', 'iter','gbs', 'ngbs', 'prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'Throughput (token/s)']
 
     if not os.path.exists(csv_filename):
         with open(csv_filename, 'w', newline='') as csvfile:
@@ -1883,6 +1883,6 @@ if __name__ == "__main__":
                 cur_kv_gpu_percent = 100-each_run[2]
                 cur_kv_cpu_percent = each_run[2]
                 cur_throughput = each_run[3]
-                writer.writerow({'model': model, 'iter': args.sweep_average, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'Throughput (token/s)': cur_throughput})
+                writer.writerow({'model': model, 'iter': args.sweep_average, 'gbs': args.gpu_batch_size, 'ngbs': num_gpu_batches, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'Throughput (token/s)': cur_throughput})
             print(f"model: {model}")
             print(f"(prompt_len, gen_len, cpu_range, avg throughput) over {args.sweep_average} iterations: {all_policies_avg[model]}")
