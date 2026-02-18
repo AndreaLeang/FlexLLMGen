@@ -408,7 +408,7 @@ class TorchDevice:
 
     def mha_gen(self, inputs, attention_mask, w_q, b_q, w_k, b_k, w_v, b_v,
                 w_out, b_out, w_ln, b_ln, n_head, k_cache, v_cache, donate,
-                attn_sparsity, compress_cache, comp_config):
+                attn_sparsity, compress_cache, comp_config, recompute_len=0):
         """Multi-head attention (decoding phase)."""
         # decompress weights
         if w_q.device.device_type == DeviceType.COMPRESSED:
@@ -440,8 +440,8 @@ class TorchDevice:
         # shape: (1, b * n_head, head_dim)
         v_new = v.permute(1, 0, 2, 3).reshape(tgt_s, b * n_head, head_dim)
 
-        if isinstance(k_cache, TorchTensor):
-            if attn_sparsity >= 1.0:  # Dense attention
+        if isinstance(k_cache, TorchTensor) or recompute_len > 0:
+            if attn_sparsity >= 1.0 and recompute_len == 0:  # Dense attention
                 if compress_cache:
                     # shape: (s, b * n_head, head_dim)
                     k = k_cache.device.decompress(k_cache)[:src_s]
