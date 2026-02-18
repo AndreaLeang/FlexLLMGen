@@ -1878,11 +1878,11 @@ if __name__ == "__main__":
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         for model in all_models:
             for each_run in all_policies_avg[model]:
-                cur_prompt_len = all_policies_avg[model][0]
-                cur_gen_len = all_policies_avg[model][1]
-                cur_kv_gpu_percent = 100-all_policies_avg[model][2]
-                cur_kv_cpu_percent = all_policies_avg[model][2]
-                cur_throughput = all_policies_avg[model][3]
+                cur_prompt_len = each_run[0]
+                cur_gen_len = each_run[1]
+                cur_kv_gpu_percent = 100-each_run[2]
+                cur_kv_cpu_percent = each_run[2]
+                cur_throughput = each_run[3]
                 writer.writerow({'model': model, 'iter': args.sweep_average, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'Throughput (token/s)': cur_throughput})
             print(f"model: {model}")
             print(f"(prompt_len, gen_len, cpu_range, avg throughput) over {args.sweep_average} iterations: {all_policies_avg[model]}")
