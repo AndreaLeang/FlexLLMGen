@@ -299,6 +299,22 @@ class TorchDevice:
             config.n_head, config.input_dim, task.prompt_len, task.gen_len,
             policy.gpu_batch_size)
         shape = (prompt_len + gen_len - 1, gpu_batch_size * num_head, hidden_size // num_head)
+        # add kvpr 
+        # We have to round to a multiple of `num_head`
+        if policy.cache_disk_percent == 0:
+            len_gpu = int(shape[SEG_DIM] * policy.cache_gpu_percent / 100) // num_head * num_head
+            len_cpu = shape[SEG_DIM]  - len_gpu
+            len_disk = 0
+        else:
+            len_gpu = int(shape[SEG_DIM] * policy.cache_gpu_percent / 100) // num_head * num_head
+            len_cpu = int(shape[SEG_DIM] * policy.cache_cpu_percent / 100) // num_head * num_head
+            len_disk = shape[SEG_DIM] - len_gpu - len_cpu
+        lens = [len_gpu, len_cpu, len_disk]
+        self.len_gpu = len_gpu
+        self.len_cpu = len_cpu
+
+        # end of kvpr
+        
         # NOTE: disable pin_memory due to high memory overhead
         pin_memory = False
         k_cache = self.allocate(shape, np.float16, pin_memory=pin_memory)
