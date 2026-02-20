@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 # import matplotlib.pyplot as plt
 
-def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandwidth=False, record_ind_events=False):
+def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandwidth=False, record_ind_events=False, split_dir=False):
     # open json file
     with open(json_filename, 'r') as file:
         # load json file
@@ -85,7 +85,19 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         storing_events = {}
         cur_loading_idx = 0
         cur_storing_idx = 0
-        
+
+    if split_dir: 
+        load_intervals = []
+        store_intervals = []
+        bi_dir_loading_events = {}
+        bi_load = {}
+        bi_dir_load_ind = 0
+        bi_dir_storing_events = {}
+        bi_dir_store_ind = 0
+        one_dir_loading_events = {}
+        one_dir_load_ind = 0
+        one_dir_storing_events = {}
+        one_dir_store_ind = 0
 
     for event_idx in range(num_of_events):
         # find the cudaMemcpyAsync events under load_cache and store_cache
@@ -100,17 +112,58 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 total_loading_cache_time_gpu += event['dur']
                 if est_bandwidth: 
                     total_loading_bytes += event['args']['bytes']
+                if split_dir: 
+                    loading_cache_start_time = event['ts']
+                    loading_cache_end_time = event['ts'] + event['dur']
+                    load_intervals.append((loading_cache_start_time, loading_cache_end_time, cur_loading_idx))
                 if record_ind_events:
                     loading_events[cur_loading_idx] = (event['args']['bytes'], event['args']['memory bandwidth (GB/s)'])
                     cur_loading_idx += 1
+                
         elif event['name'] == 'Memcpy DtoH (Device -> Pageable)':
             if event['args']['correlation'] in store_memcpy_correlations:
                 total_storing_cache_time_gpu += event['dur']
                 if est_bandwidth: 
                     total_storing_bytes += event['args']['bytes']
+                if split_dir: 
+                    storing_cache_start_time = event['ts']
+                    storing_cache_end_time = event['ts'] + event['dur']
+                    store_intervals.append((storing_cache_start_time, storing_cache_end_time, cur_storing_idx))
                 if record_ind_events:
                     storing_events[cur_storing_idx] = (event['args']['bytes'], event['args']['memory bandwidth (GB/s)'])
                     cur_storing_idx += 1
+                
+    if split_dir:
+        for each_store_interval in range(storing_events):
+            store_start = each_store_interval[0]
+            store_end = each_store_interval[1]
+            store_id = each_store_interval[2]
+            found_pair = False
+            for each_load_interval in load_intervals:
+                load_start = each_load_interval[0]
+                load_end = each_load_interval[1]
+                load_id = each_load_interval[2]
+                if store_start >= load_start and store_end < load_end:
+                    # found pair of bi directional
+                    bi_dir_loading_events[bi_dir_load_ind] = (load_id, loading_events[load_id][0], loading_events[load_id][1])
+                    bi_dir_storing_events[bi_dir_store_ind] = (store_id, storing_events[store_id][0], storing_events[store_id][1])
+                    bi_load[load_id] = True
+                    bi_dir_load_ind += 1
+                    bi_dir_store_ind += 1
+                    found_pair = True
+                    break
+                elif store_end < load_start:
+                    break
+            if not found_pair: 
+                one_dir_storing_events[one_dir_store_ind] = (store_id, storing_events[store_id][0], storing_events[store_id][1])
+                one_dir_store_ind += 1
+        for each_load_interval in range(loading_events):
+            load_id = each_load_interval[2]
+            if load_id not in bi_load:
+                one_dir_loading_events[one_dir_load_ind] = (load_id, loading_events[load_id][0], loading_events[load_id][1])
+                one_dir_store_ind += 1
+                    
+        
 
     if record_ind_events:
         cur_filename = json_filename[:-5] 
@@ -128,6 +181,43 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             writer.writeheader()
             for idx in range(cur_storing_idx):
                 writer.writerow({'idx': idx, 'data (B)': storing_events[idx][0] , 'bandwidth (GB/s)': storing_events[idx][1]})
+                
+        if split_dir: 
+            # bidirectional Load
+            with open(cur_filename + '_bi_loading.csv', 'w', newline='') as csvfile:
+                fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+    
+                for idx in range(bi_dir_load_ind):
+                    writer.writerow({'idx': idx, 'og Index': bi_dir_loading_events[idx][0], 'data (B)': bi_dir_loading_events[idx][1] , 'bandwidth (GB/s)': bi_dir_loading_events[idx][2]})
+
+            # Bidirectional Store
+            with open(cur_filename + '_bi_storing.csv', 'w', newline='') as csvfile:
+                fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+    
+                for idx in range(bi_dir_store_ind):
+                    writer.writerow({'idx': idx, 'og Index': bi_dir_storing_events[idx][0], 'data (B)': bi_dir_storing_events[idx][1] , 'bandwidth (GB/s)': bi_dir_storing_events[idx][2]})
+
+            # One Direction Load
+            with open(cur_filename + '_one_loading.csv', 'w', newline='') as csvfile:
+                fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+    
+                for idx in range(one_dir_load_ind):
+                    writer.writerow({'idx': idx, 'og Index': one_dir_loading_events[idx][0], 'data (B)': one_dir_loading_events[idx][1] , 'bandwidth (GB/s)': one_dir_loading_events[idx][2]})
+            
+            # One Direction Store
+            with open(cur_filename + '_one_storing.csv', 'w', newline='') as csvfile:
+                fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+    
+                for idx in range(one_dir_store_ind):
+                    writer.writerow({'idx': idx, 'og Index': one_dir_storing_events[idx][0], 'data (B)': one_dir_storing_events[idx][1] , 'bandwidth (GB/s)': one_dir_storing_events[idx][2]})
 
     total_loading_cache_time_gpu /= 1000000.0 # originally in microseconds (10^-6)
     total_storing_cache_time_gpu /= 1000000.0
@@ -185,6 +275,7 @@ def add_parser_arguments(parser):
     parser.add_argument('--cpu-time',action="store_true", help="Measure the CPU data transfer time")
     parser.add_argument('--est-bandwidth', action="store_true", help="Measure the estimated bandwidth of the data transfer")
     parser.add_argument('--event-dist', action="store_true", help="Measure the distribution of the data transfer bytes")
+    parser.add_argument('--split-dir', action="store_true", help="Split into bi direction and single direction data transfers")
 
 if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -200,7 +291,7 @@ if __name__ == "__main__":
     # batch_tklqt = [12014.2443359375, 18471.943251953126, 49995.56291894531, 104777.457796875, 232505.366203125, 461461.98833007814]
     for batch_filename in batch_filenames:
         print(f"Processing {batch_filename}")
-        all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth, args.event_dist)
+        all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir)
         print(f"Total GPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][0]} s")
         print(f"Total GPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][1]} s")
         if args.cpu_time:
