@@ -145,10 +145,11 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 load_id = each_load_interval[2]
                 if store_start >= load_start and store_end < load_end:
                     # found pair of bi directional
-                    bi_dir_loading_events[bi_dir_load_ind] = (load_id, loading_events[load_id][0], loading_events[load_id][1])
+                    if load_id not in bi_load:
+                        bi_dir_loading_events[bi_dir_load_ind] = (load_id, loading_events[load_id][0], loading_events[load_id][1])
+                        bi_dir_load_ind += 1
+                        bi_load[load_id] = True
                     bi_dir_storing_events[bi_dir_store_ind] = (store_id, storing_events[store_id][0], storing_events[store_id][1])
-                    bi_load[load_id] = True
-                    bi_dir_load_ind += 1
                     bi_dir_store_ind += 1
                     found_pair = True
                     break
