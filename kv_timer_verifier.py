@@ -161,7 +161,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             load_id = each_load_interval[2]
             if load_id not in bi_load:
                 one_dir_loading_events[one_dir_load_ind] = (load_id, loading_events[load_id][0], loading_events[load_id][1])
-                one_dir_store_ind += 1
+                one_dir_load_ind += 1
                     
         
 
