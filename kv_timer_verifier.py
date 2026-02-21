@@ -134,7 +134,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     cur_storing_idx += 1
                 
     if split_dir:
-        for each_store_interval in range(storing_events.keys()):
+        for each_store_interval in storing_events.keys():
             store_start = each_store_interval[0]
             store_end = each_store_interval[1]
             store_id = each_store_interval[2]
@@ -157,7 +157,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             if not found_pair: 
                 one_dir_storing_events[one_dir_store_ind] = (store_id, storing_events[store_id][0], storing_events[store_id][1])
                 one_dir_store_ind += 1
-        for each_load_interval in range(loading_events.keys()):
+        for each_load_interval in loading_events.keys():
             load_id = each_load_interval[2]
             if load_id not in bi_load:
                 one_dir_loading_events[one_dir_load_ind] = (load_id, loading_events[load_id][0], loading_events[load_id][1])
