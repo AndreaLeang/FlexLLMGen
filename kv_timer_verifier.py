@@ -212,7 +212,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     writer.writerow({'idx': idx, 'og Index': one_dir_loading_events[idx][0], 'data (B)': one_dir_loading_events[idx][1] , 'bandwidth (GB/s)': one_dir_loading_events[idx][2]})
             
             # One Direction Store
-            with open(cur_filename + 'one_storing.csv', 'w', newline='') as csvfile:
+            with open(cur_filename + '_one_storing.csv', 'w', newline='') as csvfile:
                 fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
