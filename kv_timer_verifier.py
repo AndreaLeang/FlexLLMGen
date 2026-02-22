@@ -169,14 +169,14 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     if record_ind_events:
         cur_filename = json_filename[:-5] 
         print(f"cur_filename: {cur_filename}")
-        with open(cur_filename + '_loading.csv', 'w', newline='') as csvfile:
+        with open(cur_filename + '_all_loading.csv', 'w', newline='') as csvfile:
             fieldnames = ['idx', 'data (B)', 'bandwidth (GB/s)']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
             for idx in range(cur_loading_idx):
                 writer.writerow({'idx': idx, 'data (B)': loading_events[idx][0] , 'bandwidth (GB/s)': loading_events[idx][1]})
-        with open(cur_filename + '_storing.csv', 'w', newline='') as csvfile:
+        with open(cur_filename + '_all_storing.csv', 'w', newline='') as csvfile:
             fieldnames = ['idx', 'data (B)', 'bandwidth (GB/s)']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
