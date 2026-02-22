@@ -185,7 +185,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 
         if split_dir: 
             # bidirectional Load
-            with open(cur_filename + '_bi_loading.csv', 'w', newline='') as csvfile:
+            with open('bi_loading_' + cur_filename + '.csv', 'w', newline='') as csvfile:
                 fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
@@ -194,7 +194,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     writer.writerow({'idx': idx, 'og Index': bi_dir_loading_events[idx][0], 'data (B)': bi_dir_loading_events[idx][1] , 'bandwidth (GB/s)': bi_dir_loading_events[idx][2]})
 
             # Bidirectional Store
-            with open(cur_filename + '_bi_storing.csv', 'w', newline='') as csvfile:
+            with open('bi_storing_' + cur_filename + '.csv', 'w', newline='') as csvfile:
                 fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
@@ -203,7 +203,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     writer.writerow({'idx': idx, 'og Index': bi_dir_storing_events[idx][0], 'data (B)': bi_dir_storing_events[idx][1] , 'bandwidth (GB/s)': bi_dir_storing_events[idx][2]})
 
             # One Direction Load
-            with open(cur_filename + '_one_loading.csv', 'w', newline='') as csvfile:
+            with open('c_one_loading_' + cur_filename + '.csv', 'w', newline='') as csvfile:
                 fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
@@ -212,7 +212,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     writer.writerow({'idx': idx, 'og Index': one_dir_loading_events[idx][0], 'data (B)': one_dir_loading_events[idx][1] , 'bandwidth (GB/s)': one_dir_loading_events[idx][2]})
             
             # One Direction Store
-            with open(cur_filename + '_one_storing.csv', 'w', newline='') as csvfile:
+            with open('c_one_storing_' + cur_filename + '.csv', 'w', newline='') as csvfile:
                 fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
@@ -236,7 +236,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     #     est_storing_bandwidth = total_storing_bytes / total_storing_cache_time_gpu # GB / s
 
     # Check if file exists to write header only once
-    csv_filename = json_filename[:-41]  + '.csv'
+    csv_filename = 'trace_stats_' + json_filename[:-41]  + '.csv'
     kv_gpu_percent = int(json_filename.split('-')[9])
     fieldnames = ['kv_gpu_percent', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)']
 

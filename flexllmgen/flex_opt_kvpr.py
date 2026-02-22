@@ -1866,7 +1866,7 @@ if __name__ == "__main__":
                             all_policies.append((prompt_len, gen_len, cpu_range, tot_throughput))
         all_policies_avg[model] = all_policies
 
-    csv_filename = get_filename(args).split("gbs")[0]  + 'throughput.csv'
+    csv_filename = 'throughput_' + get_filename(args).split("gbs")[0]  + '.csv'
     fieldnames = ['model', 'iter','gbs', 'ngbs', 'prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'Throughput (token/s)']
 
     if not os.path.exists(csv_filename):
