@@ -357,7 +357,7 @@ class SelfAttention:
             if self.cpu_gpu_compute:
                 path = 3
                 dst = self.env.cpu
-        print(path)
+        
         if path == 0:  # Direct copy
             # shape: (s, b * n_head, head_dim)
             # indices = (slice(0, self.task.prompt_len + i),
@@ -626,9 +626,6 @@ class SelfAttention:
                     k_cache = k_cache.device.decompress(k_cache)
                     v_cache = v_cache.device.decompress(v_cache)
 
-                print(k_cache_expanded.shape)
-                print(k_cache.shape)
-                print(compute_s)
                 k_cache_expanded[compute_s:].copy_(k_cache.data)
                 v_cache_expanded[compute_s:].copy_(v_cache.data)
 
