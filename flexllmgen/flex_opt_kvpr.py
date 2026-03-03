@@ -1795,6 +1795,10 @@ def add_parser_arguments(parser):
     parser.add_argument("--sweep-cpu-step", type=int, default=10)
     parser.add_argument("--sweep-average", type=int, default=1)
 
+    parser.add_argument("--sweep-re", action="store_true")
+    parser.add_argument("--sweep-re-start", type=int, default=0)
+    parser.add_argument("--sweep-re-step", type=int, default=10)
+
     parser.add_argument("--sweep-model", action="store_true")
 
     parser.add_argument("--sweep-prompt-len", action="store_true") # 512, 1024, 2048, 4096
@@ -1827,14 +1831,19 @@ if __name__ == "__main__":
         "facebook/opt-66b": 20}
     # all_model_weight_gpu = [100, 100, 70, 20]
     all_cpu_ranges = range(args.sweep_cpu_start, 110, args.sweep_cpu_step)
+    all_re_ranges = (range(args.sweep_re_start, 110, args.sweep_re_step) * all_prompt_len) // 100
     all_prompt_len = [512, 1024, 2048, 4096]
     all_gen_len = [512, 1024, 2048, 4096]
     single_cpu = False 
+    single_re = False
     if not args.sweep_model:
         all_models = [args.model]
     if not args.sweep_cpu:
         all_cpu_ranges = [args.percent[3]]
         single_cpu = True
+    if not args.sweep_re:
+        all_re = [args.recompute_len]
+        single_re = True
     if not args.sweep_prompt_len:
         all_prompt_len = [args.prompt_len]
     if not args.sweep_gen_len:
@@ -1850,26 +1859,30 @@ if __name__ == "__main__":
                 args.prompt_len = prompt_len
                 for gen_len in all_gen_len:
                     args.gen_len = gen_len
-                    for cpu_range in all_cpu_ranges:
-                        if not single_cpu: # otherwise, use specified percent
-                            args.percent = [all_model_weight_on_gpu[model], 100-all_model_weight_on_gpu[model], 100-cpu_range, cpu_range, 100, 0]
-                        tot_throughput = 0.0
-                        num_valid_iter = 0
-                        for each_iter in range(args.sweep_average):
-                            cur_throughput = run_flexllmgen(args)
-                            if cur_throughput is None:
-                                break
-                            num_valid_iter += 1
-                            tot_throughput += cur_throughput
-                        if num_valid_iter == 0:
-                            all_policies.append((prompt_len, gen_len, cpu_range, None))
-                        else:
-                            tot_throughput /= float(num_valid_iter)
-                            all_policies.append((prompt_len, gen_len, cpu_range, tot_throughput))
+                    for re_len in all_re:
+                        if not single_re: # otherwise, keep the recompute_len specified 
+                            # recompute the recompute len
+                            args.recompute_len = re_len
+                        for cpu_range in all_cpu_ranges:
+                            if not single_cpu: # otherwise, use specified percent
+                                args.percent = [all_model_weight_on_gpu[model], 100-all_model_weight_on_gpu[model], 100-cpu_range, cpu_range, 100, 0]
+                            tot_throughput = 0.0
+                            num_valid_iter = 0
+                            for each_iter in range(args.sweep_average):
+                                cur_throughput = run_flexllmgen(args)
+                                if cur_throughput is None:
+                                    break
+                                num_valid_iter += 1
+                                tot_throughput += cur_throughput
+                            if num_valid_iter == 0:
+                                all_policies.append((prompt_len, gen_len, cpu_range, re_len, None))
+                            else:
+                                tot_throughput /= float(num_valid_iter)
+                                all_policies.append((prompt_len, gen_len, cpu_range, re_len, tot_throughput))
         all_policies_avg[model] = all_policies
 
     csv_filename = get_filename(args).split("gbs")[0] + 'throughput.csv'
-    fieldnames = ['model', 'iter','gbs', 'ngbs', 'prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'Throughput (token/s)']
+    fieldnames = ['model', 'iter','gbs', 'ngbs', 'prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'recompute_len', 'Throughput (token/s)']
 
     if not os.path.exists(csv_filename):
         with open(csv_filename, 'w', newline='') as csvfile:
@@ -1884,7 +1897,8 @@ if __name__ == "__main__":
                 cur_gen_len = each_run[1]
                 cur_kv_gpu_percent = 100-each_run[2]
                 cur_kv_cpu_percent = each_run[2]
-                cur_throughput = each_run[3]
-                writer.writerow({'model': model, 'iter': args.sweep_average, 'gbs': args.gpu_batch_size, 'ngbs': args.num_gpu_batches, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'Throughput (token/s)': cur_throughput})
+                cur_recompute_len = each_run[3]
+                cur_throughput = each_run[4]
+                writer.writerow({'model': model, 'iter': args.sweep_average, 'gbs': args.gpu_batch_size, 'ngbs': args.num_gpu_batches, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'recompute_len': cur_recompute_len,  'Throughput (token/s)': cur_throughput})
             print(f"model: {model}")
             print(f"(prompt_len, gen_len, cpu_range, avg throughput) over {args.sweep_average} iterations: {all_policies_avg[model]}")
