@@ -1526,6 +1526,8 @@ def get_filename(args):
                f"ngbs{args.num_gpu_batches}-" \
                f"prompt{args.prompt_len}-" \
                f"gen{args.gen_len}-percent-{percent}"
+    if args.recompute_len > 0:
+        filename += f"R-{args.recompute_len}-"
     if args.cpu_cache_compute:
         filename += "cpu-cache"
     else:
