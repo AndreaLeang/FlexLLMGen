@@ -357,7 +357,7 @@ class SelfAttention:
             if self.cpu_gpu_compute:
                 path = 3
                 dst = self.env.cpu
-
+        print(path)
         if path == 0:  # Direct copy
             # shape: (s, b * n_head, head_dim)
             # indices = (slice(0, self.task.prompt_len + i),
