@@ -141,7 +141,9 @@ class TorchTensor:
 
     def smart_copy(self, dst, src_indices=None, kv_copy: int = 0, KVLoadTimer=None, KVStoreTimer=None):
         if self.device == dst:
+            print("no")
             return self, False
+        print("ok")
         return self.copy(dst, src_indices=src_indices, kv_copy=kv_copy, KVLoadTimer=KVLoadTimer, KVStoreTimer=KVStoreTimer), True
 
     def move(self, dst):
