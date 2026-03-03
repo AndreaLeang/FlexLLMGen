@@ -1831,7 +1831,8 @@ if __name__ == "__main__":
         "facebook/opt-66b": 20}
     # all_model_weight_gpu = [100, 100, 70, 20]
     all_cpu_ranges = range(args.sweep_cpu_start, 110, args.sweep_cpu_step)
-    all_re_ranges = (range(args.sweep_re_start, 110, args.sweep_re_step) * args.prompt_len) // 100
+    all_re_per_ranges = range(args.sweep_re_start, 110, args.sweep_re_step)
+    all_re_ranges = [(cur_re_per * args.prompt_len) // 100 for cur_re_per in all_re_per_ranges]
     all_prompt_len = [512, 1024, 2048, 4096]
     all_gen_len = [512, 1024, 2048, 4096]
     single_cpu = False 
