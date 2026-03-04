@@ -239,7 +239,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     all_file_var = json_filename.split('-')
     cur_gbs = all_file_var[9]
     kv_gpu_percent = int(all_file_var[9])
-    csv_filename = all_file_var[9] + '-' + all_file_var[10] + '-' + json_filename.split('-percent')[0] + '_trace_stats.csv' # added header for recomp
+    csv_filename = json_filename.split('-percent')[0] + '-' + all_file_var[9] + '-' + all_file_var[10] + '_trace_stats.csv' # added header for recomp
     fieldnames = ['kv_gpu_percent', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)']
 
     if not os.path.exists(csv_filename):
