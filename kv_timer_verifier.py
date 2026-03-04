@@ -36,11 +36,11 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     for event_idx in range(num_of_events):
         event = data['traceEvents'][event_idx]
 
-        if event['name'] == 'flex_opt_kvpr.py(890): load_cache':
+        if event['name'] == 'flex_opt_kvpr.py(890): load_cache': 
             loading_cache_start_time = event['ts']
             loading_cache_end_time = event['ts'] + event['dur']
             load_intervals.append((loading_cache_start_time, loading_cache_end_time))
-        elif event['name'] == 'flex_opt_kvpr.py(932): store_cache':
+        elif event['name'] == 'flex_opt_kvpr.py(932): store_cache': 
             storing_cache_start_time = event['ts']
             storing_cache_end_time = event['ts'] + event['dur']
             store_intervals.append((storing_cache_start_time, storing_cache_end_time))
@@ -236,7 +236,9 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     #     est_storing_bandwidth = total_storing_bytes / total_storing_cache_time_gpu # GB / s
 
     # Check if file exists to write header only once
-    csv_filename = json_filename[:-41]  + '_trace_stats.csv'
+    csv_filename = json_filename.split('-percent')[0] + '_trace_stats.csv'
+    csv_filename += '_trace_stats.csv'
+    cur_gbs = json_filename.split('-')[9]
     kv_gpu_percent = int(json_filename.split('-')[9])
     fieldnames = ['kv_gpu_percent', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)']
 
