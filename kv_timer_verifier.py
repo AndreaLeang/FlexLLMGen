@@ -237,7 +237,6 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
 
     # Check if file exists to write header only once
     csv_filename = json_filename.split('-percent')[0] + '_trace_stats.csv'
-    csv_filename += '_trace_stats.csv'
     cur_gbs = json_filename.split('-')[9]
     kv_gpu_percent = int(json_filename.split('-')[9])
     fieldnames = ['kv_gpu_percent', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)']
