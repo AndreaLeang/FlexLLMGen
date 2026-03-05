@@ -238,7 +238,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         for each_re_load_interval in re_load_intervals:
             load_id = each_re_load_interval[2]
             if load_id not in bi_re_load:
-                one_dir_re_loading_events[one_dir_re_load_ind] = (load_id, all_re_load[load_id][0], all_re_load[load_id][1])
+                one_re_load_events[one_dir_re_load_ind] = (load_id, all_re_load[load_id][0], all_re_load[load_id][1])
                 one_dir_re_load_ind += 1
                     
         
