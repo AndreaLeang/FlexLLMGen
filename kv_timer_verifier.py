@@ -392,7 +392,7 @@ def add_parser_arguments(parser):
     parser.add_argument('--est-bandwidth', action="store_true", help="Measure the estimated bandwidth of the data transfer")
     parser.add_argument('--event-dist', action="store_true", help="Measure the distribution of the data transfer bytes")
     parser.add_argument('--split-dir', action="store_true", help="Split into bi direction and single direction data transfers")
-    parser.add_argumnet('--recomp', action="store_true", help="Measure the distribution of data transfer for recomputation")
+    parser.add_argument('--recomp', action="store_true", help="Measure the distribution of data transfer for recomputation")
 
 if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).parent.absolute()
