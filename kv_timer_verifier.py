@@ -304,7 +304,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 writer.writeheader()
     
                 for idx in range(recomp_compute_idx):
-                    writer.writerow({'idx': idx, 'Compute Time (s)': recomp_compute_times[idx][1]})
+                    writer.writerow({'idx': idx, 'Compute Time (s)': recomp_compute_times[idx]})
             # Recomputation's Load
             with open(cur_filename + '_all_load_r.csv', 'w', newline='') as csvfile:
                 fieldnames = ['idx', 'data (B)', 'bandwidth (GB/s)']
