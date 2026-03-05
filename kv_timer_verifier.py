@@ -334,6 +334,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     
     total_loading_cache_time_gpu /= 1000000.0 # originally in microseconds (10^-6)
     total_storing_cache_time_gpu /= 1000000.0
+    tot_recomp_time /= 1000000.0 # originally in microseconds (10^-6)
     if get_cpu_time:
         total_loading_cache_time_cpu /= 1000000.0
         total_storing_cache_time_cpu /= 1000000.0
