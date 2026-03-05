@@ -65,6 +65,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     recomp_compute_times = {}
     recomp_compute_idx = 0
     tot_recomp_time = 0
+    tot_recomp_transfer_time = 0
 
     # get corrleations from valid cudaMemcpyAsync events
     for event_idx in range(num_of_events):
@@ -168,7 +169,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 re_loading_start_time = event['ts']
                 re_loading_end_time = event['ts'] + event['dur']
                 re_load_intervals.append((re_loading_start_time, re_loading_end_time, cur_re_loading_idx))
-                
+                tot_recomp_transfer_time += event['dur']
                 all_re_load[cur_re_loading_idx] = (event['args']['bytes'], event['args']['memory bandwidth (GB/s)'])
                 cur_re_loading_idx += 1
                 
@@ -335,6 +336,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     total_loading_cache_time_gpu /= 1000000.0 # originally in microseconds (10^-6)
     total_storing_cache_time_gpu /= 1000000.0
     tot_recomp_time /= 1000000.0 # originally in microseconds (10^-6)
+    tot_recomp_transfer_time /= 1000000.0
     if get_cpu_time:
         total_loading_cache_time_cpu /= 1000000.0
         total_storing_cache_time_cpu /= 1000000.0
@@ -354,7 +356,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     kv_gpu_percent = int(all_file_var[9])
     cur_recompute_len = all_file_var[14]
     csv_filename = json_filename.split('-percent')[0] + '-' + all_file_var[9] + '-' + all_file_var[10] + '_trace_stats.csv' # added header for recomp
-    fieldnames = ['kv_gpu_percent', 'recompute_len', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)', 'total_recompute_time (s)']
+    fieldnames = ['kv_gpu_percent', 'recompute_len', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)', 'total_recompute_time (s)', 'tot_recompute_load_time (s)']
 
     if not os.path.exists(csv_filename):
         with open(csv_filename, 'w', newline='') as csvfile:
@@ -372,7 +374,8 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 'tot_storing_time_cpu (s)': total_storing_cache_time_cpu, 
                 'total_loading_bytes (GB)': total_loading_bytes, 
                 'total_storing_bytes (GB)': total_storing_bytes,
-                'total_recompute_time (s)': tot_recomp_time})
+                'total_recompute_time (s)': tot_recomp_time,
+                'tot_recompute_load_time (s)': tot_recomp_transfer_time})
 
 
     return total_loading_cache_time_gpu, total_storing_cache_time_gpu, total_loading_cache_time_cpu, total_storing_cache_time_cpu, total_loading_bytes, total_storing_bytes, tot_recomp_time # in s
