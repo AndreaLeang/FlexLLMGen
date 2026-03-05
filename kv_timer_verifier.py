@@ -351,8 +351,9 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     all_file_var = json_filename.split('-')
     cur_gbs = all_file_var[9]
     kv_gpu_percent = int(all_file_var[9])
+    cur_recompute_len = all_file_var[14]
     csv_filename = json_filename.split('-percent')[0] + '-' + all_file_var[9] + '-' + all_file_var[10] + '_trace_stats.csv' # added header for recomp
-    fieldnames = ['kv_gpu_percent', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)', 'total_recompute_time (s)']
+    fieldnames = ['kv_gpu_percent', 'recompute_len', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)', 'total_recompute_time (s)']
 
     if not os.path.exists(csv_filename):
         with open(csv_filename, 'w', newline='') as csvfile:
@@ -363,6 +364,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     with open(csv_filename, 'a', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writerow({'kv_gpu_percent': kv_gpu_percent, 
+                'recompute_len': cur_recompute_len,
                 'tot_loading_time_gpu (s)': total_loading_cache_time_gpu, 
                 'tot_storing_time_gpu (s)': total_storing_cache_time_gpu, 
                 'tot_loading_time_cpu (s)': total_loading_cache_time_cpu, 
