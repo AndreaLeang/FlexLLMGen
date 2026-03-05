@@ -418,7 +418,7 @@ if __name__ == "__main__":
             print(f"Total Loading Bytes for {batch_filename}: {all_kv_times[batch_filename][4]} GB")
             print(f"Total Storing Bytes (GB) for {batch_filename}: {all_kv_times[batch_filename][5]} GB")
         if args.recomp:
-            print(f"Total Recomputation Loading Bytes (GB) for {batch_filename}: {all_kv_times[batch_filename][6]} GB")
+            print(f"Total Recomputation Loading Time for {batch_filename}: {all_kv_times[batch_filename][6]} s")
     print()
     print("GPU Load, GPU Store, CPU Load, CPU Store, Loading Bytes, Storing Bytes")
     for batch_filename in batch_filenames:
