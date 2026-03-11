@@ -62,10 +62,18 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     store_memcpy_correlations = []
     recomp_load_memcpy_correlations = []
 
-    recomp_compute_times = {}
+    recomp_compute_times = {} # [idx] = time from start of compute layer to start of mha
+    recomp_prep_transfer_times = {} # [idx] = time from start of load_hidden_compute to start of cudaMemcpyAsync
+    cache_pinned_times = {} # [idx] = time of aten::pin_memory 
+    
     recomp_compute_idx = 0
+    recomp_pinned_idx = 0
+    cache_pinned_idx = 0
+    
     tot_recomp_time = 0
     tot_recomp_transfer_time = 0
+    tot_pinned_cache_time = 0
+    tot_pinned_hidden_time = 0
 
     # get corrleations from valid cudaMemcpyAsync events
     for event_idx in range(num_of_events):
@@ -112,6 +120,26 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     recomp_compute_idx += 1
                 elif event['ts'] < interval[0]:
                     break
+        elif event['name'] == 'aten::pin_memory':
+            #check if pinned is for load_cache or load_hidden
+            for interval in load_intervals:
+                if event['ts'] >= interval[0] and event['ts'] < interval[1]:
+                    cache_pinned_times[cache_pinned_idx] = (event[args])
+                    
+                    in_load = True
+                    break
+                elif event['ts'] < interval[0]:
+                    break
+            if not in_load:
+                for interval in recomp_data_transfer_intervals:
+                    if event['ts'] >= interval[0] and event['ts'] < interval[1]:
+                        recomp_pinned_times[recomp_pinned_idx] = (event[args])
+                        
+                        in_load = True
+                        break
+                    elif event['ts'] < interval[0]:
+                        break
+                
 
     # get the actual GPU memcpy durations
 
