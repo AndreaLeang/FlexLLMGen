@@ -62,18 +62,20 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     store_memcpy_correlations = []
     recomp_load_memcpy_correlations = []
 
-    recomp_compute_times = {} # [idx] = time from start of compute layer to start of mha
-    recomp_prep_transfer_times = {} # [idx] = time from start of load_hidden_compute to start of cudaMemcpyAsync
-    cache_pinned_times = {} # [idx] = time of aten::pin_memory 
+    recomp_calc_times = {} # [idx] = time from start of compute layer to start of mha (rercompute)
+    recomp_prep_transfer_times = {} # [idx] = time from start of load_hidden_compute to start of cudaMemcpyAsync (recompute prep)
+    load_cache_big_blocks = {} #[start of load_cache] = (end of load_cache, correlation of memcpyasync)
+    cache_pin_link = {} # start of pin = (end of pin)
+    cache_pinned_times = {} # [idx] =  time of aten::pin_memory, bytes transferred (pinned) --> need to link to amount of bytes --> link to the memcpyasync 
     
-    recomp_compute_idx = 0
-    recomp_pinned_idx = 0
+    recomp_calc_idx = 0
+    recomp_prep_idx = 0
     cache_pinned_idx = 0
     
-    tot_recomp_time = 0
+    tot_recomp_calc_time = 0
     tot_recomp_transfer_time = 0
     tot_pinned_cache_time = 0
-    tot_pinned_hidden_time = 0
+    tot_hidden_prep_time = 0
 
     # get corrleations from valid cudaMemcpyAsync events
     for event_idx in range(num_of_events):
@@ -115,9 +117,9 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             for interval in recomp_data_calc_intervals:
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                     calc_time = event['ts'] - interval[0]
-                    tot_recomp_time += calc_time
-                    recomp_compute_times[recomp_compute_idx] = calc_time
-                    recomp_compute_idx += 1
+                    tot_recomp_calc_time += calc_time
+                    recomp_calc_times[recomp_calc_idx] = calc_time
+                    recomp_calc_idx += 1
                 elif event['ts'] < interval[0]:
                     break
         elif event['name'] == 'aten::pin_memory':
@@ -126,19 +128,10 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                     cache_pinned_times[cache_pinned_idx] = (event[args])
                     
-                    in_load = True
                     break
                 elif event['ts'] < interval[0]:
                     break
-            if not in_load:
-                for interval in recomp_data_transfer_intervals:
-                    if event['ts'] >= interval[0] and event['ts'] < interval[1]:
-                        recomp_pinned_times[recomp_pinned_idx] = (event[args])
-                        
-                        in_load = True
-                        break
-                    elif event['ts'] < interval[0]:
-                        break
+            
                 
 
     # get the actual GPU memcpy durations
