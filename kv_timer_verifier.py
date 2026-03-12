@@ -65,7 +65,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     recomp_calc_times = {} # [idx] = time from start of compute layer to start of mha (rercompute)
     recomp_prep_transfer_times = {} # [idx] = time from start of load_hidden_compute to start of cudaMemcpyAsync (recompute prep)
     load_cache_big_blocks = {} #[start of load_cache] = (end of load_cache, correlation of memcpyasync)
-    cache_pin_link = {} # start of pin = (end of pin)
+    memcpy_to_bytes = {} # 
     cache_pinned_times = {} # [idx] =  time of aten::pin_memory, bytes transferred (pinned) --> need to link to amount of bytes --> link to the memcpyasync 
     
     recomp_calc_idx = 0
@@ -88,6 +88,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 # print(f"checking interval {interval}")
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                     load_memcpy_correlations.append(event['args']['correlation'])
+                    load_cache_big_blocks[interval[0]] = (interval[1], event['args']['correlation'])
                     if get_cpu_time:
                         total_loading_cache_time_cpu += event['dur']
                     in_load = True
@@ -122,15 +123,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     recomp_calc_idx += 1
                 elif event['ts'] < interval[0]:
                     break
-        elif event['name'] == 'aten::pin_memory':
-            #check if pinned is for load_cache or load_hidden
-            for interval in load_intervals:
-                if event['ts'] >= interval[0] and event['ts'] < interval[1]:
-                    cache_pinned_times[cache_pinned_idx] = (event[args])
-                    
-                    break
-                elif event['ts'] < interval[0]:
-                    break
+        
             
                 
 
@@ -177,6 +170,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         if event['name'] == 'Memcpy HtoD (Pinned -> Device)':
             if event['args']['correlation'] in load_memcpy_correlations:
                 total_loading_cache_time_gpu += event['dur']
+                memcpy_to_bytes[event['args']['correlation']] = event['args']['bytes']
                 if est_bandwidth: 
                     total_loading_bytes += event['args']['bytes']
                 if split_dir: 
@@ -194,7 +188,6 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 all_re_load[cur_re_loading_idx] = (event['args']['bytes'], event['args']['memory bandwidth (GB/s)'])
                 cur_re_loading_idx += 1
                 
-                
         elif event['name'] == 'Memcpy DtoH (Device -> Pageable)':
             if event['args']['correlation'] in store_memcpy_correlations:
                 total_storing_cache_time_gpu += event['dur']
@@ -207,6 +200,27 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 if record_ind_events:
                     storing_events[cur_storing_idx] = (event['args']['bytes'], event['args']['memory bandwidth (GB/s)'])
                     cur_storing_idx += 1
+
+
+
+    for event_idx in range(num_of_events):
+        # pair pinned with bytes 
+        event = data['traceEvents'][event_idx]
+        elif event['name'] == 'aten::pin_memory':
+            #check if pinned is for load_cache or load_hidden
+            for interval in load_intervals:
+                if event['ts'] >= interval[0] and event['ts'] < interval[1]:
+                    # found which load_cache pinned is in
+                    #find memcpyasync to get amount of data transferred
+                    memcpy_correlation = load_cache_big_blocks[interval[0]][1]
+                    bytes_transferred = memcpy_to_bytes[memcpy_correlation]
+                    cache_pinned_times[cache_pinned_idx] = (event['dur'], bytes_transferred) # pinned duration, bytes transferred
+                    cache_pinned_idx += 1
+                    break
+                elif event['ts'] < interval[0]:
+                    break
+
+
                 
     if split_dir:
         for each_store_interval in store_intervals:
@@ -352,6 +366,34 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 for idx in range(one_dir_re_load_ind):
                     writer.writerow({'idx': idx, 'og Index': one_re_load_events[idx][0], 'data (B)': one_re_load_events[idx][1] , 'bandwidth (GB/s)': one_re_load_events[idx][2]})
             
+    # Record Pinned Cache Times, Recomputation Prep, Recomputation Calc
+    recomp_calc_times = {} # [idx] = time from start of compute layer to start of mha (rercompute)
+    recomp_prep_transfer_times = {} # [idx] = time from start of load_hidden_compute to start of cudaMemcpyAsync (recompute prep)
+    load_cache_big_blocks = {} #[start of load_cache] = (end of load_cache, correlation of memcpyasync)
+    memcpy_to_bytes = {} # 
+    cache_pinned_times = {} # [idx] =  time of aten::pin_memory, bytes transferred (pinned) --> need to link to amount of bytes --> link to the memcpyasync 
+
+    with open(cur_filename + '_cache_pinned.csv', 'w', newline='') as csvfile:
+        fieldnames = ['idx', 'pinned time (s)', 'bytes transferred (B)']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for idx in range(recomp_calc_idx):
+            writer.writerow({'idx': idx, 'pinned time (s)': cache_pinned_times[idx][0], 'bytes transferred (B)': cache_pinned_times[idx][1]})
+
+    with open(cur_filename + '_recomp_prep.csv', 'w', newline='') as csvfile:
+        fieldnames = ['idx', 'transfer prep time (s)']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for idx in range(recomp_prep_idx):
+            writer.writerow({'idx': idx, 'transfer prep time (s)': recomp_prep_transfer_times[idx]})
+
+    with open(cur_filename + '_recomp_calc.csv', 'w', newline='') as csvfile:
+        fieldnames = ['idx', 'compute time (s)']
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        writer.writeheader()
+        for idx in range(recomp_calc_idx):
+            writer.writerow({'idx': idx, 'compute time (s)': recomp_calc_times[idx]})
+
 
     
     total_loading_cache_time_gpu /= 1000000.0 # originally in microseconds (10^-6)
@@ -379,14 +421,13 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     csv_filename = json_filename.split('-percent')[0] + '-' + all_file_var[9] + '-' + all_file_var[10] + '_trace_stats.csv' # added header for recomp
     fieldnames = ['kv_gpu_percent', 'recompute_len', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)', 'total_recompute_time (s)', 'tot_recompute_load_time (s)']
 
-    if not os.path.exists(csv_filename):
-        with open(csv_filename, 'w', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
+    write_header = not os.path.exists(csv_filename)
     
     # Open the file in append mode ('a')
     with open(csv_filename, 'a', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
         writer.writerow({'kv_gpu_percent': kv_gpu_percent, 
                 'recompute_len': cur_recompute_len,
                 'tot_loading_time_gpu (s)': total_loading_cache_time_gpu, 
@@ -401,16 +442,18 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
 
     return total_loading_cache_time_gpu, total_storing_cache_time_gpu, total_loading_cache_time_cpu, total_storing_cache_time_cpu, total_loading_bytes, total_storing_bytes, tot_recomp_time # in s
 
-def get_all_cpu_memcpy_correlations(json_filename):
-    # open json file
-    with open(json_filename, 'r') as file:
-        # load json file
-        data = json.load(file)
+def save_as_csv(csv_filename, headers, data):
+    # data is formatted: [idx] = {header:value}
+    write_header = not os.path.exists(csv_filename)
+
+    with open(csv_filename, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        for idx in range(len(data))
+            writer.writerow(data[idx])
     
-    # initialize the dictionary to hold the ac2g
-    ac2g_dict = {}
-    total_loading_cache_time = 0
-    total_storing_cache_time = 0
+
 
 
 def add_parser_arguments(parser):
