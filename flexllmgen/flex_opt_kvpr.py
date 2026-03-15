@@ -20,7 +20,7 @@ from transformers import AutoTokenizer
 
 
 from flexllmgen.compression import CompressionConfig, Policy
-from flexllmgen.opt_config import OptConfig, get_opt_config, download_opt_weights
+from flexllmgen.opt_config import OptConfig, get_opt_config
 from flexllmgen.pytorch_backend import (TorchDevice, TorchDisk, TorchLink,
     TorchMixedDevice, DeviceType, general_copy, fix_recursive_import, TorchTensor)
 from flexllmgen.timer import timers

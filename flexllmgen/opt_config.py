@@ -29,33 +29,10 @@ class OptConfig:
     layer_norm_eps: float = 0.00001
     pad_token_id: int = 1
     dtype: type = np.float16
-    # For GQA (Grouped-Query Attention) models like Qwen3
-    # If None, assumes standard multi-head attention (num_kv_heads = n_head)
-    num_kv_heads: int = None
 
     def model_bytes(self):
         h = self.input_dim
-        # Check if this is a GQA model (Qwen3 architecture)
-        if self.num_kv_heads is not None and self.num_kv_heads != self.n_head:
-            # Qwen3 architecture with GQA
-            # Attention weights:
-            # Q: (num_query_heads * head_dim) x hidden_size = h x h, with bias h
-            # K: (num_kv_heads * head_dim) x hidden_size = (h * num_kv_heads/n_head) x h, with bias (h * num_kv_heads/n_head)
-            # V: same as K
-            # Out: h x h, with bias h
-            kv_dim = h * self.num_kv_heads // self.n_head
-            attention_bytes = (h * h + h) + (kv_dim * h + kv_dim) + (kv_dim * h + kv_dim) + (h * h + h)
-            # MLP: gate_proj (h*ffn), up_proj (h*ffn), down_proj (ffn*h)
-            # Qwen typically has biases for gate and up, but not down
-            mlp_bytes = (h * self.ffn_embed_dim + self.ffn_embed_dim) + (h * self.ffn_embed_dim + self.ffn_embed_dim) + (self.ffn_embed_dim * h)
-            # RMSNorm: weight only (h), 2 per layer (attention norm + MLP norm)
-            norm_bytes = h * 2
-            # Embedding: input embedding only (output embedding is separate in Qwen)
-            embedding_bytes = self.vocab_size * h
-            return 2 * (self.num_hidden_layers * (attention_bytes + mlp_bytes + norm_bytes) + embedding_bytes)
-        else:
-            # Standard OPT architecture
-            return 	2 * (self.num_hidden_layers * (
+        return 	2 * (self.num_hidden_layers * (
             # self-attention
             h * (3 * h + 1) + h * (h + 1) +
             # mlp
@@ -66,15 +43,7 @@ class OptConfig:
             self.vocab_size * (h + 1))
 
     def cache_bytes(self, batch_size, seq_len):
-        # For GQA models, KV cache is smaller (only num_kv_heads instead of n_head)
-        if self.num_kv_heads is not None and self.num_kv_heads != self.n_head:
-            # GQA: cache size is reduced by ratio of num_kv_heads / n_head
-            kv_ratio = self.num_kv_heads / self.n_head
-            # K and V cache: batch_size * seq_len * num_hidden_layers * (input_dim * kv_ratio) * 2
-            return 2 * batch_size * seq_len * self.num_hidden_layers * self.input_dim * kv_ratio * 2
-        else:
-            # Standard multi-head attention
-            return 2 * batch_size * seq_len * self.num_hidden_layers * self.input_dim * 2
+        return 2 * batch_size * seq_len * self.num_hidden_layers * self.input_dim * 2
 
     def hidden_bytes(self, batch_size, seq_len):
         return batch_size * seq_len * self.input_dim * 2
@@ -150,79 +119,10 @@ def get_opt_config(name, **kwargs):
             max_seq_len=2048, num_hidden_layers=24, n_head=96,
             hidden_size=12288, input_dim=12288, ffn_embed_dim=12288 * 4,
         )
-    elif arch_name == "qwen3-8b" or arch_name == "qwen3-8b-base":
-        config = OptConfig(name=name,
-            max_seq_len=32768,  # Native context length, can be limited to 2048 for compatibility
-            num_hidden_layers=36,
-            n_head=32,  # Number of query heads
-            num_kv_heads=8,  # Number of key-value heads (GQA)
-            hidden_size=4096,
-            input_dim=4096,
-            ffn_embed_dim=12288,  # 3x hidden_size (not 4x like OPT)
-            vocab_size=151936,
-            activation_fn='silu',  # SiLU instead of ReLU
-            layer_norm_eps=1e-6,  # RMSNorm epsilon
-            pad_token_id=151643,  # Qwen3 pad token ID
-        )
     else:
         raise ValueError(f"Invalid model name: {name}")
 
     return dataclasses.replace(config, **kwargs)
-
-
-def download_opt_weights_old(model_name, path):
-    """Download weights from huggingface."""
-    import torch
-    from transformers import OPTForCausalLM, BloomForCausalLM
-
-    if "/" in model_name:
-        model_name = model_name.split("/")[1].lower()
-    path = os.path.join(path, f"{model_name}-np")
-    path = os.path.abspath(os.path.expanduser(path))
-
-    if "opt" in model_name:
-        hf_model_name = "facebook/" + model_name
-        model_class = OPTForCausalLM
-    elif "bloom" in model_name:
-        hf_model_name = "bigscience/" + model_name
-        model_class = BloomForCausalLM
-    elif "galactica" in model_name:
-        hf_model_name = "facebook/" + model_name
-    else:
-        raise ValueError("Invalid model name: {model_name}")
-
-    print(f"Load the pre-trained pytorch weights of {model_name} from huggingface. "
-          f"The downloading and cpu loading can take dozens of minutes. "
-          f"If it seems to get stuck, you can monitor the progress by "
-          f"checking the memory usage of this process.")
-
-    disable_torch_init()
-    model = model_class.from_pretrained(hf_model_name, torch_dtype=torch.float16,
-                                        _fast_init=True)
-    restore_torch_init()
-
-    os.makedirs(path, exist_ok=True)
-
-    print(f"Convert the weights to numpy format under {path} ...")
-    if "opt" in model_name:
-        for name, param in tqdm(list(model.model.named_parameters())):
-            name = name.replace("decoder.final_layer_norm", "decoder.layer_norm")
-            param_path = os.path.join(path, name)
-            with open(param_path, "wb") as f:
-                np.save(f, param.cpu().detach().numpy())
-    elif "galactica" in model_name:
-        for name, param in tqdm(list(model.model.named_parameters())):
-            name = name.replace("decoder.final_layer_norm", "decoder.layer_norm")
-            param_path = os.path.join(path, name)
-            with open(param_path, "wb") as f:
-                np.save(f, param.cpu().detach().numpy())
-    elif "bloom" in model_name:
-        for name, param in tqdm(list(model.transformer.named_parameters())):
-            param_path = os.path.join(path, name)
-            with open(param_path, "wb") as f:
-                np.save(f, param.cpu().detach().numpy())
-    else:
-        raise ValueError("Invalid model name: {model_name}")
 
 
 global torch_linear_init_backup
@@ -261,43 +161,6 @@ def disable_hf_opt_init():
             "_init_weights", lambda *args, **kwargs: None)
 
 
-def download_opt_weights(model_name, path):
-    from huggingface_hub import snapshot_download
-    import torch
-
-    print(f"Load the pre-trained pytorch weights of {model_name} from huggingface. "
-          f"The downloading and cpu loading can take dozens of minutes. "
-          f"If it seems to get stuck, you can monitor the progress by "
-          f"checking the memory usage of this process.")
-
-    if "opt" in model_name:
-        hf_model_name = "facebook/" + model_name
-    elif "galactica" in model_name:
-        hf_model_name = "facebook/" + model_name
-    elif "qwen3" in model_name:
-        hf_model_name = "qwen/" + model_name
-    folder = snapshot_download(hf_model_name, allow_patterns="*.bin")
-    bin_files = glob.glob(os.path.join(folder, "*.bin"))
-
-    if "/" in model_name:
-        model_name = model_name.split("/")[1].lower()
-    path = os.path.join(path, f"{model_name}-np")
-    path = os.path.abspath(os.path.expanduser(path))
-    os.makedirs(path, exist_ok=True)
-
-    for bin_file in tqdm(bin_files, desc="Convert format"):
-        state = torch.load(bin_file)
-        for name, param in tqdm(state.items(), leave=False):
-            name = name.replace("model.", "")
-            name = name.replace("decoder.final_layer_norm", "decoder.layer_norm")
-            param_path = os.path.join(path, name)
-            with open(param_path, "wb") as f:
-                np.save(f, param.cpu().detach().numpy())
-
-            # shared embedding
-            if "decoder.embed_tokens.weight" in name:
-                shutil.copy(param_path, param_path.replace(
-                    "decoder.embed_tokens.weight", "lm_head.weight"))
 
 
 if __name__ == "__main__":

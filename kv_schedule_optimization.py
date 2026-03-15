@@ -549,10 +549,67 @@ def get_optimal_policy(gpu_mem, cpu_mem, nvme_mem, args):
     print(f"Calculated optimal policy: {best_policy}")
     return best_policy, max_throughput
 
+def get_available_offloadings(model, hardware_config, batch_sizes):
+    total_available_gpu = hardware_config.gpu_mem # Bytes
+    total_weight_bytes = model.model_bytes() # Bytes
+    num_heads = model.n_head
+
+    batch_size_to_distinct_offloadings = {
+        1:[0, 100],
+        2:[0, 50, 100],
+        4:[0, 20, 50, 70, 100],
+        8:[0, 10, 20, 30, 50, 60, 70, 80, 100],
+        16:[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+    }
+
+    feasible_strategies = {}
+    for each_batch_size in batch_sizes:
+        for each_possible_offloading in batch_size_to_distinct_offloadings[each_batch_size]:
+            total_kv_cache_bytes = model.cache_bytes(batch_size, seq_len) # Bytes (Toal KV Cache per forward pass) (seq_len = prompt_len+gen_len)
+            total_hidden_bytes = model.hidden_bytes(batch_size, seq_len) # Bytes (Total Hidden State per forward pass) (seq_len = prompt_len+gen_len)
+            num_prompts_on_gpu = int(each_batch_size* num_heads * (100-each_possible_offloading) / 100) // num_heads
+            actual_kv_cache_bytes = (num_prompts_on_gpu / each_batch_size) * total_kv_cache_bytes
+
+            if total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes <= total_available_gpu:
+                if feasible_strategies[each_batch_size] is None:
+                    feasible_strategies[each_batch_size] = []
+                feasible_strategies[each_batch_size].append(each_possible_offloading)
+    return feasible_strategies
+    
+
+def get_batch_sizes(model, num_of_prompts, prompt_len, gen_len, hardware_config):
+    num_of_prompts = model.num_of_prompts
+
+    # test if %2 and test cache 
+
+def get_latency_of_strategy(model, num_of_prompts, prompt_len, gen_len,hardware_config, recomp_len, offload_percent):
+    #offloading percent is amount offloaded to the cpu
+    
+
+
+
+def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config):
+    # break model into layers
+    opt_config = get_opt_config(model)
+
+    ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
+    # understand what batch size is available 
+
+    # understand what % offloadings are available 
+    # weight + 
+
+    ### ITERATE AND COMPARE STRATEGIES
+
+    #iterate through 0-100% recomputing, % offloading, and batch size
+
+    # compare to optimal policy seen so far
+
+    # return best policy and optimal latency, energy, etc.
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", type=str, default="facebook/opt-6.7b")
+    parser.add_argument("--model", type=str, default="facebook/opt-175b")
     parser.add_argument("--prompt-len", type=int, default=512)
     parser.add_argument("--gen-len", type=int, default=32)
     parser.add_argument("--gpu-mem", type=int, default=15)
