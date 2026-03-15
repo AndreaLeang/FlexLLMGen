@@ -100,7 +100,6 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         in_load = False
         in_store = False
         if event['name'] == 'cudaMemcpyAsync':
-            # print(f"found cudaMemcpyAsync")
             for interval in load_intervals:
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                     load_memcpy_correlations.append(event['args']['correlation'])
@@ -248,9 +247,6 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     used_smart_copy[interval_start] = True
                     break
     
-    for interval_start in smart_load_cache_big_blocks.keys():
-        if interval_start not in used_smart_copy:
-            print(f"interval_start: {interval_start},{smart_load_cache_big_blocks[interval_start]}")
 
                 
     if split_dir:
@@ -405,24 +401,15 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 writer.writeheader()
                 for idx in range(recomp_calc_idx):
                     writer.writerow({'idx': idx, 'compute time (s)': recomp_calc_times[idx]})
-            
-    # Record Pinned Cache Times, Recomputation Prep, Recomputation Calc
-    # recomp_calc_times = {} # [idx] = time from start of compute layer to start of mha (rercompute)
-    # recomp_prep_transfer_times = {} # [idx] = time from start of load_hidden_compute to start of cudaMemcpyAsync (recompute prep)
-    # load_cache_big_blocks = {} #[start of load_cache] = (end of load_cache, correlation of memcpyasync)
-    # memcpy_to_bytes = {} # 
-    # cache_pinned_times = {} # [idx] =  time of aten::pin_memory, bytes transferred (pinned) --> need to link to amount of bytes --> link to the memcpyasync 
-
+    
+    # Record Pinned Cache Times
     with open(cur_filename + '_pinned.csv', 'w', newline='') as csvfile:
         fieldnames = ['idx', 'pinned time (s)', 'bytes transferred (B)']
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         writer.writeheader()
         for idx in range(cache_pinned_idx):
             writer.writerow({'idx': idx, 'pinned time (s)': cache_pinned_times[idx][0], 'bytes transferred (B)': cache_pinned_times[idx][1]})
-
     
-
-
     
     total_loading_cache_time_gpu /= 1000000.0 # originally in microseconds (10^-6)
     total_storing_cache_time_gpu /= 1000000.0
