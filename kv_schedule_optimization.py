@@ -598,7 +598,7 @@ def get_val_of_strategy(model, num_of_prompts, prompt_len, gen_len,hardware_conf
 
 
 
-def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config, var_to_min):
+def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config):
     # break model into layers
     opt_config = get_opt_config(model)
 
@@ -619,7 +619,7 @@ def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config, va
         for each_feasible_offloading in all_feasible_strategies_dict[each_batch_size]:
             for each_recomp_percent in range(0, 100, 10):
                 each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
-                cur_energy, cur_latency = get_val_of_strategy(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, each_feasible_offloading, var_to_min)
+                cur_energy, cur_latency = get_val_of_strategy(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, each_feasible_offloading)
                 
                 cur_objective_val = cur_latency
                 if var_to_min == "energy":
