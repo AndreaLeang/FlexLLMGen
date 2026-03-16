@@ -579,32 +579,58 @@ def get_available_offloadings(model, hardware_config, batch_sizes):
 
 def get_batch_sizes(model, num_of_prompts, prompt_len, gen_len, hardware_config):
     num_of_prompts = model.num_of_prompts
+    possible_batch_sizes = [1]
+    cur_num_batches = num_of_prompts
+    # test if %2 and repeat until none
+    while cur_num_batches % 2 == 0 and cur_num_batches > 0:
+        possible_batch_sizes.append(num_of_prompts // cur_num_batches)
+        cur_num_batches //= 2
+    return possible_batch_sizes
 
-    # test if %2 and test cache 
 
-def get_latency_of_strategy(model, num_of_prompts, prompt_len, gen_len,hardware_config, recomp_len, offload_percent):
+def get_val_of_strategy(model, num_of_prompts, prompt_len, gen_len,hardware_config, recomp_len, offload_percent, var_to_min):
     #offloading percent is amount offloaded to the cpu
+    #TODO
+
+    # get total energy and latency
+    return tot_energy, tot_latency
     
 
 
 
-def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config):
+def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config, var_to_min):
     # break model into layers
     opt_config = get_opt_config(model)
 
     ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
     # understand what batch size is available 
+    batch_sizes = get_available_batch_sizes(model, hardware_config)
 
     # understand what % offloadings are available 
-    # weight + 
+    all_feasible_strategies_dict = get_available_offloadings(model, hardware_config, batch_sizes)
 
     ### ITERATE AND COMPARE STRATEGIES
 
     #iterate through 0-100% recomputing, % offloading, and batch size
+    min_objective_val = float('inf')
+    min_strategy = None
 
-    # compare to optimal policy seen so far
+    for each_batch_size in batch_sizes:
+        for each_feasible_offloading in all_feasible_strategies_dict[each_batch_size]:
+            for each_recomp_percent in range(0, 100, 10):
+                each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
+                cur_energy, cur_latency = get_val_of_strategy(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, each_feasible_offloading, var_to_min)
+                
+                cur_objective_val = cur_latency
+                if var_to_min == "energy":
+                    cur_objective_val = cur_energy
+                # compare to optimal policy seen so far
+                if cur_objective_val < min_objective_val:
+                    min_objective_val = cur_objective_val
+                    min_strategy = (each_batch_size, each_feasible_offloading, recomp_len, cur_energy, cur_latency)
 
     # return best policy and optimal latency, energy, etc.
+    return min_objective_val, min_strategy
 
 
 if __name__ == "__main__":
