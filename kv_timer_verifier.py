@@ -516,6 +516,7 @@ if __name__ == "__main__":
         all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir, args.recomp)
         print(f"Total GPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][0]} s")
         print(f"Total GPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][1]} s")
+        print(f"Total Pinned Time for {batch_filename}: {all_kv_times[batch_filename][6]} s")
         if args.cpu_time:
             print(f"Total CPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][2]} s")
             print(f"Total CPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][3]} s")
@@ -523,7 +524,7 @@ if __name__ == "__main__":
             print(f"Total Loading Bytes for {batch_filename}: {all_kv_times[batch_filename][4]} GB")
             print(f"Total Storing Bytes (GB) for {batch_filename}: {all_kv_times[batch_filename][5]} GB")
         if args.recomp:
-            print(f"Total Recomputation Loading Time for {batch_filename}: {all_kv_times[batch_filename][6]} s")
+            print(f"Total Recomputation Loading Time for {batch_filename}: {all_kv_times[batch_filename][8]} s")
     print()
     print("GPU Load, GPU Store, CPU Load, CPU Store, Loading Bytes, Storing Bytes")
     for batch_filename in batch_filenames:
