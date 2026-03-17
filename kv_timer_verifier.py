@@ -359,48 +359,47 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     
                 for idx in range(one_dir_store_ind):
                     writer.writerow({'idx': idx, 'og Index': one_dir_storing_events[idx][0], 'data (B)': one_dir_storing_events[idx][1] , 'bandwidth (GB/s)': one_dir_storing_events[idx][2]})
-        if re_dist: 
-            
-            # Recomputation's Load
-            with open(cur_filename + '_all_load_r.csv', 'w', newline='') as csvfile:
-                fieldnames = ['idx', 'data (B)', 'bandwidth (GB/s)']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-    
-                for idx in range(cur_re_loading_idx):
-                    writer.writerow({'idx': idx, 'data (B)': all_re_load[idx][0] , 'bandwidth (GB/s)': all_re_load[idx][1]})
-            # Recomputation's Bidirectional Load
-            with open(cur_filename + '_bi_load_r.csv', 'w', newline='') as csvfile:
-                fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-    
-                for idx in range(bi_dir_re_load_ind):
-                    writer.writerow({'idx': idx, 'og Index': bi_re_load_events[idx][0], 'data (B)': bi_re_load_events[idx][1] , 'bandwidth (GB/s)': bi_re_load_events[idx][2]})
-            # Recomputation's One Direction Load
-            with open(cur_filename + '_one_load_r.csv', 'w', newline='') as csvfile:
-                fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-    
-                for idx in range(one_dir_re_load_ind):
-                    writer.writerow({'idx': idx, 'og Index': one_re_load_events[idx][0], 'data (B)': one_re_load_events[idx][1] , 'bandwidth (GB/s)': one_re_load_events[idx][2]})
-            
-            # Recomp prep time
-            with open(cur_filename + '_recomp_prep.csv', 'w', newline='') as csvfile:
-                fieldnames = ['idx', 'transfer prep time (s)']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                for idx in range(recomp_prep_idx):
-                    writer.writerow({'idx': idx, 'transfer prep time (s)': recomp_prep_transfer_times[idx]})
+    if re_dist: 
+        # Recomputation's Load
+        with open(cur_filename + '_all_load_r.csv', 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'data (B)', 'bandwidth (GB/s)']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
 
-            # Recomp calc time
-            with open(cur_filename + '_recomp_calc.csv', 'w', newline='') as csvfile:
-                fieldnames = ['idx', 'compute time (s)']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                for idx in range(recomp_calc_idx):
-                    writer.writerow({'idx': idx, 'compute time (s)': recomp_calc_times[idx]})
+            for idx in range(cur_re_loading_idx):
+                writer.writerow({'idx': idx, 'data (B)': all_re_load[idx][0] , 'bandwidth (GB/s)': all_re_load[idx][1]})
+        # Recomputation's Bidirectional Load
+        with open(cur_filename + '_bi_load_r.csv', 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for idx in range(bi_dir_re_load_ind):
+                writer.writerow({'idx': idx, 'og Index': bi_re_load_events[idx][0], 'data (B)': bi_re_load_events[idx][1] , 'bandwidth (GB/s)': bi_re_load_events[idx][2]})
+        # Recomputation's One Direction Load
+        with open(cur_filename + '_one_load_r.csv', 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for idx in range(one_dir_re_load_ind):
+                writer.writerow({'idx': idx, 'og Index': one_re_load_events[idx][0], 'data (B)': one_re_load_events[idx][1] , 'bandwidth (GB/s)': one_re_load_events[idx][2]})
+        
+        # Recomp prep time
+        with open(cur_filename + '_recomp_prep.csv', 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'transfer prep time (s)']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for idx in range(recomp_prep_idx):
+                writer.writerow({'idx': idx, 'transfer prep time (s)': recomp_prep_transfer_times[idx]})
+
+        # Recomp calc time
+        with open(cur_filename + '_recomp_calc.csv', 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'compute time (s)']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            for idx in range(recomp_calc_idx):
+                writer.writerow({'idx': idx, 'compute time (s)': recomp_calc_times[idx]})
     
     # Record Pinned Cache Times
     with open(cur_filename + '_pinned.csv', 'w', newline='') as csvfile:
