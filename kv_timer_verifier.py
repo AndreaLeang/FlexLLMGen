@@ -6,7 +6,7 @@ import os
 from pathlib import Path
 # import matplotlib.pyplot as plt
 
-def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandwidth=False, record_ind_events=False, split_dir=False, re_dist=False):
+def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandwidth=False, record_ind_events=False, split_dir=False, re_dist=False, re_no_load=False):
     # open json file
     with open(json_filename, 'r') as file:
         # load json file
@@ -360,30 +360,31 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 for idx in range(one_dir_store_ind):
                     writer.writerow({'idx': idx, 'og Index': one_dir_storing_events[idx][0], 'data (B)': one_dir_storing_events[idx][1] , 'bandwidth (GB/s)': one_dir_storing_events[idx][2]})
     if re_dist: 
-        # Recomputation's Load
-        with open(cur_filename + '_all_load_r.csv', 'w', newline='') as csvfile:
-            fieldnames = ['idx', 'data (B)', 'bandwidth (GB/s)']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-
-            for idx in range(cur_re_loading_idx):
-                writer.writerow({'idx': idx, 'data (B)': all_re_load[idx][0] , 'bandwidth (GB/s)': all_re_load[idx][1]})
-        # Recomputation's Bidirectional Load
-        with open(cur_filename + '_bi_load_r.csv', 'w', newline='') as csvfile:
-            fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-
-            for idx in range(bi_dir_re_load_ind):
-                writer.writerow({'idx': idx, 'og Index': bi_re_load_events[idx][0], 'data (B)': bi_re_load_events[idx][1] , 'bandwidth (GB/s)': bi_re_load_events[idx][2]})
-        # Recomputation's One Direction Load
-        with open(cur_filename + '_one_load_r.csv', 'w', newline='') as csvfile:
-            fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-
-            for idx in range(one_dir_re_load_ind):
-                writer.writerow({'idx': idx, 'og Index': one_re_load_events[idx][0], 'data (B)': one_re_load_events[idx][1] , 'bandwidth (GB/s)': one_re_load_events[idx][2]})
+        if not re_no_load:
+            # Recomputation's Load
+            with open(cur_filename + '_all_load_r.csv', 'w', newline='') as csvfile:
+                fieldnames = ['idx', 'data (B)', 'bandwidth (GB/s)']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+    
+                for idx in range(cur_re_loading_idx):
+                    writer.writerow({'idx': idx, 'data (B)': all_re_load[idx][0] , 'bandwidth (GB/s)': all_re_load[idx][1]})
+            # Recomputation's Bidirectional Load
+            with open(cur_filename + '_bi_load_r.csv', 'w', newline='') as csvfile:
+                fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+    
+                for idx in range(bi_dir_re_load_ind):
+                    writer.writerow({'idx': idx, 'og Index': bi_re_load_events[idx][0], 'data (B)': bi_re_load_events[idx][1] , 'bandwidth (GB/s)': bi_re_load_events[idx][2]})
+            # Recomputation's One Direction Load
+            with open(cur_filename + '_one_load_r.csv', 'w', newline='') as csvfile:
+                fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+    
+                for idx in range(one_dir_re_load_ind):
+                    writer.writerow({'idx': idx, 'og Index': one_re_load_events[idx][0], 'data (B)': one_re_load_events[idx][1] , 'bandwidth (GB/s)': one_re_load_events[idx][2]})
         
         # Recomp prep time
         with open(cur_filename + '_recomp_prep.csv', 'w', newline='') as csvfile:
@@ -497,6 +498,7 @@ def add_parser_arguments(parser):
     parser.add_argument('--event-dist', action="store_true", help="Measure the distribution of the data transfer bytes")
     parser.add_argument('--split-dir', action="store_true", help="Split into bi direction and single direction data transfers")
     parser.add_argument('--recomp', action="store_true", help="Measure the distribution of data transfer for recomputation")
+    parser.add_argument('--recomp-no-load', action="store_true", help="do not save load csvs")
 
 if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -512,7 +514,7 @@ if __name__ == "__main__":
     # batch_tklqt = [12014.2443359375, 18471.943251953126, 49995.56291894531, 104777.457796875, 232505.366203125, 461461.98833007814]
     for batch_filename in batch_filenames:
         print(f"Processing {batch_filename}")
-        all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir, args.recomp)
+        all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir, args.recomp, args.recomp_no_load)
         print(f"Total GPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][0]} s")
         print(f"Total GPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][1]} s")
         print(f"Total Pinned Time for {batch_filename}: {all_kv_times[batch_filename][6]} s")
