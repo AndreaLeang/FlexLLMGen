@@ -249,33 +249,9 @@ if __name__ == "__main__":
     parser.add_argument("--nvme-mem", type=int, default=1500)
 
     parser.add_argument("--np", "--num-prompts", type=int)
-    parser.add_argument("--gbs", "--gpu-batch-size", type=int)
-    parser.add_argument("--num-gb", "--num-gpu-batches", type=int)
-    parser.add_argument("--percent", nargs="+", type=int)
-    parser.add_argument("--wg", type=int)
-    parser.add_argument("--wc", type=int)
-    parser.add_argument("--cg", type=int)
-    parser.add_argument("--cc", type=int)
-    parser.add_argument("--hg", type=int)
-    parser.add_argument("--hc", type=int)
-    parser.add_argument("--compress-w", action="store_true")
 
-    parser.add_argument("--alpha-g", type=float)
-    parser.add_argument("--alpha-c", type=float)
-    parser.add_argument("--alpha-n", type=float)
-    parser.add_argument("--sweep-cpu", action="store_true")
-    parser.add_argument("--sweep-cpu-start", type=int, default=0)
 
     args = parser.parse_args()
-    assert not (args.percent and (args.wg or args.wc or args.cg or args.cc or args.hg or args.hc)), "cost model: percent and other arguments are not compatible"
-
-    if args.alpha_g:
-        alpha_g = args.alpha_g
-    if args.alpha_c:
-        alpha_c = args.alpha_c
-    if args.alpha_n:
-        alpha_n = args.alpha_n
-
     config = CostModelConfig()
 
     opt_config = get_opt_config(args.model)
@@ -292,6 +268,5 @@ if __name__ == "__main__":
     config.nmem = args.nvme_mem * GB
 
     #TODO: specify hardware config
-    hardware_config = None
-    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, hardware_config)
+    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config)
 
