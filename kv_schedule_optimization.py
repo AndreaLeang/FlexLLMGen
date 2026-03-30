@@ -202,17 +202,17 @@ def recomp_pred(recomp_len, hardware_config):
     return None
 
 
-def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config, var_to_min="latency"):
+def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, var_to_min="latency"):
     # break model into layers
-    opt_config = get_opt_config(model)
-
+  
     ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
     # understand what unique batch size is available 
     batch_sizes = get_batch_sizes(model, hardware_config)
-
+    print(f'got batch sizes: {batch_sizes}')
     # understand what % offloadings are available 
     all_feasible_strategies_dict = get_available_offloadings(model, hardware_config, batch_sizes)
-
+    print(f'got all feasible strats: {all_feasible_strategies_dict}')
+    
     ### ITERATE AND COMPARE STRATEGIES
 
     #iterate through 0-100% recomputing, % offloading, and batch size
@@ -223,6 +223,7 @@ def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config, va
         for each_feasible_offloading in all_feasible_strategies_dict[each_batch_size]:
             for each_recomp_percent in range(0, 100, 10):
                 each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
+                print(f'cur strat: {each_batch_size}, {each_recomp_percent}, {each_recomp_len}')
                 #Model Prediction 
                 cur_energy, cur_latency = strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading)
                 
@@ -246,7 +247,8 @@ if __name__ == "__main__":
     parser.add_argument("--gpu-mem", type=int, default=15)
     parser.add_argument("--cpu-mem", type=int, default=200)
     parser.add_argument("--nvme-mem", type=int, default=1500)
-    
+
+    parser.add_argument("--np", "--num-prompts", type=int)
     parser.add_argument("--gbs", "--gpu-batch-size", type=int)
     parser.add_argument("--num-gb", "--num-gpu-batches", type=int)
     parser.add_argument("--percent", nargs="+", type=int)
@@ -289,24 +291,7 @@ if __name__ == "__main__":
     config.cmem = args.cpu_mem * GB
     config.nmem = args.nvme_mem * GB
 
-    if args.sweep_cpu:
-        all_policies = []
-        for i in range(args.sweep_cpu_start, 110, 10):
-            if args.percent is not None:
-                args.percent[2] = 100 - i
-                args.percent[3] = i
-            else:
-                # args.percent = [100, 0, 100-i, i, 100, 0]
-                args.cg = 100 - i
-                args.cc = i
-            best_policy, max_throughput = solve(config, solve_lp, vars(args))
-            print(f"sweeping cpu: {i}%")
-            print(best_policy)
-            print(f"max_throughput: {max_throughput:.2f} token/s")
-            all_policies.append((i, max_throughput))
-        print(f"all policies: {all_policies}")
-    else:
-        best_policy, max_throughput = solve(config, solve_lp, vars(args))
-        print(best_policy)
-        print(f"max_throughput: {max_throughput:.2f} token/s")
- 
+    #TODO: specify hardware config
+    hardware_config = None
+    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, hardware_config)
+
