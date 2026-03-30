@@ -130,8 +130,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
     # Forward Pass Prediction
     #is_load_store: 0: none, 1: load only, 2: store only, 3: load and store
-    input_output_latency = layer_prediction(model, is_load_store=1, layer_type="input", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + (num_batches-1)*layer_prediction(model, is_load_store=0, layer_type="input", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len)
-                          +(num_batches)*layer_prediction(model, is_load_store=1, layer_type="output", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + layer_prediction(model, is_load_store=0, layer_type="output", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len)
+    input_output_latency = layer_prediction(model, is_load_store=1, layer_type="input", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + (num_batches-1)*layer_prediction(model, is_load_store=0, layer_type="input", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) +(num_batches)*layer_prediction(model, is_load_store=1, layer_type="output", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + layer_prediction(model, is_load_store=0, layer_type="output", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len)
     
     for cur_gen_len in range(1, gen_len+1):
         if num_batches == 1:
