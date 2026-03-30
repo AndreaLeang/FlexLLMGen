@@ -395,7 +395,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             writer.writeheader()
             for idx in range(recomp_prep_idx):
                 cur_time_cor = recomp_prep_transfer_times[idx]
-                recomp_prep_transfer_times[idx] = (cur_time_cur[0], recomp_memcpy_to_bytes[cur_time_cor[1]])
+                recomp_prep_transfer_times[idx] = (cur_time_cor[0], recomp_memcpy_to_bytes[cur_time_cor[1]])
                 writer.writerow({'idx': idx, 'transfer prep time (s)': recomp_prep_transfer_times[idx][0], 'bytes transferred (B)': recomp_prep_transfer_times[idx][1]})
 
         # Recomp calc time
