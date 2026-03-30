@@ -549,6 +549,8 @@ def get_optimal_policy(gpu_mem, cpu_mem, nvme_mem, args):
     print(f"Calculated optimal policy: {best_policy}")
     return best_policy, max_throughput
 
+
+
 def get_available_offloadings(model, hardware_config, batch_sizes):
     total_available_gpu = hardware_config.gpu_mem # Bytes
     total_weight_bytes = model.model_bytes() # Bytes
@@ -588,23 +590,94 @@ def get_batch_sizes(model, num_of_prompts, prompt_len, gen_len, hardware_config)
     return possible_batch_sizes
 
 
-def get_val_of_strategy(model, num_of_prompts, prompt_len, gen_len,hardware_config, recomp_len, offload_percent, var_to_min):
+def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches):
     #offloading percent is amount offloaded to the cpu
-    #TODO
+    
+    tot_energy = 0
+    tot_latency = 0
+    num_hidden_layers = model.num_hidden_layers
+
+    # Forward Pass Prediction
+    #is_load_store: 0: none, 1: load only, 2: store only, 3: load and store
+    input_output_latency = layer_prediction(model, is_load_store=1, layer_type="input", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + (num_batches-1)*layer_prediction(model, is_load_store=0, layer_type="input", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len)+
+                            (num_batches)*layer_prediction(model, is_load_store=1, layer_type="output", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + layer_prediction(model, is_load_store=0, layer_type="output", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len)
+    
+    for cur_gen_len in range(1, gen_len+1):
+        if num_batches == 1:
+            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, is_load_store=1, layer_type="MHA", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len))
+            tot_MLP_latency = num_hidden_layers*(layer_prediction(model, is_load_store=2, layer_type="MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len))
+        else:
+            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, is_load_store=1, layer_type="MHA", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + layer_prediction(model, is_load_store=2, layer_type="MHA", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + (num_batches-2)*layer_prediction(model, is_load_store=3, layer_type="MHA", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len))
+            tot_MLP_latency = (num_hidden_layers-1)*(layer_prediction(model, is_load_store=2, layer_type="MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + layer_prediction(model, is_load_store=1, layer_type="MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + (num_batches-2)*layer_prediction(model, is_load_store=0, layer_type="MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len))
+            tot_MLP_latency += layer_prediction(model, is_load_store=2, layer_type="MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + (num_batches-1)*layer_prediction(model, is_load_store=0, layer_type="MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len)
+
+        middle_layer_latency = tot_MHA_latency + tot_MLP_latency
+
+        one_forward_latency = input_output_latency + middle_layer_latency
+        tot_latency += one_forward_latency
 
     # get total energy and latency
     return tot_energy, tot_latency
-    
+
+def get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len):
+    recomp_load_bytes = recomp_len * 8192 * batch_size # 8192 bytes/token
+    kv_load_bytes = (prompt_len + gen_len-recomp_len) * 8192 * (batch_size-((batch_size*(100-offload_percent))//100))
+    return recomp_load_bytes, kv_load_bytes
+
+def get_bytes_to_store(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len):
+    kv_store_bytes = batch_size * 8192
+    return kv_store_bytes
+
+def layer_prediction(model, is_load_store, layer_type="MHA", batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len):
+    #layer type determines the actual recomputation time + compute layer time
+    if is_load_store == 0:
+        #no load or store, just the layer computations
+        #TODO: have teh model carry layer latency
+        return model.layer_latency(layer_type)
+    elif is_load_store == 2:
+        # store only --> single directional
+        return max(model.layer_latency(layer_type), transfer_pred(get_bytes_to_store(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len), hardware_config))
+    else:
+        recomp_bytes, kv_load_bytes = get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
+        #use is_load_store==1 as single directional
+        #recomp transfer & first kv load are always single directional. the second kv load uses single_directional
+        pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
+        first_half_latency = max(pinned_time, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
+        recomp_latency = 0
+        if layer_type == "MHA":
+            recomp_latency = recomp_pred(recomp_len, hardware_config)
+        second_single_dir = is_load_store == 1
+        second_half_latency = max(pinned_latency + recomp_latency + model.layer_latency(layer_type), transfer_pred(kv_load_bytes, hardware_config)+ transfer_pred(kv_load_bytes, hardware_config, single_directional = second_single_dir))
+
+        return first_half_latency + second_half_latency
 
 
+def pinned_pred(bytes, hardware_config):
+    return 5.168e-14 * bytes^2 + 3.317e-05 * bytes - 104.7
 
-def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config):
+
+def recomp_prep_pred(prompt_len, recomp_len, hardware_config):
+    #TODO: collect data
+    return None
+
+def transfer_pred(bytes, hardware_config, single_directional=True):
+    if single_directional:
+        return 1.415 * math.log10(bytes) + 13.38
+    else:
+        return 3.626 * math.log10(bytes) + 26.13 
+
+def recomp_pred(recomp_len, hardware_config):
+    #TODO: collect data
+    return None
+
+
+def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config, var_to_min="latency"):
     # break model into layers
     opt_config = get_opt_config(model)
 
     ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
     # understand what batch size is available 
-    batch_sizes = get_available_batch_sizes(model, hardware_config)
+    batch_sizes = get_batch_sizes(model, hardware_config)
 
     # understand what % offloadings are available 
     all_feasible_strategies_dict = get_available_offloadings(model, hardware_config, batch_sizes)
@@ -619,7 +692,8 @@ def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config):
         for each_feasible_offloading in all_feasible_strategies_dict[each_batch_size]:
             for each_recomp_percent in range(0, 100, 10):
                 each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
-                cur_energy, cur_latency = get_val_of_strategy(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, each_feasible_offloading)
+                #Model Prediction 
+                cur_energy, cur_latency = strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading)
                 
                 cur_objective_val = cur_latency
                 if var_to_min == "energy":
@@ -627,7 +701,7 @@ def disect_input(model, num_of_prompts, prompt_len, gen_len, hardware_config):
                 # compare to optimal policy seen so far
                 if cur_objective_val < min_objective_val:
                     min_objective_val = cur_objective_val
-                    min_strategy = (each_batch_size, each_feasible_offloading, recomp_len, cur_energy, cur_latency)
+                    min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency)
 
     # return best policy and optimal latency, energy, etc.
     return min_objective_val, min_strategy

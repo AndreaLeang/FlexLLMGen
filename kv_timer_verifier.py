@@ -77,11 +77,14 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     load_memcpy_correlations = []
     store_memcpy_correlations = []
     recomp_load_memcpy_correlations = []
+    
 
     recomp_calc_times = {} # [idx] = time from start of compute layer to start of mha (rercompute)
     recomp_prep_transfer_times = {} # [idx] = time from start of load_hidden_compute to start of cudaMemcpyAsync (recompute prep)
     smart_load_cache_big_blocks = {} #[start of smart copy] = (end of smart copy, correlation of memcpyasync)
-    memcpy_to_bytes = {} # 
+    kv_memcpy_to_bytes = {} # 
+    recomp_load_hidden_start_to_correlation = {} # [start of load_hidden_compute] = (correlation, time for prep)
+    recomp_memcpy_to_bytes = {}
     cache_pinned_times = {} # [idx] =  time of aten::pin_memory, bytes transferred (pinned) --> need to link to amount of bytes --> link to the memcpyasync 
     
     recomp_prep_idx = 0
@@ -131,8 +134,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 for interval in recomp_data_transfer_intervals:
                     if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                         recomp_load_memcpy_correlations.append(event['args']['correlation'])
-
-                        recomp_prep_transfer_times[recomp_prep_idx] = event['ts'] - interval[0]
+                        recomp_prep_transfer_times[recomp_prep_idx] = (event['ts'] - interval[0], event['args']['bytes'])
                         recomp_prep_idx += 1
                         tot_recomp_prep_transfer_time += event['ts'] - interval[0]
                         break
@@ -196,7 +198,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         if event['name'] == 'Memcpy HtoD (Pinned -> Device)':
             if event['args']['correlation'] in load_memcpy_correlations:
                 total_loading_cache_time_gpu += event['dur']
-                memcpy_to_bytes[event['args']['correlation']] = event['args']['bytes']
+                kv_memcpy_to_bytes[event['args']['correlation']] = event['args']['bytes']
                 if est_bandwidth: 
                     total_loading_bytes += event['args']['bytes']
                 if split_dir: 
@@ -207,6 +209,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     loading_events[cur_loading_idx] = (event['args']['bytes'], event['args']['memory bandwidth (GB/s)'])
                     cur_loading_idx += 1
             elif re_dist and event['args']['correlation'] in recomp_load_memcpy_correlations: 
+                recomp_memcpy_to_bytes[event['args']['correlation']] = event['args']['bytes']
                 re_loading_start_time = event['ts']
                 re_loading_end_time = event['ts'] + event['dur']
                 re_load_intervals.append((re_loading_start_time, re_loading_end_time, cur_re_loading_idx))
@@ -238,7 +241,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 if event['ts'] >= interval_start and event['ts'] < interval_end:
                     # found which load_cache pinned is in
                     #find memcpyasync to get amount of data transferred
-                    bytes_transferred = memcpy_to_bytes[memcpy_correlation]
+                    bytes_transferred = kv_memcpy_to_bytes[memcpy_correlation]
                     cache_pinned_times[cache_pinned_idx] = (event['dur'], bytes_transferred) # pinned duration, bytes transferred
                     cache_pinned_idx += 1
 
@@ -388,19 +391,19 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         
         # Recomp prep time
         with open(cur_filename + '_recomp_prep.csv', 'w', newline='') as csvfile:
-            fieldnames = ['idx', 'transfer prep time (s)']
+            fieldnames = ['idx', 'transfer prep time (s)', 'bytes transferred (B)']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             for idx in range(recomp_prep_idx):
-                writer.writerow({'idx': idx, 'transfer prep time (s)': recomp_prep_transfer_times[idx]})
+                writer.writerow({'idx': idx, 'transfer prep time (s)': recomp_prep_transfer_times[idx][0], 'bytes transferred (B)': recomp_prep_transfer_times[idx][1]})
 
         # Recomp calc time
         with open(cur_filename + '_recomp_calc.csv', 'w', newline='') as csvfile:
-            fieldnames = ['idx', 'compute time (s)']
+            fieldnames = ['idx', 'compute time (s)', 'bytes transferred (B)']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
             for idx in range(recomp_calc_idx):
-                writer.writerow({'idx': idx, 'compute time (s)': recomp_calc_times[idx]})
+                writer.writerow({'idx': idx, 'compute time (s)': recomp_calc_times[idx], 'bytes transferred (B)': recomp_load_hidden_start_to_correlation[idx][1]})
     
     # Record Pinned Cache Times
     with open(cur_filename + '_pinned.csv', 'w', newline='') as csvfile:
