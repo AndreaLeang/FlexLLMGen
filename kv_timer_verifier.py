@@ -481,7 +481,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
 
     return total_loading_cache_time_gpu, total_storing_cache_time_gpu, total_loading_cache_time_cpu, total_storing_cache_time_cpu, total_loading_bytes, total_storing_bytes, tot_pinned_cache_time, tot_recomp_prep_transfer_time, tot_recomp_transfer_time, tot_recomp_calc_time
 
-def get_layer_composition(json_filename, get_cpu_time=False, est_bandwidth=False, record_ind_events=False, split_dir=False, re_dist=False, re_no_load=False):
+def get_layer_composition(json_filename):
     # open json file
     with open(json_filename, 'r') as file:
         # load json file
@@ -490,21 +490,32 @@ def get_layer_composition(json_filename, get_cpu_time=False, est_bandwidth=False
     # seperate layers by time between syncs' end + starts
     # differentiate layers by the functions in flex_opt_kvpr.py(155): forward
     # MHA: pytorch_backend.py(425): mha_gen 
-    # each MHA layer has the pinned, --> w recomp or not existence of recomp cudaMemcpyAsync
     # MLP: pytorch_backend.py(715): mlp
     # input: pytorch_backend.py(249): opt_input_embed
     # output: pytorch_backend.py(275): opt_output_embed
 
-    
-    mlp_layers
-    
+    all_sync_times = [] # (start, end)
+    all_layer_latencies # (start, end) 
+    mha_layers = {} # [start_time] = end_time
+    mlp_layers = {}
+    input_layers = {}
+    output_layers = {}
 
     # for each item in the result of the "traceEvents" key,
     num_of_events = len(data['traceEvents'])
 
-    # get load and store intervals
+    # get all sync 
     for event_idx in range(num_of_events):
         event = data['traceEvents'][event_idx]
+        
+
+    # sort sync
+
+    # pair syncs to get layer latencies
+
+    # match layers to each layer latencies
+
+
     
 
 
