@@ -134,12 +134,12 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     
     for cur_gen_len in range(1, gen_len+1):
         if num_batches == 1:
-            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, "MHA", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len))
-            tot_MLP_latency = num_hidden_layers*(layer_prediction(model, 2, "MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len))
+            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MHA"))
+            tot_MLP_latency = num_hidden_layers*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP"))
         else:
-            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, "MHA", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + layer_prediction(model, 2, "MHA", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + (num_batches-2)*layer_prediction(model, 3, "MHA", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len))
-            tot_MLP_latency = (num_hidden_layers-1)*(layer_prediction(model, 2, "MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + layer_prediction(model, 1, "MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + (num_batches-2)*layer_prediction(model, 0, "MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len))
-            tot_MLP_latency += layer_prediction(model, 2, "MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len) + (num_batches-1)*layer_prediction(model, 0, "MLP", batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len)
+            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MHA") + layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MHA") + (num_batches-2)*layer_prediction(model, 3, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MHA"))
+            tot_MLP_latency = (num_hidden_layers-1)*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP") + layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP") + (num_batches-2)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP"))
+            tot_MLP_latency += layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP")
 
         middle_layer_latency = tot_MHA_latency + tot_MLP_latency
 
@@ -158,7 +158,7 @@ def get_bytes_to_store(model, batch_size, num_of_batches, offload_percent, recom
     kv_store_bytes = batch_size * 8192
     return kv_store_bytes
 
-def layer_prediction(model, is_load_store, layer_type="MHA", batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len):
+def layer_prediction(model, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, layer_type="MHA"):
     #layer type determines the actual recomputation time + compute layer time
     if is_load_store == 0:
         #no load or store, just the layer computations
