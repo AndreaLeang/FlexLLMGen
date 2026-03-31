@@ -206,7 +206,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
   
     ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
     # understand what unique batch size is available 
-    batch_sizes = get_batch_sizes(model, hardware_config)
+    batch_sizes = get_batch_sizes(model, num_of_prompts, prompt_len, gen_len, hardware_config)
     print(f'got batch sizes: {batch_sizes}')
     # understand what % offloadings are available 
     all_feasible_strategies_dict = get_available_offloadings(model, hardware_config, batch_sizes)
