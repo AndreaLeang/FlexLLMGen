@@ -158,15 +158,16 @@ def get_bytes_to_store(batch_size):
     kv_store_bytes = batch_size * 8192 # 1 token per batch
     return kv_store_bytes
 
-def layer_prediction(model, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, layer_type="MHA"):
+def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, layer_type="MHA"):
     #layer type determines the actual recomputation time + compute layer time
+    layer_calc_time = layer_calc_pred(opt_config, batch_size, hardware_config, layer_type)
+  
     if is_load_store == 0:
         #no load or store, just the layer computations
-        #TODO: have teh model carry layer latency
-        return model.layer_latency(layer_type)
+        return layer_calc_time
     elif is_load_store == 2:
         # store only --> single directional
-        return max(model.layer_latency(layer_type), transfer_pred(get_bytes_to_store(batch_size), hardware_config))
+        return max(layer_calc_time, transfer_pred(get_bytes_to_store(batch_size), hardware_config))
     else:
         recomp_bytes, kv_load_bytes = get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
         #use is_load_store==1 as single directional
@@ -177,7 +178,7 @@ def layer_prediction(model, is_load_store, batch_size, num_of_batches, offload_p
         if layer_type == "MHA":
             recomp_latency = recomp_calc_pred(recomp_len, hardware_config)
         second_single_dir = is_load_store == 1
-        second_half_latency = max(pinned_latency + recomp_latency + model.layer_latency(layer_type), transfer_pred(kv_load_bytes, hardware_config)+ transfer_pred(kv_load_bytes, hardware_config, single_directional = second_single_dir))
+        second_half_latency = max(pinned_latency + recomp_latency + layer_calc_time, transfer_pred(kv_load_bytes, hardware_config)+ transfer_pred(kv_load_bytes, hardware_config, single_directional = second_single_dir))
 
         return first_half_latency + second_half_latency
 
@@ -200,6 +201,10 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
 
 def recomp_calc_pred(recomp_len, hardware_config):
     #TODO: collect data
+    return 0
+
+def layer_calc_pred(opt_config, batch_size, hardware_config, layer_type="MHA"):
+    #TODO
     return 0
 
 
