@@ -105,7 +105,7 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len)
             actual_kv_cache_bytes = (num_prompts_on_gpu / each_batch_size) * total_kv_cache_bytes
 
             if total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes <= total_available_gpu:
-                if feasible_strategies[each_batch_size] is None:
+                if each_batch_size not in feasible_strategies:
                     feasible_strategies[each_batch_size] = []
                 feasible_strategies[each_batch_size].append(each_possible_offloading)
     return feasible_strategies
