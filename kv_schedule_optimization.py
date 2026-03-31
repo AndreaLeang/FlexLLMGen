@@ -208,7 +208,7 @@ def layer_calc_pred(opt_config, batch_size, hardware_config, layer_type="MHA"):
     return 0
 
 
-def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, var_to_min="latency"):
+def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, var_to_min="latency"):
     # break model into layers
   
     ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
@@ -225,15 +225,20 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
     min_objective_val = float('inf')
     min_strategy = None
 
+    if save_results: 
+        all_results = {}
+
     for each_batch_size in batch_sizes:
         for each_feasible_offloading in all_feasible_strategies_dict[each_batch_size]:
             for each_recomp_percent in range(0, 100, 10):
                 each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
-                print(f'cur strat: {each_batch_size}, {each_recomp_percent}, {each_recomp_len}')
+                print(f'cur strat: {each_batch_size}, {each_feasible_offloading}, {each_recomp_len}')
                 #Model Prediction 
                 cur_energy, cur_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size)
-                print(f'strat energy: {cur_energy}')
-                print(f'strat latency: {cur_latency}')
+                if save_results: 
+                    cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
+                    all_results[cur_strat] = (cur_energy, cur_latency)
+              
                 cur_objective_val = cur_latency
                 if var_to_min == "energy":
                     cur_objective_val = cur_energy
@@ -242,7 +247,25 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                     min_objective_val = cur_objective_val
                     min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency)
 
+    if save_results:
+        csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
+        fieldnames = ["Batch Size", "Offloading Percent to CPU", "Recompute Length", "Energy (J)", "Latency (s)"]
+        write_header = not os.path.exists(csv_filename)
+      
+        with open(csv_filename, 'a', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            if write_header:
+                writer.writeheader()
+            for each_strat in all_results:
+              writer.writerow({'Batch Size': each_strat[0], 
+                      'Offloading Percent to CPU': each_strat[1],
+                      'Recompute Length': each_strat[2], 
+                      'Energy (J)': all_results[each_strat][0], 
+                      'Latency (s)': all_results[each_strat][1], 
+                      })
+
     # return best policy and optimal latency, energy, etc.
+    print(f'best policy: batch_size = {min_strategy[0]}, offloading_percent = {min_strategy[1]}, recomp_len = {min_strategy[2]}, energy = {min_strategy[3]}, latency = min_strategy[4]')
     return min_objective_val, min_strategy
 
 
@@ -256,6 +279,7 @@ if __name__ == "__main__":
     parser.add_argument("--nvme-mem", type=int, default=1500)
 
     parser.add_argument("--np", "--num-prompts", type=int)
+    parser.add_argument("--save", "--save-all-strats", action="store_true")
 
 
     args = parser.parse_args()
@@ -275,5 +299,5 @@ if __name__ == "__main__":
     config.nmem = args.nvme_mem * GB
 
     #TODO: specify hardware config
-    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config)
+    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save)
 
