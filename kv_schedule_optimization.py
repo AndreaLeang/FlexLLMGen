@@ -172,10 +172,10 @@ def layer_prediction(model, is_load_store, batch_size, num_of_batches, offload_p
         #use is_load_store==1 as single directional
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional
         pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
-        first_half_latency = max(pinned_time, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
+        first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
         recomp_latency = 0
         if layer_type == "MHA":
-            recomp_latency = recomp_pred(recomp_len, hardware_config)
+            recomp_latency = recomp_calc_pred(recomp_len, hardware_config)
         second_single_dir = is_load_store == 1
         second_half_latency = max(pinned_latency + recomp_latency + model.layer_latency(layer_type), transfer_pred(kv_load_bytes, hardware_config)+ transfer_pred(kv_load_bytes, hardware_config, single_directional = second_single_dir))
 
@@ -196,7 +196,7 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
     else:
         return 3.626 * math.log10(bytes) + 26.13 
 
-def recomp_pred(recomp_len, hardware_config):
+def recomp_calc_pred(recomp_len, hardware_config):
     #TODO: collect data
     return 0
 
