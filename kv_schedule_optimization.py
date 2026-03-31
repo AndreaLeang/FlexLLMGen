@@ -169,7 +169,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         # store only --> single directional
         return max(layer_calc_time, transfer_pred(get_bytes_to_store(batch_size), hardware_config))
     else:
-        recomp_bytes, kv_load_bytes = get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
+        recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
         #use is_load_store==1 as single directional
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional
         pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
