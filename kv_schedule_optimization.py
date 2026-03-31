@@ -151,6 +151,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
 def get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len):
     recomp_load_bytes = recomp_len * 8192 * batch_size # 8192 bytes/token
+    print(batch_size*(100-offload_percent))
     kv_load_bytes = (prompt_len + gen_len-recomp_len) * 8192 * (batch_size-((batch_size*(100-offload_percent))//100))
     return recomp_load_bytes, kv_load_bytes
 
