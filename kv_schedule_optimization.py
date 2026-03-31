@@ -188,7 +188,7 @@ def pinned_pred(bytes, hardware_config):
 
 def recomp_prep_pred(prompt_len, recomp_len, hardware_config):
     #TODO: collect data
-    return None
+    return 0
 
 def transfer_pred(bytes, hardware_config, single_directional=True):
     if single_directional:
@@ -198,7 +198,7 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
 
 def recomp_pred(recomp_len, hardware_config):
     #TODO: collect data
-    return None
+    return 0
 
 
 def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, var_to_min="latency"):
@@ -225,7 +225,8 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                 print(f'cur strat: {each_batch_size}, {each_recomp_percent}, {each_recomp_len}')
                 #Model Prediction 
                 cur_energy, cur_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size)
-                
+                print(f'strat energy: {cur_energy}')
+                print(f'strat latency: {cur_latency}')
                 cur_objective_val = cur_latency
                 if var_to_min == "energy":
                     cur_objective_val = cur_energy
