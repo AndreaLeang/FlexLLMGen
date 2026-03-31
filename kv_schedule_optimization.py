@@ -82,10 +82,10 @@ class CostModelConfig:
 
 
 
-def get_available_offloadings(model, hardware_config, batch_sizes):
-    total_available_gpu = hardware_config.gpu_mem # Bytes
-    total_weight_bytes = model.model_bytes() # Bytes
-    num_heads = model.n_head
+def get_available_offloadings(opt_config, hardware_config, batch_sizes):
+    total_available_gpu = hardware_config.gmem # Bytes
+    total_weight_bytes = opt_config.model_bytes() # Bytes
+    num_heads = opt_config.n_head
 
     batch_size_to_distinct_offloadings = {
         1:[0, 100],
@@ -117,7 +117,6 @@ def get_batch_sizes(model, num_of_prompts, prompt_len, gen_len, hardware_config)
     while (cur_num_batches % 2 == 0 and cur_num_batches > 0) or cur_num_batches == 1:
         possible_batch_sizes.append(num_of_prompts // cur_num_batches)
         cur_num_batches //= 2
-        print(cur_num_batches)
     return possible_batch_sizes
 
 
@@ -209,7 +208,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
     batch_sizes = get_batch_sizes(model, num_of_prompts, prompt_len, gen_len, hardware_config)
     print(f'got batch sizes: {batch_sizes}')
     # understand what % offloadings are available 
-    all_feasible_strategies_dict = get_available_offloadings(model, hardware_config, batch_sizes)
+    all_feasible_strategies_dict = get_available_offloadings(opt_config, hardware_config, batch_sizes)
     print(f'got all feasible strats: {all_feasible_strategies_dict}')
     
     ### ITERATE AND COMPARE STRATEGIES
