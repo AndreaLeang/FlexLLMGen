@@ -251,6 +251,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
 
     if save_results:
         csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
+        print(csv_filename)
         fieldnames = ["Batch Size", "Offloading Percent to CPU", "Recompute Length", "Energy (J)", "Latency (s)"]
         write_header = not os.path.exists(csv_filename)
       
