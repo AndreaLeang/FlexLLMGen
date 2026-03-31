@@ -183,7 +183,7 @@ def layer_prediction(model, is_load_store, batch_size, num_of_batches, offload_p
 
 
 def pinned_pred(bytes, hardware_config):
-    return 5.168e-14 * bytes^2 + 3.317e-05 * bytes - 104.7
+    return 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7
 
 
 def recomp_prep_pred(prompt_len, recomp_len, hardware_config):
