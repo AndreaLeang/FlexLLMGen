@@ -224,7 +224,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                 each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
                 print(f'cur strat: {each_batch_size}, {each_recomp_percent}, {each_recomp_len}')
                 #Model Prediction 
-                cur_energy, cur_latency = strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading)
+                cur_energy, cur_latency = strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size)
                 
                 cur_objective_val = cur_latency
                 if var_to_min == "energy":
