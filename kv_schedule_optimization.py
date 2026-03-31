@@ -117,6 +117,7 @@ def get_batch_sizes(model, num_of_prompts, prompt_len, gen_len, hardware_config)
     while cur_num_batches % 2 == 0 and cur_num_batches > 0:
         possible_batch_sizes.append(num_of_prompts // cur_num_batches)
         cur_num_batches //= 2
+        print(cur_num_batches)
     return possible_batch_sizes
 
 
