@@ -111,7 +111,6 @@ def get_available_offloadings(model, hardware_config, batch_sizes):
     
 
 def get_batch_sizes(model, num_of_prompts, prompt_len, gen_len, hardware_config):
-    num_of_prompts = model.num_of_prompts
     possible_batch_sizes = [1]
     cur_num_batches = num_of_prompts
     # test if %2 and repeat until none
