@@ -82,7 +82,7 @@ class CostModelConfig:
 
 
 
-def get_available_offloadings(opt_config, hardware_config, batch_sizes):
+def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len):
     total_available_gpu = hardware_config.gmem # Bytes
     total_weight_bytes = opt_config.model_bytes() # Bytes
     num_heads = opt_config.n_head
@@ -208,7 +208,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
     batch_sizes = get_batch_sizes(model, num_of_prompts, prompt_len, gen_len, hardware_config)
     print(f'got batch sizes: {batch_sizes}')
     # understand what % offloadings are available 
-    all_feasible_strategies_dict = get_available_offloadings(opt_config, hardware_config, batch_sizes)
+    all_feasible_strategies_dict = get_available_offloadings(opt_config, hardware_config, batch_sizes, prompt_len+gen_len)
     print(f'got all feasible strats: {all_feasible_strategies_dict}')
     
     ### ITERATE AND COMPARE STRATEGIES
