@@ -98,8 +98,8 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len)
     feasible_strategies = {}
     for each_batch_size in batch_sizes:
         for each_possible_offloading in batch_size_to_distinct_offloadings[each_batch_size]:
-            total_kv_cache_bytes = opt_config.cache_bytes(batch_sizes, seq_len) # Bytes (Toal KV Cache per forward pass) (seq_len = prompt_len+gen_len)
-            total_hidden_bytes = opt_config.hidden_bytes(batch_sizes, seq_len) # Bytes (Total Hidden State per forward pass) (seq_len = prompt_len+gen_len)
+            total_kv_cache_bytes = opt_config.cache_bytes(each_batch_size, seq_len) # Bytes (Toal KV Cache per forward pass) (seq_len = prompt_len+gen_len)
+            total_hidden_bytes = opt_config.hidden_bytes(each_batch_size, seq_len) # Bytes (Total Hidden State per forward pass) (seq_len = prompt_len+gen_len)
             num_prompts_on_gpu = int(each_batch_size* num_heads * (100-each_possible_offloading) / 100) // num_heads
             actual_kv_cache_bytes = (num_prompts_on_gpu / each_batch_size) * total_kv_cache_bytes
 
