@@ -267,7 +267,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                       })
 
     # return best policy and optimal latency, energy, etc.
-    print(f'best policy: batch_size = {min_strategy[0]}, offloading_percent = {min_strategy[1]}, recomp_len = {min_strategy[2]}, energy = {min_strategy[3]}, latency = min_strategy[4]')
+    print(f'best policy: batch_size = {min_strategy[0]}, offloading_percent = {min_strategy[1]}, recomp_len = {min_strategy[2]}, energy = {min_strategy[3]}, latency = {min_strategy[4]}')
     return min_objective_val, min_strategy
 
 
