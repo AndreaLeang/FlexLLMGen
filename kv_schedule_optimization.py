@@ -191,10 +191,12 @@ def recomp_prep_pred(prompt_len, recomp_len, hardware_config):
     return 0
 
 def transfer_pred(bytes, hardware_config, single_directional=True):
+    if bytes == 0:
+        return 0
     if single_directional:
         return 1.415 * math.log10(bytes) + 13.38
-    else:
-        return 3.626 * math.log10(bytes) + 26.13 
+    
+    return 3.626 * math.log10(bytes) + 26.13 
 
 def recomp_calc_pred(recomp_len, hardware_config):
     #TODO: collect data
