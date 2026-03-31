@@ -130,16 +130,16 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
     # Forward Pass Prediction
     #is_load_store: 0: none, 1: load only, 2: store only, 3: load and store
-    input_output_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "input") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "input") +(num_batches)*layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "output") + layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "output")
+    input_output_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "input") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "input") +(num_batches)*layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "output") + layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "output")
     
     for cur_gen_len in range(1, gen_len+1):
         if num_batches == 1:
-            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MHA"))
-            tot_MLP_latency = num_hidden_layers*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP"))
+            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MHA"))
+            tot_MLP_latency = num_hidden_layers*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP"))
         else:
-            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MHA") + layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MHA") + (num_batches-2)*layer_prediction(model, 3, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MHA"))
-            tot_MLP_latency = (num_hidden_layers-1)*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP") + layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP") + (num_batches-2)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP"))
-            tot_MLP_latency += layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, "MLP")
+            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MHA") + layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MHA") + (num_batches-2)*layer_prediction(model, 3, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MHA"))
+            tot_MLP_latency = (num_hidden_layers-1)*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP") + layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP") + (num_batches-2)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP"))
+            tot_MLP_latency += layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP")
 
         middle_layer_latency = tot_MHA_latency + tot_MLP_latency
 
@@ -151,15 +151,14 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
 def get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len):
     recomp_load_bytes = recomp_len * 8192 * batch_size # 8192 bytes/token
-    print(batch_size*(100-offload_percent))
     kv_load_bytes = (prompt_len + gen_len-recomp_len) * 8192 * (batch_size-((batch_size*(100-offload_percent))//100))
     return recomp_load_bytes, kv_load_bytes
 
-def get_bytes_to_store(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len):
-    kv_store_bytes = batch_size * 8192
+def get_bytes_to_store(batch_size):
+    kv_store_bytes = batch_size * 8192 # 1 token per batch
     return kv_store_bytes
 
-def layer_prediction(model, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, layer_type="MHA"):
+def layer_prediction(model, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, layer_type="MHA"):
     #layer type determines the actual recomputation time + compute layer time
     if is_load_store == 0:
         #no load or store, just the layer computations
@@ -167,7 +166,7 @@ def layer_prediction(model, is_load_store, batch_size, num_of_batches, offload_p
         return model.layer_latency(layer_type)
     elif is_load_store == 2:
         # store only --> single directional
-        return max(model.layer_latency(layer_type), transfer_pred(get_bytes_to_store(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len), hardware_config))
+        return max(model.layer_latency(layer_type), transfer_pred(get_bytes_to_store(batch_size), hardware_config))
     else:
         recomp_bytes, kv_load_bytes = get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
         #use is_load_store==1 as single directional
