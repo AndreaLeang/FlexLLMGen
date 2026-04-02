@@ -42,7 +42,7 @@ COOLDOWN_S = 5
 # ── Helpers ───────────────────────────────────────────────────────────
 
 def cell_tag(model_name:str, prompt_len: int, gen_len: int, num_prompts: int, batch_size: int) -> str:
-    model_name_spec = model.split('/')[1]
+    model_name_spec = model_name.split('/')[1]
     return f"{model_name_spec}_pLen_{prompt_len}_gLen_{gen_len}_numP_{num_prompts}_bSize_{batch_size}"
 
 
