@@ -29,7 +29,7 @@ from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     torch_mem_stats, torch_dtype_to_np_dtype, write_benchmark_log,
     read_benchmark_log, get_optimal_split_point)
 
-from experimental.cost_model import get_optimal_policy
+# from experimental.cost_model import get_optimal_policy
 
 import torch
 import torchvision.models as models
@@ -1577,7 +1577,10 @@ def run_flexllmgen(args):
         args.hg = None
         args.hc = None
         print("going to calc optimal policy...")
-        policy, est_max_throughput = get_optimal_policy(args.gpu_mem, args.cpu_mem, args.nvme_mem, args)
+        # Commented out for pulp import related issues
+        # policy, est_max_throughput = get_optimal_policy(args.gpu_mem, args.cpu_mem, args.nvme_mem, args)
+        policy = None
+        est_max_throughput = None
     else:
         policy = Policy(args.gpu_batch_size, args.num_gpu_batches,
                         args.percent[0], args.percent[1],
