@@ -18,10 +18,10 @@ from typing import List, Dict, Optional
 import torch
 from transformers import AutoTokenizer
 from power_monitor import PowerMonitor, PowerSample
-from ..flexllmgen.flex_opt_kvpr import OptLM
-from ..flexllmgen.pytorch_backend import (TorchDevice, TorchDisk,
+from FlexLLMGen.flexllmgen.flex_opt_kvpr import OptLM
+from FlexLLMGen.flexllmgen.pytorch_backend import (TorchDevice, TorchDisk,
     TorchMixedDevice)
-from ..flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
+from FlexLLMGen.flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     array_1d, array_2d, array_3d, str2bool)
 
 
