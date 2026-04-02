@@ -21,7 +21,7 @@ import torch
 from transformers import AutoTokenizer
 from power_monitor import PowerMonitor, PowerSample
 
-
+from flexllmgen.compression import CompressionConfig
 from flexllmgen.pytorch_backend import (TorchDevice, TorchDisk,
     TorchMixedDevice)
 from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
