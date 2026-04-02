@@ -18,6 +18,7 @@ from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional
 
 import torch
+import numpy as np
 from transformers import AutoTokenizer
 from power_monitor import PowerMonitor, PowerSample
 
