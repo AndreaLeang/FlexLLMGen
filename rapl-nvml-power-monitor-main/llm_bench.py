@@ -187,7 +187,7 @@ class LLMPowerBench:
                                         group_dim=2, symmetric=False))
 
         self.opt_config = get_opt_config(self.model_id)
-        self.recomp_len = (self.recomp_percent * args.prompt_len) // 100
+        self.recomp_len = (self.recomp_percent * self.prompt_len) // 100
         
         self.model      = OptLM(self.opt_config, self.env, "~/opt_weights", self.policy, self.recompute_len, False)
         return self
@@ -238,7 +238,7 @@ class LLMPowerBench:
         # Warm up
         print("\n[warm-up] 3 iters, no min duration ...")
         for i in range(3):
-            output_ids = self.model.generate(warmup_inputs, max_new_tokens=1, verbose=args.verbose)
+            output_ids = self.model.generate(warmup_inputs, max_new_tokens=1, verbose=0)
         print("[warm-up] done\n")
 
         tot_refresh_cache_time = 0
