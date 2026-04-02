@@ -18,7 +18,7 @@ from typing import List, Dict, Optional
 import torch
 from transformers import AutoTokenizer
 from power_monitor import PowerMonitor, PowerSample
-from flex_opt_kvpr import OptLM
+from ..flexllmgen.flex_opt_kvpr import OptLM
 from ..flexllmgen.pytorch_backend import (TorchDevice, TorchDisk,
     TorchMixedDevice)
 from ..flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
