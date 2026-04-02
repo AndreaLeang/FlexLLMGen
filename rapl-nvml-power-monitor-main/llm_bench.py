@@ -12,6 +12,7 @@ fast phases (tokenize, detokenize) accumulate enough samples.
 """
 
 import time, json
+import sys
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional
 
@@ -19,6 +20,7 @@ import torch
 from transformers import AutoTokenizer
 from power_monitor import PowerMonitor, PowerSample
 
+sys.path.insert(1, '/home/akleang/akleang/FlexLLMGen/')
 from flexllmgen.pytorch_backend import (TorchDevice, TorchDisk,
     TorchMixedDevice)
 from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
