@@ -27,7 +27,7 @@ from flexllmgen.pytorch_backend import (TorchDevice, TorchDisk,
     TorchMixedDevice)
 from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     array_1d, array_2d, array_3d, str2bool)
-from flexllmgen.flex_opt_kvpr import OptLM, Policy
+from flexllmgen.flex_opt_kvpr import OptLM, Policy, get_test_inputs
 
 
 # ── Data structures ───────────────────────────────────────────────────
