@@ -189,7 +189,7 @@ class LLMPowerBench:
         self.opt_config = get_opt_config(self.model_id)
         self.recomp_len = (self.recomp_percent * self.prompt_len) // 100
         
-        self.model      = OptLM(self.opt_config, self.env, "~/opt_weights", self.policy, self.recompute_len, False)
+        self.model      = OptLM(self.opt_config, self.env, "~/opt_weights", self.policy, self.recomp_len, False)
         return self
 
     def run(
@@ -214,7 +214,12 @@ class LLMPowerBench:
         # tokenize inputs & warmup
         warmup_inputs = get_test_inputs(32, self.num_prompts, self.tokenizer)
         inputs = get_test_inputs(self.prompt_len, self.num_prompts, self.tokenizer)
-        prompt_len = self.prompt_len
+        num_layers = self.model.num_layers
+        num_gpu_batches = self.num_of_blocks
+        gpu_batch_size = self.block_size
+        overlap = self.policy.overlap
+        prompt_len, gen_len = self.prompt_len, self.gen_len
+        self.model.execute_gen_len = self.gen_len
 
         # Setting up 
         task = Task(
@@ -227,13 +232,6 @@ class LLMPowerBench:
             stop=None,
         )
         self.model.set_task(task)
-
-        num_layers = self.model.num_layers
-        num_gpu_batches = self.num_of_blocks
-        gpu_batch_size = self.batch_size
-        overlap = self.policy.overlap
-        prompt_len, gen_len = self.prompt_len, self.gen_len
-        self.model.execute_gen_len = self.gen_len
         
         # Warm up
         print("\n[warm-up] 3 iters, no min duration ...")
@@ -279,7 +277,7 @@ class LLMPowerBench:
             for j in range(num_layers):
                 for k in range(num_gpu_batches):
                     self.model.init_cache(j, k)
-                    if self.recompute_len > 0:
+                    if self.recomp_len > 0:
                         self.model.init_hidden(j, k)
             torch.cuda.synchronize()
             i1 = len(mon.samples)
