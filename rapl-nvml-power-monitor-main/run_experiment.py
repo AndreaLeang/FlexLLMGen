@@ -86,7 +86,7 @@ def main():
                         help="minimum iterations per cell")
     parser.add_argument("--min_duration", type=float, default=10.0,
                         help="minimum seconds per cell")
-    parser.add_argument("--out_dir",      default="power_results")
+    parser.add_argument("--out_dir",      default="rapl-nvml-power-monitor-main/power_results")
     parser.add_argument("--prompt-len", type=int, default=2048)
     parser.add_argument("--gen-len", type=int, default=16)
     parser.add_argument("--block-size", type=int, default=1)
@@ -98,8 +98,9 @@ def main():
 
     args = parser.parse_args()
 
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(exist_ok=True)
+    if not os.path.exists(args.out_dir):
+        out_dir = Path(args.out_dir)
+        out_dir.mkdir(exist_ok=True)
 
     bench = LLMPowerBench(
         model_id=args.model,
