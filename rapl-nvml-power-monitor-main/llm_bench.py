@@ -20,7 +20,7 @@ import torch
 from transformers import AutoTokenizer
 from power_monitor import PowerMonitor, PowerSample
 
-sys.path.insert(1, '/home/akleang/akleang/FlexLLMGen/')
+sys.path.append( '/home/akleang/akleang/FlexLLMGen/') # to be able to find felxllmgen
 from flexllmgen.pytorch_backend import (TorchDevice, TorchDisk,
     TorchMixedDevice)
 from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
