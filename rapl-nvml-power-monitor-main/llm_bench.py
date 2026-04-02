@@ -223,9 +223,9 @@ class LLMPowerBench:
 
         # Setting up 
         task = Task(
-            inputs=self.inputs,
+            inputs=inputs,
             prompt_len= prompt_len,
-            gen_len=self.gen_len,
+            gen_len=gen_len,
             cut_gen_len=None,
             do_sample=False,
             temperature=1.0,
