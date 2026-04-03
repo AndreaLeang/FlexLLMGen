@@ -242,7 +242,7 @@ class LLMPowerBench:
       
         # accumulators — one per phase
         acc_prefill = _PhaseAccum("prefill",    prompt_len)
-        acc_decode  = _PhaseAccum("decode",     max_new_tokens)
+        acc_decode  = _PhaseAccum("decode",     gen_len)
 
         tot_refresh_cache_time = 0
         mon.start()
