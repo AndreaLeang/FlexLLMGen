@@ -300,8 +300,8 @@ class LLMPowerBench:
             i0 = len(mon.samples)
           
             # Power Caputure for entire inference
-            if num_gpu_batches == 1:
-                self.model.generation_loop_overlap_single_batch()
+            # if num_gpu_batches == 1:
+            #     self.model.generation_loop_overlap_single_batch()
             # else:
             #     self.model.generation_loop_overlap_multi_batch()
 
