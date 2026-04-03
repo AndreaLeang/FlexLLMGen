@@ -192,7 +192,6 @@ class LLMPowerBench:
         self.recomp_len = (self.recomp_percent * self.prompt_len) // 100
         
         self.model      = OptLM(self.opt_config, self.env, "~/opt_weights", self.policy, self.recomp_len, False)
-        self.model.execute_gen_len = gen_len
         return self
 
     def run(
@@ -315,7 +314,7 @@ class LLMPowerBench:
                 self.model.sync()
         
                 # Generate
-                for i in range(self.model.gen_len):
+                for i in range(self.model.execute_gen_len):
                     self.model.update_attention_mask(i, 0)
                     for j in range(self.model.num_layers):
                         # print(f"i: {i}, j: {j}")
@@ -397,7 +396,7 @@ class LLMPowerBench:
       
 
         return InferenceResult(
-            prompt=inputs, output=output,
+            prompt=task.inputs, output=output,
             prompt_tokens=prompt_len, output_tokens=output_len,
             n_iters=iteration, total_duration_s=total_dur,
             phases=phases, layers=layers, all_samples=mon.samples,
