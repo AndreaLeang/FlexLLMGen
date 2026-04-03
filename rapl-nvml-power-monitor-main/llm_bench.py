@@ -305,8 +305,7 @@ class LLMPowerBench:
 
             elapsed    = time.perf_counter() - loop_start
 
-            print(f"  iter {iteration:>3}  "
-                  f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
+            print(f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
                   f"decode {acc_decode.durations[-1]*1000:.0f}ms  "
                   f"elapsed {elapsed:.1f}s")
 
