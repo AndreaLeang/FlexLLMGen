@@ -425,6 +425,16 @@ class LLMPowerBench:
                   f"{p.throughput_tok_s:>7.1f} "
                   f"{p.avg_cpu_pkg_w:>7.1f}W {p.avg_cpu_dram_w:>7.1f}W "
                   f"{gpu0:>6.1f}W{skt_str}  {p.energy_per_token_j:>7.4f}")
+        for p in r.layers:
+            gpu0    = p.avg_gpu_w[0] if p.avg_gpu_w else 0.0
+            skt_str = "".join(
+                f"  {p.avg_socket_pkg_w[i]:>6.1f}W {p.avg_socket_dram_w[i]:>6.1f}W"
+                for i in range(n_sockets)
+            )
+            print(f"  {p.name:<10} {p.n_iters:>5} {p.avg_duration_s:>7.3f}s "
+                  f"{p.throughput_tok_s:>7.1f} "
+                  f"{p.avg_cpu_pkg_w:>7.1f}W {p.avg_cpu_dram_w:>7.1f}W "
+                  f"{gpu0:>6.1f}W{skt_str}  {p.energy_per_token_j:>7.4f}")
         print(sep)
 
     def save_json(self, r: InferenceResult, path: str):
@@ -436,5 +446,6 @@ class LLMPowerBench:
                 "n_iters": r.n_iters,
                 "total_duration_s": r.total_duration_s,
                 "phases": [asdict(p) for p in r.phases],
+                "layers": [asdict(l) for l in r.layers],
             }, f, indent=2)
         print(f"Saved → {path}")
