@@ -164,7 +164,6 @@ class LLMPowerBench:
         self.model          = None
         self.env            = None
         self.policy         = None
-        print(f"gen len should be {gen_len}")
 
 
     def load(self):
@@ -222,8 +221,8 @@ class LLMPowerBench:
         gpu_batch_size = self.block_size
         overlap = self.policy.overlap
         prompt_len, gen_len = self.prompt_len, self.gen_len
-        print(f"execute_gen_len is {self.gen_len}")
         self.model.execute_gen_len = self.gen_len
+        print(f"execute_gen_len is {self.model.execute_gen_len}")
 
         # Setting up 
         task = Task(
@@ -333,8 +332,8 @@ class LLMPowerBench:
                         lt1 = time.perf_counter()
                         all_acc_layers[j].add(mon.samples, li0, li1, lt0, lt1)
         
-                    if self.model.task.stop and np.all(self.model.stopped):
-                        break
+                    # if self.model.task.stop and np.all(self.model.stopped):
+                    #     break
                     
             else:
                 # Prologue
