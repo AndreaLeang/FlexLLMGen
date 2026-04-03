@@ -303,7 +303,6 @@ class LLMPowerBench:
             t1 = time.perf_counter()
             acc_decode.add(mon.samples, i0, i1, t0, t1)
 
-            iteration += 1
             elapsed    = time.perf_counter() - loop_start
 
             print(f"  iter {iteration:>3}  "
@@ -312,7 +311,7 @@ class LLMPowerBench:
                   f"elapsed {elapsed:.1f}s")
 
             # stop when BOTH conditions met
-            if iteration >= n_iters and elapsed >= min_duration_s:
+            if elapsed >= min_duration_s:
                 break
 
         mon.stop()
