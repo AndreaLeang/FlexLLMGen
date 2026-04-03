@@ -252,7 +252,7 @@ class LLMPowerBench:
             t0 = time.perf_counter()
             # Output token ids
             self.model.output_ids = np.full((len(task.inputs), prompt_len + gen_len),
-                self.config.pad_token_id, dtype=np.int32)
+                self.model.config.pad_token_id, dtype=np.int32)
             self.model.stopped = np.zeros((len(task.inputs), 1), dtype=bool)
             self.model.output_ids[:, :prompt_len] = np.asarray(task.inputs)
             #Intermediate Tensors
