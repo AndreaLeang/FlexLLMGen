@@ -64,7 +64,7 @@ class PhaseStats:
 
 @dataclass
 class InferenceResult:
-    prompt:        str
+    prompt:        List[List[int]]
     output:        str           # output from the last iteration
     prompt_tokens: int
     output_tokens: int
