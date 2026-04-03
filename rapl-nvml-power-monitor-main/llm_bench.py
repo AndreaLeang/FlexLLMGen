@@ -192,6 +192,7 @@ class LLMPowerBench:
         self.recomp_len = (self.recomp_percent * self.prompt_len) // 100
         
         self.model      = OptLM(self.opt_config, self.env, "~/opt_weights", self.policy, self.recomp_len, False)
+        self.model.execute_gen_len = gen_len
         return self
 
     def run(
