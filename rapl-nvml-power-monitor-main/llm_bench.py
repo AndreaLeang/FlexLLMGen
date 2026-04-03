@@ -310,7 +310,8 @@ class LLMPowerBench:
             # Power Capture layer by layer
             if num_gpu_batches == 1:
                 # Prologue
-                self.model.load_weight(0, 0, 0)
+                for k in range(self.model.num_gpu_batches):
+                    self.model.load_weight(0, 0, k)
                 self.model.sync()
         
                 # Generate
