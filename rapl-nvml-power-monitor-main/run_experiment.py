@@ -97,9 +97,8 @@ def main():
 
 
     args = parser.parse_args()
-
+    out_dir = Path(args.out_dir)
     if not os.path.exists(args.out_dir):
-        out_dir = Path(args.out_dir)
         out_dir.mkdir(exist_ok=True)
 
     bench = LLMPowerBench(
