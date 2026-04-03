@@ -245,10 +245,12 @@ class LLMPowerBench:
         acc_decode  = _PhaseAccum("decode",     gen_len)
 
         tot_refresh_cache_time = 0
+        iteration = 0
         mon.start()
         loop_start = time.perf_counter()
 
         while True:
+            iteration += 1
             # ── Refrech Cache ───────────────────────────────────────────────
             # Intermediate tensors
             # The following buffers store values used
@@ -305,7 +307,8 @@ class LLMPowerBench:
 
             elapsed    = time.perf_counter() - loop_start
 
-            print(f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
+            print(f"iterations {iteration}"
+                  f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
                   f"decode {acc_decode.durations[-1]*1000:.0f}ms  "
                   f"elapsed {elapsed:.1f}s")
 
@@ -324,7 +327,7 @@ class LLMPowerBench:
         phases = [acc_prefill.to_stats(), acc_decode.to_stats()]
 
         return InferenceResult(
-            prompt=prompt, output=output,
+            prompt=inputs, output=output,
             prompt_tokens=prompt_len, output_tokens=output_len,
             n_iters=iteration, total_duration_s=total_dur,
             phases=phases, all_samples=mon.samples,
