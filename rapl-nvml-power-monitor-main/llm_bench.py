@@ -71,6 +71,7 @@ class InferenceResult:
     n_iters:       int
     total_duration_s: float
     phases:        List[PhaseStats]
+    layers:        List[PhaseStats]
     all_samples:   List[PowerSample] = field(repr=False)
 
 
@@ -243,6 +244,9 @@ class LLMPowerBench:
         # accumulators — one per phase
         acc_prefill = _PhaseAccum("prefill",    prompt_len)
         acc_decode  = _PhaseAccum("decode",     gen_len)
+        all_acc_layers = []
+        for i in range(num_layers):
+            all_acc_layers.append( _PhaseAccum("layer_"+str(i),     1))
 
         tot_refresh_cache_time = 0
         iteration = 0
@@ -294,10 +298,69 @@ class LLMPowerBench:
             # ── decode ────────────────────────────────────────────────
             t0 = time.perf_counter()
             i0 = len(mon.samples)
+            # Power Caputure for entire inference
+            # if num_gpu_batches == 1:
+            #     self.model.generation_loop_overlap_single_batch()
+            # else:
+            #     self.model.generation_loop_overlap_multi_batch()
+
+            # Power Capture layer by layer
             if num_gpu_batches == 1:
-                self.model.generation_loop_overlap_single_batch()
+                # Prologue
+                for k in range(num_gpu_batches):
+                    self.model.load_weight(0, 0, k)
+                self.model.sync()
+        
+                # Generate
+                for i in range(gen_len):
+                    self.model.update_attention_mask(i, 0)
+                    lt0 = time.perf_counter()
+                    li0 = len(mon.samples)
+                    for j in range(num_layers):
+                        self.model.load_weight(i, j+1, 0)
+                        self.model.load_hidden_compute(i,j+1, 0)
+                        self.model.load_cache(i, j+1, 0)
+                        self.model.load_hidden(i, j, 0)
+                        self.model.compute_layer(i, j, 0)
+                        self.model.store_cache(i, j-1, 0)
+                        self.model.store_hidden(i, j, 0)
+                        self.model.sync()
+        
+                    if self.model.task.stop and np.all(self.model.stopped):
+                        break
+                    li1 = len(mon.samples)
+                    lt1 = time.perf_counter()
+                    all_acc_layers[i].add(mon.samples, li0, li1, lt0, lt1)
             else:
-                self.model.generation_loop_overlap_multi_batch()
+                # Prologue
+                for k in range(num_gpu_batches):
+                    self.model.load_weight(0, 0, k)
+                self.model.load_hidden(0, 0, 0)
+                self.model.sync()
+        
+                # Generate
+                for i in range(gen_len):
+                    for k in range(num_gpu_batches):
+                        self.update_attention_mask(i, k)
+                    for j in range(num_layers):
+                        lt0 = time.perf_counter()
+                        li0 = len(mon.samples)
+                        for k in range(num_gpu_batches):
+                            self.model.load_weight(i, j+1, k)
+                            self.model.load_hidden_compute(i,j, k+1)
+                            self.model.load_cache(i, j, k+1)
+                            self.model.store_hidden(i, j, k-1)
+                            self.model.load_hidden(i, j, k+1)
+                            self.model.compute_layer(i, j, k)
+                            self.model.store_cache(i, j, k-1)
+                            self.model.sync()
+                        li1 = len(mon.samples)
+                        lt1 = time.perf_counter()
+                        all_acc_layers[i].add(mon.samples, li0, li1, lt0, lt1)
+        
+                # Epilogue
+                self.model.store_hidden(gen_len-1, num_layers-1, num_gpu_batches-1)
+          
             out_ids = self.model.output_ids
 
             torch.cuda.synchronize()
@@ -307,13 +370,13 @@ class LLMPowerBench:
 
             elapsed    = time.perf_counter() - loop_start
 
-            print(f"iterations {iteration}"
+            print(f"iterations {iteration}  "
                   f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
                   f"decode {acc_decode.durations[-1]*1000:.0f}ms  "
                   f"elapsed {elapsed:.1f}s")
 
             # stop when BOTH conditions met
-            if elapsed >= min_duration_s:
+            if iterations >= n_iter and elapsed >= min_duration_s:
                 break
 
         mon.stop()
@@ -325,12 +388,14 @@ class LLMPowerBench:
         output_len = len(new_ids)
 
         phases = [acc_prefill.to_stats(), acc_decode.to_stats()]
+        layers = [each_acc_layers.to_stats() for each_acc_layers in all_acc_layers]
+      
 
         return InferenceResult(
             prompt=inputs, output=output,
             prompt_tokens=prompt_len, output_tokens=output_len,
             n_iters=iteration, total_duration_s=total_dur,
-            phases=phases, all_samples=mon.samples,
+            phases=phases, layers=layers, all_samples=mon.samples,
         )
 
     def print_report(self, r: InferenceResult):
