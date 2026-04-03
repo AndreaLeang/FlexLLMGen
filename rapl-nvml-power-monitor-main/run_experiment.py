@@ -72,6 +72,16 @@ def flat_row(tag: str, result) -> dict:
             row[f"{p}_avg_s{i}_dram_w"]   = phase.avg_socket_dram_w[i]
     return row
 
+def fix_ownership(path):
+    """Change the owner of the file to SUDO_UID"""
+    try: 
+        uid = os.environ.get('SUDO_UID')
+        gid = os.environ.get('SUDO_GID')
+        if uid is not None:
+            os.chown(path, int(uid), int(gid))
+    except: 
+        print(f"not in sudo, file ownership is ok")
+        return None
 
 # ── Main ──────────────────────────────────────────────────────────────
 
@@ -137,6 +147,7 @@ def main():
     # save per-cell JSON (full detail including raw phase data)
     json_path = out_dir / f"{tag}.json"
     bench.save_json(result, str(json_path))
+    fix_ownership(str(json_path))
 
     # save per-cell power trace CSV
     csv_path = out_dir / f"{tag}_trace.csv"
@@ -162,6 +173,7 @@ def main():
                 *[f"{v:.2f}" for v in x.socket_dram_w],
                 *[f"{g:.2f}" for g in x.gpu_w],
             ])
+    fix_ownership(csv_path)
 
     all_rows.append(flat_row(tag, result))
 
@@ -174,6 +186,7 @@ def main():
             w = csv.DictWriter(f, fieldnames=fieldnames)
             w.writeheader()
             w.writerows(all_rows)
+        fix_ownership(summary_path)
 
     print(f"\n{'='*64}")
     print(f"  Done.  {cell_count} cells completed.")
