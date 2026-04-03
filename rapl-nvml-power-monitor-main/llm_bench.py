@@ -164,6 +164,7 @@ class LLMPowerBench:
         self.model          = None
         self.env            = None
         self.policy         = None
+        print(f"gen len should be {gen_len}")
 
 
     def load(self):
@@ -221,6 +222,7 @@ class LLMPowerBench:
         gpu_batch_size = self.block_size
         overlap = self.policy.overlap
         prompt_len, gen_len = self.prompt_len, self.gen_len
+        print(f"execute_gen_len is {self.gen_len}")
         self.model.execute_gen_len = self.gen_len
 
         # Setting up 
@@ -304,12 +306,9 @@ class LLMPowerBench:
             #     self.model.generation_loop_overlap_single_batch()
             # else:
             #     self.model.generation_loop_overlap_multi_batch()
-
-            print("generation_loop_overlap_single_batch done")
           
             # Power Capture layer by layer
             if num_gpu_batches == 1:
-                print(f"execute gen len: {self.model.execute_gen_len}, gpu batches: {self.model.num_gpu_batches}")
                 # Prologue
                 for k in range(self.model.num_gpu_batches):
                     self.model.load_weight(0, 0, k)
@@ -337,35 +336,35 @@ class LLMPowerBench:
                     if self.model.task.stop and np.all(self.model.stopped):
                         break
                     
-            # else:
-            #     # Prologue
-            #     for k in range(num_gpu_batches):
-            #         self.model.load_weight(0, 0, k)
-            #     self.model.load_hidden(0, 0, 0)
-            #     self.model.sync()
+            else:
+                # Prologue
+                for k in range(num_gpu_batches):
+                    self.model.load_weight(0, 0, k)
+                self.model.load_hidden(0, 0, 0)
+                self.model.sync()
         
-            #     # Generate
-            #     for i in range(gen_len):
-            #         for k in range(num_gpu_batches):
-            #             self.update_attention_mask(i, k)
-            #         for j in range(num_layers):
-            #             for k in range(num_gpu_batches):
-            #                 lt0 = time.perf_counter()
-            #                 li0 = len(mon.samples)
-            #                 self.model.load_weight(i, j+1, k)
-            #                 self.model.load_hidden_compute(i,j, k+1)
-            #                 self.model.load_cache(i, j, k+1)
-            #                 self.model.store_hidden(i, j, k-1)
-            #                 self.model.load_hidden(i, j, k+1)
-            #                 self.model.compute_layer(i, j, k)
-            #                 self.model.store_cache(i, j, k-1)
-            #                 self.model.sync()
-            #                 li1 = len(mon.samples)
-            #                 lt1 = time.perf_counter()
-            #                 all_acc_layers[j*num_gpu_batches + k].add(mon.samples, li0, li1, lt0, lt1)
+                # Generate
+                for i in range(self.model.execute_gen_len):
+                    for k in range(num_gpu_batches):
+                        self.update_attention_mask(i, k)
+                    for j in range(num_layers):
+                        for k in range(num_gpu_batches):
+                            lt0 = time.perf_counter()
+                            li0 = len(mon.samples)
+                            self.model.load_weight(i, j+1, k)
+                            self.model.load_hidden_compute(i,j, k+1)
+                            self.model.load_cache(i, j, k+1)
+                            self.model.store_hidden(i, j, k-1)
+                            self.model.load_hidden(i, j, k+1)
+                            self.model.compute_layer(i, j, k)
+                            self.model.store_cache(i, j, k-1)
+                            self.model.sync()
+                            li1 = len(mon.samples)
+                            lt1 = time.perf_counter()
+                            all_acc_layers[j*num_gpu_batches + k].add(mon.samples, li0, li1, lt0, lt1)
         
-            #     # Epilogue
-            #     self.model.store_hidden(gen_len-1, num_layers-1, num_gpu_batches-1)
+                # Epilogue
+                self.model.store_hidden(gen_len-1, num_layers-1, num_gpu_batches-1)
           
             out_ids = self.model.output_ids
 
