@@ -309,6 +309,7 @@ class LLMPowerBench:
           
             # Power Capture layer by layer
             if num_gpu_batches == 1:
+                print(f"execute gen len: {self.model.execute_gen_len}, gpu batches: {self.model.num_gpu_batches}")
                 # Prologue
                 for k in range(self.model.num_gpu_batches):
                     self.model.load_weight(0, 0, k)
@@ -317,10 +318,10 @@ class LLMPowerBench:
                 # Generate
                 for i in range(self.model.execute_gen_len):
                     self.model.update_attention_mask(i, 0)
-                    for j in range(self.model.num_layers):
+                    for j in range(num_layers):
                         # print(f"i: {i}, j: {j}")
-                        # lt0 = time.perf_counter()
-                        # li0 = len(mon.samples)
+                        lt0 = time.perf_counter()
+                        li0 = len(mon.samples)
                         self.model.load_weight(i, j+1, 0)
                         self.model.load_hidden_compute(i,j+1, 0)
                         self.model.load_cache(i, j+1, 0)
@@ -329,9 +330,9 @@ class LLMPowerBench:
                         self.model.store_cache(i, j-1, 0)
                         self.model.store_hidden(i, j, 0)
                         self.model.sync()
-                        # li1 = len(mon.samples)
-                        # lt1 = time.perf_counter()
-                        # all_acc_layers[j].add(mon.samples, li0, li1, lt0, lt1)
+                        li1 = len(mon.samples)
+                        lt1 = time.perf_counter()
+                        all_acc_layers[j].add(mon.samples, li0, li1, lt0, lt1)
         
                     if self.model.task.stop and np.all(self.model.stopped):
                         break
@@ -361,7 +362,7 @@ class LLMPowerBench:
             #                 self.model.sync()
             #                 li1 = len(mon.samples)
             #                 lt1 = time.perf_counter()
-            #                 all_acc_layers[j].add(mon.samples, li0, li1, lt0, lt1)
+            #                 all_acc_layers[j*num_gpu_batches + k].add(mon.samples, li0, li1, lt0, lt1)
         
             #     # Epilogue
             #     self.model.store_hidden(gen_len-1, num_layers-1, num_gpu_batches-1)
@@ -381,7 +382,7 @@ class LLMPowerBench:
                   f"elapsed {elapsed:.1f}s")
 
             # stop when BOTH conditions met
-            if iteration >= n_iter and elapsed >= min_duration_s:
+            if iteration >= n_iters and elapsed >= min_duration_s:
                 break
 
         mon.stop()
