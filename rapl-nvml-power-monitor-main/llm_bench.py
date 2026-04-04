@@ -49,6 +49,11 @@ class PhaseStats:
     avg_socket_pkg_w:  List[float] = field(default_factory=list)
     avg_socket_dram_w: List[float] = field(default_factory=list)
 
+    #layer specific
+    layer_type:    str
+    batch_num:     int         # the batch this layer is for
+    token_gen:     int         # what number token is being generated [0, gen_len-1]
+
     @property
     def throughput_tok_s(self):
         return (self.n_tokens_per_iter / self.avg_duration_s
@@ -64,7 +69,7 @@ class PhaseStats:
 
 @dataclass
 class InferenceResult:
-    prompt:        List[List[int]]
+    prompts:        List[List[int]]
     output:        str           # output from the last iteration
     prompt_tokens: int
     output_tokens: int
@@ -80,9 +85,15 @@ class InferenceResult:
 class _PhaseAccum:
     """Accumulates power samples across multiple iterations for one phase."""
 
-    def __init__(self, name: str, n_tokens: int):
+    def __init__(self, name: str, n_tokens: int, layer_type="None", batch_num=-1, token_gen=-1):
         self.name     = name
         self.n_tokens = n_tokens
+        
+        # for layer specific accumulation
+        self.layer_type = layer_type
+        self.batch_num  = batch_num
+        self.token_gen  = token_gen
+        
         self.slices:  List[List[PowerSample]] = []   # one list per iter
         self.durations: List[float] = []
 
@@ -126,6 +137,9 @@ class _PhaseAccum:
             avg_gpu_w=avg_gpu,       energy_gpu_j=[g * total_dur for g in avg_gpu],
             avg_socket_pkg_w=skt_pkg,
             avg_socket_dram_w=skt_dram,
+            layer_type=self.layer_type,
+            batch_num=self.batch_num,
+            token_gen=self.token_gen,
         )
 
 
@@ -206,7 +220,7 @@ class LLMPowerBench:
         min_duration_s are satisfied, then reports averaged stats.
         The power monitor runs continuously across all iterations.
         """
-        ### Attach to Flexgen
+
         mon = PowerMonitor(
             interval_ms=self.interval_ms,
             gpu_indices=self.gpu_indices,
@@ -222,7 +236,6 @@ class LLMPowerBench:
         overlap = self.policy.overlap
         prompt_len, gen_len = self.prompt_len, self.gen_len
         self.model.execute_gen_len = self.gen_len
-        print(f"execute_gen_len is {self.model.execute_gen_len}")
 
         # Setting up 
         task = Task(
@@ -256,7 +269,7 @@ class LLMPowerBench:
 
         while True:
             iteration += 1
-            # ── Refrech Cache ───────────────────────────────────────────────
+            # ── Refresh Cache ───────────────────────────────────────────────
             # Intermediate tensors
             # The following buffers store values used
             # for the i-th token, j-th layer, k-th gpu batch.
@@ -317,6 +330,9 @@ class LLMPowerBench:
                 for i in range(self.model.execute_gen_len):
                     self.model.update_attention_mask(i, 0)
                     for j in range(num_layers):
+                        #fix
+                        cur_phase_accum = _PhaseAccum("layer_"+str(j), 1, layer_type="None", batch_num=-1, token_gen=-1)
+                        all_acc_layers.append(cur_phase_accum)
                         # print(f"i: {i}, j: {j}")
                         lt0 = time.perf_counter()
                         li0 = len(mon.samples)
