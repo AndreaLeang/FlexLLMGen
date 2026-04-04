@@ -530,6 +530,13 @@ def get_layer_composition(json_filename):
             if "output" not in all_layer_occurences:
                 all_layer_occurences["output"] = []
             all_layer_occurences["output"].append(event['ts'])
+
+    print(f"Num of MHA layers: {len( all_layer_occurences["MHA"])}")
+    print(f"Num of MLP layers: {len( all_layer_occurences["MLP"])}")
+    print(f"Num of input layers: {len( all_layer_occurences["input"])}")
+    print(f"Num of output layers: {len( all_layer_occurences["output"])}")
+    print(f"Num of total Layers: {len(all_sync_times)})
+    
     # sort sync
     all_sync_times = sorted(all_sync_times)
 
@@ -541,25 +548,24 @@ def get_layer_composition(json_filename):
     
     # match layers to each layer latencies
     for each_mha in all_layer_occurences["MHA"]:
-        for each_sync_times in all_sync_times:
-            if each_mha >= each_sync_times[0] and each_mha <= each_sync_times[1]:
-                mha_latencies.append(each_sync_times[1]-each_sync_times[0])
+        for each_layer_time in all_layer_latencies:
+            if each_mha >= each_layer_time[0] and each_mha <= each_layer_time[1]:
+                mha_latencies.append(each_layer_time[1]-each_layer_time[0])
                 break
     for each_mlp in all_layer_occurences["MLP"]:
-        for each_sync_times in all_sync_times:
+        for each_layer_time in all_layer_latencies:
             if each_mlp >= each_sync_times[0] and each_mlp <= each_sync_times[1]:
-                mlp_latencies.append(each_sync_times[1]-each_sync_times[0])
+                mlp_latencies.append(each_layer_time[1]-each_layer_time[0])
                 break
     for each_input in all_layer_occurences["input"]:
-        for each_sync_times in all_sync_times:
+        for each_layer_time in all_layer_latencies:
             if each_input >= each_sync_times[0] and each_input <= each_sync_times[1]:
-                input_latencies.append(each_sync_times[1]-each_sync_times[0])
+                input_latencies.append(each_layer_time[1]-each_layer_time[0])
                 break
-
     for each_output in all_layer_occurences["output"]:
-        for each_sync_times in all_sync_times:
-            if each_output >= each_sync_times[0] and each_output <= each_sync_times[1]:
-                output_latencies.append(each_sync_times[1]-each_sync_times[0])
+        for each_layer_time in all_layer_latencies:
+            if each_output >= each_layer_time[0] and each_output <= each_layer_time[1]:
+                output_latencies.append(each_layer_time[1]-each_layer_time[0])
                 break
     
     # saving data 
