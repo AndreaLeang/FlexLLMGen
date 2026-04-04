@@ -46,13 +46,14 @@ class PhaseStats:
     energy_cpu_pkg_j:  float         # total energy (all iters)
     energy_cpu_dram_j: float
     energy_gpu_j:      List[float]
-    avg_socket_pkg_w:  List[float] = field(default_factory=list)
-    avg_socket_dram_w: List[float] = field(default_factory=list)
 
-    #layer specific
+    # layer specific
     layer_type:    str
     batch_num:     int         # the batch this layer is for
     token_gen:     int         # what number token is being generated [0, gen_len-1]
+
+    avg_socket_pkg_w:  List[float] = field(default_factory=list)
+    avg_socket_dram_w: List[float] = field(default_factory=list)
 
     @property
     def throughput_tok_s(self):
