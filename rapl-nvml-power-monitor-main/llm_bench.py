@@ -28,7 +28,7 @@ from flexllmgen.pytorch_backend import (TorchDevice, TorchDisk,
     TorchMixedDevice)
 from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     array_1d, array_2d, array_3d, str2bool)
-from flexllmgen.flex_opt_kvpr import OptLM, Policy, get_test_inputs
+from flexllmgen.flex_opt_kvpr_power import OptLM, Policy, get_test_inputs
 
 
 # ── Data structures ───────────────────────────────────────────────────
@@ -342,7 +342,7 @@ class LLMPowerBench:
                             self.model.load_hidden_compute(i,j+1, 0)
                             self.model.load_cache(i, j+1, 0)
                             self.model.load_hidden(i, j, 0)
-                            self.model.compute_layer(i, j, 0)
+                            self.model.compute_layer(i, j, 0, each_iter==n_iters_layer-1)
                             self.model.store_cache(i, j-1, 0)
                             self.model.store_hidden(i, j, 0)
                             self.model.sync()
