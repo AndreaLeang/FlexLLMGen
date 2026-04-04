@@ -488,18 +488,21 @@ def get_layer_composition(json_filename):
         data = json.load(file)
 
     # seperate layers by time between syncs' end + starts
+    # first # layers are prefill 
+    
     # differentiate layers by the functions in flex_opt_kvpr.py(155): forward
     # MHA: pytorch_backend.py(425): mha_gen 
     # MLP: pytorch_backend.py(715): mlp
     # input: pytorch_backend.py(249): opt_input_embed
     # output: pytorch_backend.py(275): opt_output_embed
-
+    first_layer_start = 0
     all_sync_times = [] # (start, end)
-    all_layer_latencies # (start, end) 
-    mha_layers = {} # [start_time] = end_time
-    mlp_layers = {}
-    input_layers = {}
-    output_layers = {}
+    all_layer_occurences = {}
+    all_layer_latencies = [] # (start, end) 
+    mha_latencies = [] # [start_time] = end_time
+    mlp_latencies = []
+    input_latencies = []
+    output_latencies = []
 
     # for each item in the result of the "traceEvents" key,
     num_of_events = len(data['traceEvents'])
@@ -507,15 +510,79 @@ def get_layer_composition(json_filename):
     # get all sync 
     for event_idx in range(num_of_events):
         event = data['traceEvents'][event_idx]
-        
-
+        if event['name'] == "flex_opt_kvpr.py(1035): sync":
+            all_sync_times.append((event['ts'] , event['ts'] + event['dur']))
+        elif event['name'] == "flex_opt_kvpr.py(1356): generation_loop_overlap_multi_batch" or event['name'] == "flex_opt_kvpr.py(1295): generation_loop_overlap_single_batch":
+            first_layer_start = event['ts']
+        elif event['name'] == "pytorch_backend.py(425): mha_gen":
+            if "MHA" not in all_layer_occurences:
+                all_layer_occurences["MHA"] = []
+            all_layer_occurences["MHA"].append(event['ts'])
+        elif event['name'] == "pytorch_backend.py(715): mlp":
+            if "MLP" not in all_layer_occurences:
+                all_layer_occurences["MLP"] = []
+            all_layer_occurences["MLP"].append(event['ts'])
+        elif event['name'] == "pytorch_backend.py(249): opt_input_embed":
+            if "input" not in all_layer_occurences:
+                all_layer_occurences["input"] = []
+            all_layer_occurences["input"].append(event['ts'])
+        elif event['name'] == "pytorch_backend.py(275): opt_output_embed":
+            if "output" not in all_layer_occurences:
+                all_layer_occurences["output"] = []
+            all_layer_occurences["output"].append(event['ts'])
     # sort sync
+    all_sync_times = sorted(all_sync_times)
 
     # pair syncs to get layer latencies
-
+    all_layer_latencies.append((first_layer_start, all_sync_times[0][1]))
+    for each_sync_ind in range(len(all_sync_times)-1):
+        # from each_sync_ind's end to (each_sync_ind+1)'s end 
+        all_layer_latencies.append((all_sync_times[each_sync_ind][1], all_sync_times[each_sync_ind+1][1]))
+    
     # match layers to each layer latencies
+    for each_mha in all_layer_occurences["MHA"]:
+        for each_sync_times in all_sync_times:
+            if each_mha >= each_sync_times[0] and each_mha <= each_sync_times[1]:
+                mha_latencies.append(each_sync_times[1]-each_sync_times[0])
+                break
+    for each_mlp in all_layer_occurences["MLP"]:
+        for each_sync_times in all_sync_times:
+            if each_mlp >= each_sync_times[0] and each_mlp <= each_sync_times[1]:
+                mlp_latencies.append(each_sync_times[1]-each_sync_times[0])
+                break
+    for each_input in all_layer_occurences["input"]:
+        for each_sync_times in all_sync_times:
+            if each_input >= each_sync_times[0] and each_input <= each_sync_times[1]:
+                input_latencies.append(each_sync_times[1]-each_sync_times[0])
+                break
 
+    for each_output in all_layer_occurences["output"]:
+        for each_sync_times in all_sync_times:
+            if each_output >= each_sync_times[0] and each_output <= each_sync_times[1]:
+                output_latencies.append(each_sync_times[1]-each_sync_times[0])
+                break
+    
+    # saving data 
+    csv_filename = json_filename.split('-percent')[0] + '-' + all_file_var[9] + '-' + all_file_var[10] + '_layer_latencies.csv' # added header for recomp
+    fieldnames = ['layer_type', 'latency (s)']
 
+    write_header = not os.path.exists(csv_filename)
+    
+    # Open the file in append mode ('a')
+    with open(csv_filename, 'a', newline='') as csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+        if write_header:
+            writer.writeheader()
+        for each_mha in mha_latencies:
+            writer.writerow({'layer_type': "MHA", 'latency (s)': , each_mha})
+        for each_mlp in mlp_latencies:
+            writer.writerow({'layer_type': "MLP", 'latency (s)': , each_mlp})
+        for each_input in input_latencies:
+            writer.writerow({'layer_type': "input", 'latency (s)': , each_input})
+        for each_output in output_latencies:
+            writer.writerow({'layer_type': "output", 'latency (s)': , each_output})
+        
+    return {"MHA":each_mha, "MLP":each_mlp, "input":each_input, "output":each_output, }
     
 
 
