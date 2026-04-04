@@ -531,10 +531,14 @@ def get_layer_composition(json_filename):
                 all_layer_occurences["output"] = []
             all_layer_occurences["output"].append(event['ts'])
 
-    print(f"Num of MHA layers: {len( all_layer_occurences["MHA"])}")
-    print(f"Num of MLP layers: {len( all_layer_occurences["MLP"])}")
-    print(f"Num of input layers: {len( all_layer_occurences["input"])}")
-    print(f"Num of output layers: {len( all_layer_occurences["output"])}")
+    num_MHA = len( all_layer_occurences["MHA"])
+    num_MLP = len( all_layer_occurences["MLP"])
+    num_input = len( all_layer_occurences["input"])
+    num_output = len( all_layer_occurences["output"])
+    print(f"Num of MHA layers: {num_MHA}")
+    print(f"Num of MLP layers: {num_MLP}")
+    print(f"Num of input layers: {num_input}")
+    print(f"Num of output layers: {num_output}")
     print(f"Num of total Layers: {len(all_sync_times)}")
     
     # sort sync
