@@ -531,15 +531,15 @@ def get_layer_composition(json_filename):
                 all_layer_occurences["output"] = []
             all_layer_occurences["output"].append(event['ts'])
 
-    num_MHA = len( all_layer_occurences["MHA"])
-    num_MLP = len( all_layer_occurences["MLP"])
-    num_input = len( all_layer_occurences["input"])
-    num_output = len( all_layer_occurences["output"])
-    print(f"Num of MHA layers: {num_MHA}")
-    print(f"Num of MLP layers: {num_MLP}")
-    print(f"Num of input layers: {num_input}")
-    print(f"Num of output layers: {num_output}")
-    print(f"Num of total Layers: {len(all_sync_times)}")
+    # num_MHA = len( all_layer_occurences["MHA"])
+    # num_MLP = len( all_layer_occurences["MLP"])
+    # num_input = len( all_layer_occurences["input"])
+    # num_output = len( all_layer_occurences["output"])
+    # print(f"Num of MHA layers: {num_MHA}")
+    # print(f"Num of MLP layers: {num_MLP}")
+    # print(f"Num of input layers: {num_input}")
+    # print(f"Num of output layers: {num_output}")
+    # print(f"Num of total Layers: {len(all_sync_times)}")
     
     # sort sync
     all_sync_times = sorted(all_sync_times)
@@ -575,7 +575,7 @@ def get_layer_composition(json_filename):
     # saving data 
     all_file_var = json_filename.split('-')
     csv_filename = json_filename.split('-percent')[0] + '-' + all_file_var[9] + '-' + all_file_var[10] + '_layer_latencies.csv' # added header for recomp
-    fieldnames = ['layer_type', 'latency (s)']
+    fieldnames = ['layer_type', 'latency (us)']
 
     write_header = not os.path.exists(csv_filename)
     
@@ -585,15 +585,15 @@ def get_layer_composition(json_filename):
         if write_header:
             writer.writeheader()
         for each_mha in mha_latencies:
-            writer.writerow({'layer_type': "MHA", 'latency (s)': each_mha})
+            writer.writerow({'layer_type': "MHA", 'latency (us)': each_mha})
         for each_mlp in mlp_latencies:
-            writer.writerow({'layer_type': "MLP", 'latency (s)': each_mlp})
+            writer.writerow({'layer_type': "MLP", 'latency (us)': each_mlp})
         for each_input in input_latencies:
-            writer.writerow({'layer_type': "input", 'latency (s)': each_input})
+            writer.writerow({'layer_type': "input", 'latency (us)': each_input})
         for each_output in output_latencies:
-            writer.writerow({'layer_type': "output", 'latency (s)': each_output})
+            writer.writerow({'layer_type': "output", 'latency (us)': each_output})
         
-    return {"MHA":each_mha, "MLP":each_mlp, "input":each_input, "output":each_output, }
+    return {"MHA":len(mha_latencies), "MLP":len(mlp_latencies), "input":len(input_latencies), "output":len(output_latencies)}
     
 
 
@@ -657,7 +657,7 @@ if __name__ == "__main__":
         for batch_filename in batch_filenames:
             print(f"for file {batch_filename}: {all_kv_times[batch_filename]}")
     else:
-        print("Layer Type, Latencies")
+        print("Layer Type, Number of Layers")
         for batch_filename in batch_filenames:
             print(f"for file {batch_filename}: {all_layer_times[batch_filename]}")
     
