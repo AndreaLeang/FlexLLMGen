@@ -211,6 +211,7 @@ class LLMPowerBench:
     def run(
         self,
         n_iters:         int   = 5,         # minimum iterations
+        n_iters_layer:   int   = 50,
         min_duration_s:  float = 10.0,      # keep going until this elapsed
         do_sample:       bool  = False,
         temperature:     float = 1.0,
@@ -259,8 +260,8 @@ class LLMPowerBench:
         acc_prefill = _PhaseAccum("prefill",    prompt_len)
         acc_decode  = _PhaseAccum("decode",     gen_len)
         all_acc_layers = []
-        for i in range(num_layers*num_gpu_batches):
-            all_acc_layers.append( _PhaseAccum("layer_"+str(i),     1))
+        for i in range(num_layers*num_gpu_batches*gen_len):
+            all_acc_layers.append( _PhaseAccum("layer_"+str(j), 1, layer_type="None", batch_num=i%num_gpu_batches, token_gen=-1))
 
         tot_refresh_cache_time = 0
         iteration = 0
@@ -331,55 +332,53 @@ class LLMPowerBench:
                     self.model.update_attention_mask(i, 0)
                     for j in range(num_layers):
                         #fix
-                        cur_phase_accum = _PhaseAccum("layer_"+str(j), 1, layer_type="None", batch_num=-1, token_gen=-1)
-                        all_acc_layers.append(cur_phase_accum)
-                        # print(f"i: {i}, j: {j}")
-                        lt0 = time.perf_counter()
-                        li0 = len(mon.samples)
-                        self.model.load_weight(i, j+1, 0)
-                        self.model.load_hidden_compute(i,j+1, 0)
-                        self.model.load_cache(i, j+1, 0)
-                        self.model.load_hidden(i, j, 0)
-                        self.model.compute_layer(i, j, 0)
-                        self.model.store_cache(i, j-1, 0)
-                        self.model.store_hidden(i, j, 0)
-                        self.model.sync()
-                        li1 = len(mon.samples)
-                        lt1 = time.perf_counter()
-                        all_acc_layers[j].add(mon.samples, li0, li1, lt0, lt1)
-        
-                    # if self.model.task.stop and np.all(self.model.stopped):
-                    #     break
-                    
-            else:
-                # Prologue
-                for k in range(num_gpu_batches):
-                    self.model.load_weight(0, 0, k)
-                self.model.load_hidden(0, 0, 0)
-                self.model.sync()
-        
-                # Generate
-                for i in range(self.model.execute_gen_len):
-                    for k in range(num_gpu_batches):
-                        self.update_attention_mask(i, k)
-                    for j in range(num_layers):
-                        for k in range(num_gpu_batches):
+                        all_acc_layers[j+i*num_layers].token_gen = i
+                        for each_iter in range(n_iters_layer):
+                            # print(f"i: {i}, j: {j}")
                             lt0 = time.perf_counter()
                             li0 = len(mon.samples)
-                            self.model.load_weight(i, j+1, k)
-                            self.model.load_hidden_compute(i,j, k+1)
-                            self.model.load_cache(i, j, k+1)
-                            self.model.store_hidden(i, j, k-1)
-                            self.model.load_hidden(i, j, k+1)
-                            self.model.compute_layer(i, j, k)
-                            self.model.store_cache(i, j, k-1)
+                            self.model.load_weight(i, j+1, 0)
+                            self.model.load_hidden_compute(i,j+1, 0)
+                            self.model.load_cache(i, j+1, 0)
+                            self.model.load_hidden(i, j, 0)
+                            self.model.compute_layer(i, j, 0)
+                            self.model.store_cache(i, j-1, 0)
+                            self.model.store_hidden(i, j, 0)
                             self.model.sync()
                             li1 = len(mon.samples)
                             lt1 = time.perf_counter()
-                            all_acc_layers[j*num_gpu_batches + k].add(mon.samples, li0, li1, lt0, lt1)
+                            all_acc_layers[j+i*num_layers].add(mon.samples, li0, li1, lt0, lt1)
         
-                # Epilogue
-                self.model.store_hidden(gen_len-1, num_layers-1, num_gpu_batches-1)
+                    
+            # else:
+            #     # Prologue
+            #     for k in range(num_gpu_batches):
+            #         self.model.load_weight(0, 0, k)
+            #     self.model.load_hidden(0, 0, 0)
+            #     self.model.sync()
+        
+            #     # Generate
+            #     for i in range(self.model.execute_gen_len):
+            #         for k in range(num_gpu_batches):
+            #             self.update_attention_mask(i, k)
+            #         for j in range(num_layers):
+            #             for k in range(num_gpu_batches):
+            #                 lt0 = time.perf_counter()
+            #                 li0 = len(mon.samples)
+            #                 self.model.load_weight(i, j+1, k)
+            #                 self.model.load_hidden_compute(i,j, k+1)
+            #                 self.model.load_cache(i, j, k+1)
+            #                 self.model.store_hidden(i, j, k-1)
+            #                 self.model.load_hidden(i, j, k+1)
+            #                 self.model.compute_layer(i, j, k)
+            #                 self.model.store_cache(i, j, k-1)
+            #                 self.model.sync()
+            #                 li1 = len(mon.samples)
+            #                 lt1 = time.perf_counter()
+            #                 all_acc_layers[j*num_gpu_batches + k].add(mon.samples, li0, li1, lt0, lt1)
+        
+            #     # Epilogue
+            #     self.model.store_hidden(gen_len-1, num_layers-1, num_gpu_batches-1)
           
             out_ids = self.model.output_ids
 
