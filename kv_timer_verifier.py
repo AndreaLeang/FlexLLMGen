@@ -608,6 +608,7 @@ def add_parser_arguments(parser):
     parser.add_argument('--split-dir', action="store_true", help="Split into bi direction and single direction data transfers")
     parser.add_argument('--recomp', action="store_true", help="Measure the distribution of data transfer for recomputation")
     parser.add_argument('--recomp-no-load', action="store_true", help="do not save load csvs")
+    parser.add_argument('--layer-val', action="store_true", help="layer latency validation")
 
 if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -620,25 +621,34 @@ if __name__ == "__main__":
     batch_filenames = args.files 
     
     all_kv_times = {}
+    all_layer_times = {}
     # batch_tklqt = [12014.2443359375, 18471.943251953126, 49995.56291894531, 104777.457796875, 232505.366203125, 461461.98833007814]
     for batch_filename in batch_filenames:
         print(f"Processing {batch_filename}")
-        all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir, args.recomp, args.recomp_no_load)
-        print(f"Total GPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][0]} s")
-        print(f"Total GPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][1]} s")
-        print(f"Total Pinned Time for {batch_filename}: {all_kv_times[batch_filename][6]} s")
-        if args.cpu_time:
-            print(f"Total CPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][2]} s")
-            print(f"Total CPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][3]} s")
-        if args.est_bandwidth:
-            print(f"Total Loading Bytes for {batch_filename}: {all_kv_times[batch_filename][4]} GB")
-            print(f"Total Storing Bytes (GB) for {batch_filename}: {all_kv_times[batch_filename][5]} GB")
-        if args.recomp:
-            print(f"Total Recomputation Loading Time for {batch_filename}: {all_kv_times[batch_filename][8]} s")
+        if not args.layer_val:
+            all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir, args.recomp, args.recomp_no_load)
+            print(f"Total GPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][0]} s")
+            print(f"Total GPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][1]} s")
+            print(f"Total Pinned Time for {batch_filename}: {all_kv_times[batch_filename][6]} s")
+            if args.cpu_time:
+                print(f"Total CPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][2]} s")
+                print(f"Total CPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][3]} s")
+            if args.est_bandwidth:
+                print(f"Total Loading Bytes for {batch_filename}: {all_kv_times[batch_filename][4]} GB")
+                print(f"Total Storing Bytes (GB) for {batch_filename}: {all_kv_times[batch_filename][5]} GB")
+            if args.recomp:
+                print(f"Total Recomputation Loading Time for {batch_filename}: {all_kv_times[batch_filename][8]} s")
+        else:
+            all_layer_times[batch_filename] = get_layer_composition(str(SCRIPT_DIR / batch_filename))
     print()
-    print("GPU Load, GPU Store, CPU Load, CPU Store, Loading Bytes, Storing Bytes")
-    for batch_filename in batch_filenames:
-        print(f"for file {batch_filename}: {all_kv_times[batch_filename]}")
+    if not args.layer_val:
+        print("GPU Load, GPU Store, CPU Load, CPU Store, Loading Bytes, Storing Bytes")
+        for batch_filename in batch_filenames:
+            print(f"for file {batch_filename}: {all_kv_times[batch_filename]}")
+    else:
+        print("Layer Type, Latencies")
+        for batch_filename in batch_filenames:
+            print(f"for file {batch_filename}: {all_kv_times[batch_filename]}")
     
 
     
