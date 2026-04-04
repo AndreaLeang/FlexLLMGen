@@ -342,7 +342,7 @@ class LLMPowerBench:
                             self.model.load_hidden_compute(i,j+1, 0)
                             self.model.load_cache(i, j+1, 0)
                             self.model.load_hidden(i, j, 0)
-                            self.model.compute_layer(i, j, 0, each_iter==n_iters_layer-1)
+                            self.model.compute_layer(i, j, 0, each_iter!=n_iters_layer-1)
                             self.model.store_cache(i, j-1, 0)
                             self.model.store_hidden(i, j, 0)
                             self.model.sync()
