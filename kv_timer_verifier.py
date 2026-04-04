@@ -558,12 +558,12 @@ def get_layer_composition(json_filename):
                 break
     for each_mlp in all_layer_occurences["MLP"]:
         for each_layer_time in all_layer_latencies:
-            if each_mlp >= each_sync_times[0] and each_mlp <= each_sync_times[1]:
+            if each_mlp >= each_layer_time[0] and each_mlp <= each_layer_time[1]:
                 mlp_latencies.append(each_layer_time[1]-each_layer_time[0])
                 break
     for each_input in all_layer_occurences["input"]:
         for each_layer_time in all_layer_latencies:
-            if each_input >= each_sync_times[0] and each_input <= each_sync_times[1]:
+            if each_input >= each_layer_time[0] and each_input <= each_layer_time[1]:
                 input_latencies.append(each_layer_time[1]-each_layer_time[0])
                 break
     for each_output in all_layer_occurences["output"]:
