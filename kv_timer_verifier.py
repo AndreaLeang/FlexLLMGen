@@ -535,7 +535,7 @@ def get_layer_composition(json_filename):
     print(f"Num of MLP layers: {len( all_layer_occurences["MLP"])}")
     print(f"Num of input layers: {len( all_layer_occurences["input"])}")
     print(f"Num of output layers: {len( all_layer_occurences["output"])}")
-    print(f"Num of total Layers: {len(all_sync_times)})
+    print(f"Num of total Layers: {len(all_sync_times)}")
     
     # sort sync
     all_sync_times = sorted(all_sync_times)
