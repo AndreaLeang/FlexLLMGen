@@ -335,7 +335,7 @@ class LLMPowerBench:
                         #fix
                         all_acc_layers[j+i*num_layers].token_gen = i
                         for each_iter in range(n_iters_layer):
-                            # print(f"i: {i}, j: {j}")
+                            print(f"each_iter: {each_iter}, i: {i}, j: {j}")
                             lt0 = time.perf_counter()
                             li0 = len(mon.samples)
                             self.model.load_weight(i, j+1, 0)
