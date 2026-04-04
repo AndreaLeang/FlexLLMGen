@@ -574,13 +574,13 @@ def get_layer_composition(json_filename):
         if write_header:
             writer.writeheader()
         for each_mha in mha_latencies:
-            writer.writerow({'layer_type': "MHA", 'latency (s)': , each_mha})
+            writer.writerow({'layer_type': "MHA", 'latency (s)': each_mha})
         for each_mlp in mlp_latencies:
-            writer.writerow({'layer_type': "MLP", 'latency (s)': , each_mlp})
+            writer.writerow({'layer_type': "MLP", 'latency (s)': each_mlp})
         for each_input in input_latencies:
-            writer.writerow({'layer_type': "input", 'latency (s)': , each_input})
+            writer.writerow({'layer_type': "input", 'latency (s)': each_input})
         for each_output in output_latencies:
-            writer.writerow({'layer_type': "output", 'latency (s)': , each_output})
+            writer.writerow({'layer_type': "output", 'latency (s)': each_output})
         
     return {"MHA":each_mha, "MLP":each_mlp, "input":each_input, "output":each_output, }
     
