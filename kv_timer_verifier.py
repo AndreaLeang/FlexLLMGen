@@ -563,6 +563,7 @@ def get_layer_composition(json_filename):
                 break
     
     # saving data 
+    all_file_var = json_filename.split('-')
     csv_filename = json_filename.split('-percent')[0] + '-' + all_file_var[9] + '-' + all_file_var[10] + '_layer_latencies.csv' # added header for recomp
     fieldnames = ['layer_type', 'latency (s)']
 
