@@ -262,7 +262,7 @@ class LLMPowerBench:
         acc_decode  = _PhaseAccum("decode",     gen_len)
         all_acc_layers = []
         for i in range(num_layers*num_gpu_batches*gen_len):
-            all_acc_layers.append( _PhaseAccum("layer_"+str(j), 1, layer_type="None", batch_num=i%num_gpu_batches, token_gen=-1))
+            all_acc_layers.append( _PhaseAccum("layer_"+str(i%(num_gpu_batches*gen_len)), 1, layer_type="None", batch_num=i%num_gpu_batches, token_gen=-1))
 
         tot_refresh_cache_time = 0
         iteration = 0
