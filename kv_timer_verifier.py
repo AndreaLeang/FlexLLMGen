@@ -649,7 +649,7 @@ if __name__ == "__main__":
     else:
         print("Layer Type, Latencies")
         for batch_filename in batch_filenames:
-            print(f"for file {batch_filename}: {all_kv_times[batch_filename]}")
+            print(f"for file {batch_filename}: {all_layer_times[batch_filename]}")
     
 
     
