@@ -955,7 +955,7 @@ class OptLM:
             self.layers[j].load_hidden_compute(self.hidden_compute_home[j][k], self.hidden_compute_read_buf[j][k], i)
 
 
-    def store_cache(self, i, j, k, overlap=True, KVStoreTimer=None, repeating=False, repeating=False):
+    def store_cache(self, i, j, k, overlap=True, KVStoreTimer=None, repeating=False):
         # timer to record storing cache is passed here
         # Handle corner cases
         if k == -1:
