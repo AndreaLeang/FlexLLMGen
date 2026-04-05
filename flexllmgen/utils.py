@@ -176,6 +176,9 @@ class ValueHolder:
         assert self.val is None
         self.val = val
 
+    def store_pow(self, val):
+        self.val = val
+
     def pop(self):
         ret = self.val
         self.val = None
