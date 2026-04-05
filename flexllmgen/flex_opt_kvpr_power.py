@@ -1006,6 +1006,7 @@ class OptLM:
         print(f"load_hidden[i][j][k].val now: {self.hidden[i][j][k].val}")
 
     def store_hidden(self, i, j, k, repeating=False):
+        print(f"load_hidden[i][j][k].val before: {self.hidden[i][j][k].val}")
         # Handle corner cases
         if k == -1:
             k = self.num_gpu_batches - 1
@@ -1033,10 +1034,12 @@ class OptLM:
             else:
                 self.output_ids[left:right, pos:pos+1] = ids
         else:  # move to home
+            print(f"load_hidden[i][j][k].val before move: {self.hidden[i][j][k].val}")
             x = self.hidden[i][j][k]
             if x.val:  # x may already be moved due to overlapping
                 x.val = x.val.move(self.act_home)
-
+        print(f"load_hidden[i][j][k].val after: {self.hidden[i][j][k].val}")
+    
     def compute_layer(self, i, j, k, repeating=False):
         # Update the hidden in place
         # Clear the weight_read_buf if it is the last gpu batch
