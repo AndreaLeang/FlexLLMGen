@@ -1000,6 +1000,7 @@ class OptLM:
                 val = self.hidden[i][j-1][k].pop_rep().move_pow(dst, repeating)
                 print(f"load_hidden[i][j-1][k].val after mov: {self.hidden[i][j-1][k].val}")
             else:
+                print("am popping self.hidden[i][j-1][k]")
                 val = self.hidden[i][j-1][k].pop().move(dst)
         self.hidden[i][j][k].store_pow(val)
         print(f"load_hidden[i][j][k].val end: {self.hidden[i][j][k].val}")
@@ -1038,6 +1039,8 @@ class OptLM:
                     x.val = x.val.move_pow(self.act_home, repeating)
                 else:
                     x.val = x.val.move(self.act_home)
+        if j>0:
+            print(f"store_hidden[i][j-1][k].val after: {self.hidden[i][j-1][k].val}")
         print(f"store_hidden[i][j][k].val after: {self.hidden[i][j][k].val}")
     
     def compute_layer(self, i, j, k, repeating=False):
