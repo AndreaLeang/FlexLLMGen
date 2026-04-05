@@ -967,8 +967,10 @@ class OptLM:
         # Store cache_write_buf to cache_home
         # Delete cache_write_buf
         if overlap:
+            print(f"write buf before: {self.cache_write_buf[j][k]}")
             with torch.cuda.stream(self.store_cache_stream):
                 self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer)
+            print(f"write buf after: {self.cache_write_buf[j][k]}")
         else:
             self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer)
         
