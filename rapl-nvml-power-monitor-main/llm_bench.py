@@ -416,8 +416,15 @@ class LLMPowerBench:
         output_len = len(new_ids)
 
         phases = [acc_prefill.to_stats(), acc_decode.to_stats()]
-        layers = [each_acc_layer.to_stats() for each_acc_layer in each_batch for each_batch in each_layer for each_layer in all_acc_layers]
-      
+        layers = []
+        for i in range(gen_len):
+            cur_gen = []
+            for j in range(num_layers):
+                cur_layer = []
+                for k in range(num_gpu_batches):
+                    cur_layer.append(all_acc_layers[i][j][k].to_stats())
+                cur_gen.append(cur_layer)
+            layers.append(cur_gen)      
 
         return InferenceResult(
             prompt=task.inputs, output=output,
