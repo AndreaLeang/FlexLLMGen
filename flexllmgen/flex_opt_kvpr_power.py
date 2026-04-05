@@ -484,14 +484,9 @@ class SelfAttention:
             indices = (slice(pos - k_new.shape[0], pos),
                        slice(0, k_new.shape[1]))
             kv_copy = 2 # kv cache storage
-        if repeating: 
-            new_
-        # Problem point
-        print(f"k_new before problem: {k_new.val}")
         
         general_copy(k_home, indices, k_new, None, kv_copy, KVStoreTimer=KVStoreTimer)
         general_copy(v_home, indices, v_new, None, kv_copy, KVStoreTimer=KVStoreTimer)
-        print(f"k_new after problem: {k_new.val}")
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
         return (batch_size, seq_len, self.config.input_dim), self.config.dtype
