@@ -157,6 +157,8 @@ class InputEmbed:
         # Compute input embedding
         donate = [False] * 4
         h, donate[0] = hidden.val, True
+        if repeating:
+            donate[0] = False
         mask, donate[1] = attention_mask.val.smart_copy(self.compute)
 
         if k == self.policy.num_gpu_batches - 1 and not repeating:
@@ -166,8 +168,9 @@ class InputEmbed:
             (w_token, _), (w_pos, _) = weight_read_buf.val
 
         h = self.compute.opt_input_embed(h, mask,
-            w_token, w_pos, self.config.pad_token_id, donate)
-        hidden.val = h
+            w_token, w_pos, self.config.pad_token_id, donate, repeating)
+        if not repeating:
+            hidden.val = h
 
 
 class OutputEmbed:
@@ -231,6 +234,8 @@ class OutputEmbed:
                 cache_write_buf, i, k, hidden_compute_read_buf, cpu_cache_read_buf, repeating=False):
         donate = [False] * 4
         h, donate[0] = hidden.val, True
+        if repeating:
+            donate[0] = False
 
         if k == self.policy.num_gpu_batches - 1 and not repeating:
             # Clear the weight_read_buf if it is the last gpu batch
@@ -485,7 +490,8 @@ class SelfAttention:
 
         donate = [False] * 14
         h, donate[0] = hidden.val, True
-
+        if repeating:
+            donate[0] = False
 
         # Load Weights
         if k == self.policy.num_gpu_batches - 1 and not repeating:
@@ -509,7 +515,7 @@ class SelfAttention:
             if not repeating:
                 (hidden_compute, state) = hidden_compute_read_buf.pop()
             else: 
-                (hidden_compute, state) = hidden_compute_read_buf.val
+                (hidden_compute, state) = hidden_compute_read_buf.pop_rep()
 
             if self.policy.compress_cache:
                 # print(f"hidden_compute before decompress.shape: {hidden_compute.shape}")
@@ -717,6 +723,8 @@ class MLP:
                 cache_write_buf, i, k, hidden_compute_read_buf, cpu_cache_read_buf, repeating=False):
         donate = [False] * 7
         h, donate[0] = hidden.val, True
+        if repeating:
+            donate[0] = False
 
         if k == self.policy.num_gpu_batches - 1 and not repeating:
             # Clear the weight_read_buf if it is the last gpu batch
@@ -1053,8 +1061,8 @@ class OptLM:
             self.cache_write_buf[j][k], i, k, self.hidden_compute_read_buf[j][k], 
             self.cpu_cache_read_buf[j][k], repeating)
         if j>0:
-            print(f"compute_layer[i][j-1][k].val before: {self.hidden[i][j-1][k].val}")
-        print(f"compute_layer[i][j][k].val before: {self.hidden[i][j][k].val}")
+            print(f"compute_layer[i][j-1][k].val after: {self.hidden[i][j-1][k].val}")
+        print(f"compute_layer[i][j][k].val after: {self.hidden[i][j][k].val}")
 
     def sync(self):
         self.env.disk.synchronize()
