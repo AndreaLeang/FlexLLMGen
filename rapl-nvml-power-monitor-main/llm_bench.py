@@ -471,6 +471,15 @@ class LLMPowerBench:
         print(sep)
 
     def save_json(self, r: InferenceResult, path: str):
+        layers_dict = []
+        for i in range(gen_len):
+            cur_gen = []
+            for j in range(num_layers):
+                cur_layer = []
+                for k in range(num_gpu_batches):
+                    cur_layer.append(asdict(r.layers[i][j][k]))
+                cur_gen.append(cur_layer)
+            layers_dict.append(cur_gen)   
         with open(path, "w") as f:
             json.dump({
                 "prompt": r.prompt, "output": r.output,
