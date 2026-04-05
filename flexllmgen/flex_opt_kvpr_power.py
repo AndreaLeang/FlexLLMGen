@@ -293,6 +293,9 @@ class SelfAttention:
     def load_weight(self, weight_home, weight_read_buf, k):
         w_q, b_q, w_k, b_k, w_v, b_v, w_out, b_out, w_ln, b_ln = weight_home.val
         if k == 0:
+            print("in load weight now")
+            print(f"weight_home: {weight_home}")
+            print(f"weight_read_buf: {weight_read_buf}")
             dst1 = self.weight_load_dst
             dst2 = self.compute
             weight_read_buf.store((
@@ -301,6 +304,9 @@ class SelfAttention:
                 w_v.smart_copy(dst1), b_v.smart_copy(dst2),
                 w_out.smart_copy(dst1), b_out.smart_copy(dst2),
                 w_ln.smart_copy(dst2), b_ln.smart_copy(dst2)))
+            print("done loading")
+            print(f"weight_home: {weight_home}")
+            print(f"weight_read_buf: {weight_read_buf}")
 
     def init_cache_one_gpu_batch(self, cache_home):
         if self.policy.cache_gpu_percent == 100:
