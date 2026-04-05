@@ -341,11 +341,12 @@ class LLMPowerBench:
                     print(f"i:{i}, self.model.execute_gen_len: {self.model.execute_gen_len}")
                     self.model.update_attention_mask(i, 0)
                     for j in range(num_layers):
+                        print(f"j: {j}")
                         for each_iter in range(n_iters_layer):
-                            # print(f"each_iter: {each_iter}, i: {i}, j: {j}")
+                            print(f"each_iter: {each_iter}, i: {i}, j: {j}")
                             repeating = each_iter!=n_iters_layer-1
-                            if i > 0:
-                                print(f"each_iter: {each_iter}, i: {i}, j: {j}")
+                            # if i > 0:
+                            #     print(f"each_iter: {each_iter}, i: {i}, j: {j}")
                             lt0 = time.perf_counter()
                             li0 = len(mon.samples)
                             self.model.load_weight(i, j+1, 0)
