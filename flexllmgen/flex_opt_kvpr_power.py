@@ -974,7 +974,7 @@ class OptLM:
         # Delete cache_write_buf
         if overlap:
             with torch.cuda.stream(self.store_cache_stream):
-                self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer, repeating)
+                self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer, repeating=repeating)
         else:
             self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer)
         
