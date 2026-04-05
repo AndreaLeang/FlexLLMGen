@@ -466,6 +466,7 @@ class SelfAttention:
 
     def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None, repeating=False):
         # shape: (s, b * n_head, head_dim)
+        print(f"repeating: {repeating}")
         k_home, v_home = cache_home.val
         if repeating:
             k_new, v_new = cache_write_buf.pop_rep()
@@ -484,9 +485,11 @@ class SelfAttention:
             indices = (slice(pos - k_new.shape[0], pos),
                        slice(0, k_new.shape[1]))
             kv_copy = 2 # kv cache storage
-        
+        #still problem point?
+        print(f"k_new before store copy: {k_new.val}")
         general_copy(k_home, indices, k_new, None, kv_copy, KVStoreTimer=KVStoreTimer)
         general_copy(v_home, indices, v_new, None, kv_copy, KVStoreTimer=KVStoreTimer)
+        print(f"k_new after store copy: {k_new.val}")
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
         return (batch_size, seq_len, self.config.input_dim), self.config.dtype
