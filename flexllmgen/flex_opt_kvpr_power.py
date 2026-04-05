@@ -996,10 +996,13 @@ class OptLM:
                 val.load_from_np(self.output_ids[left:right, pos-1:pos])
         else:  # load from the last layer
             if repeating:
+                print(f"load_hidden[i][j-1][k].val before mov: {self.hidden[i][j-1][k].val}")
                 val = self.hidden[i][j-1][k].pop_rep().move_pow(dst, repeating)
+                print(f"load_hidden[i][j-1][k].val after mov: {self.hidden[i][j-1][k].val}")
             else:
                 val = self.hidden[i][j-1][k].pop().move(dst)
         self.hidden[i][j][k].store_pow(val)
+        print(f"load_hidden[i][j][k].val end: {self.hidden[i][j][k].val}")
 
     def store_hidden(self, i, j, k, repeating=False):
         # Handle corner cases
