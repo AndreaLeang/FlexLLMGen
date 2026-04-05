@@ -146,7 +146,7 @@ class InputEmbed:
     def load_hidden_compute(self, hidden_compute_home, hidden_compute_read_buf, i):
         pass
 
-    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
+    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None, repeating=False):
         pass  # do nothing
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
@@ -224,7 +224,7 @@ class OutputEmbed:
     def load_hidden_compute(self, hidden_compute_home, hidden_compute_read_buf, i):
         pass
 
-    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
+    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None, repeating=False):
         pass  # do nothing
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
@@ -484,8 +484,14 @@ class SelfAttention:
             indices = (slice(pos - k_new.shape[0], pos),
                        slice(0, k_new.shape[1]))
             kv_copy = 2 # kv cache storage
+        if repeating: 
+            new_
+        # Problem point
+        print(f"k_new before problem: {k_new.val}")
+        
         general_copy(k_home, indices, k_new, None, kv_copy, KVStoreTimer=KVStoreTimer)
         general_copy(v_home, indices, v_new, None, kv_copy, KVStoreTimer=KVStoreTimer)
+        print(f"k_new after problem: {k_new.val}")
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
         return (batch_size, seq_len, self.config.input_dim), self.config.dtype
@@ -719,7 +725,7 @@ class MLP:
     def load_hidden_compute(self, hidden_compute_home, hidden_compute_read_buf, i):
         pass
 
-    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
+    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None, repeating=False):
         pass  # do nothing
 
     def input_act_shape_and_dtype(self, batch_size, seq_len):
@@ -781,7 +787,7 @@ class TransformerLayer:
     def load_hidden_compute(self, hidden_compute_home, hidden_compute_read_buf, i):
         pass
 
-    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
+    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None, repeating=False):
         self.attention.store_cache(cache_home, cache_write_buf, i, KVStoreTimer=KVStoreTimer)
 
     def forward(self, hidden, cache_read_buf, weight_read_buf, attention_mask,
@@ -949,7 +955,7 @@ class OptLM:
             self.layers[j].load_hidden_compute(self.hidden_compute_home[j][k], self.hidden_compute_read_buf[j][k], i)
 
 
-    def store_cache(self, i, j, k, overlap=True, KVStoreTimer=None):
+    def store_cache(self, i, j, k, overlap=True, KVStoreTimer=None, repeating=False, repeating=False):
         # timer to record storing cache is passed here
         # Handle corner cases
         if k == -1:
@@ -967,10 +973,8 @@ class OptLM:
         # Store cache_write_buf to cache_home
         # Delete cache_write_buf
         if overlap:
-            print(f"write buf before store: {self.cache_write_buf[j][k].val}")
             with torch.cuda.stream(self.store_cache_stream):
-                self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer)
-            print(f"write buf after store: {self.cache_write_buf[j][k].val}")
+                self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer, repeating)
         else:
             self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer)
         
