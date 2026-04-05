@@ -184,6 +184,10 @@ class ValueHolder:
         self.val = None
         return ret
 
+    def pop_rep(self):
+        ret = self.val
+        return ret
+
     def clear(self):
         self.val = None
 
