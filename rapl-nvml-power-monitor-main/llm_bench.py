@@ -416,7 +416,7 @@ class LLMPowerBench:
         output_len = len(new_ids)
 
         phases = [acc_prefill.to_stats(), acc_decode.to_stats()]
-        layers = [each_acc_layers.to_stats() for each_acc_layers in all_acc_layers]
+        layers = [each_acc_layer.to_stats() for each_acc_layer in each_batch for each_batch in each_layer for each_layer in all_acc_layers]
       
 
         return InferenceResult(
