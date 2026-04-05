@@ -464,7 +464,7 @@ class LLMPowerBench:
                         f"  {p.avg_socket_pkg_w[i]:>6.1f}W {p.avg_socket_dram_w[i]:>6.1f}W"
                         for i in range(n_sockets)
                     )
-                    print(f"  {p.name:<10} {p.n_iters_layer:>5} {p.avg_duration_s:>7.3f}s "
+                    print(f"  {p.name:<10} {p.n_iters:>5} {p.avg_duration_s:>7.3f}s "
                           f"{p.throughput_tok_s:>7.1f} "
                           f"{p.avg_cpu_pkg_w:>7.1f}W {p.avg_cpu_dram_w:>7.1f}W "
                           f"{gpu0:>6.1f}W{skt_str}  {p.energy_per_token_j:>7.4f}")
