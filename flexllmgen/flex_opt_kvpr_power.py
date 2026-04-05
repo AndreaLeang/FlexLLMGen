@@ -996,9 +996,7 @@ class OptLM:
                 val.load_from_np(self.output_ids[left:right, pos-1:pos])
         else:  # load from the last layer
             if repeating:
-                print(f"load_hidden[i][j-1][k].val before move: {self.hidden[i][j-1][k].val}")
-                val = self.hidden[i][j-1][k].val.move(dst)
-                print(f"load_hidden[i][j-1][k].val after move: {val}")
+                val = self.hidden[i][j-1][k].pop_rep().move(dst)
             else:
                 val = self.hidden[i][j-1][k].pop().move(dst)
 
@@ -1021,7 +1019,7 @@ class OptLM:
             gpu_batch_size = self.policy.gpu_batch_size
             left, right = k * gpu_batch_size, (k + 1) * gpu_batch_size
             if repeating:
-                ids = self.hidden[i][j][k].val.data.detach().cpu().numpy()
+                ids = self.hidden[i][j][k].pop_rep().data.detach().cpu().numpy()
             else:
                 ids = self.hidden[i][j][k].pop().data.detach().cpu().numpy()
             pos = self.task.prompt_len + i
