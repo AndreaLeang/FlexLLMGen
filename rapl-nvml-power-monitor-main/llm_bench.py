@@ -257,6 +257,7 @@ class LLMPowerBench:
         for i in range(3):
             output_ids = self.model.generate(warmup_inputs, max_new_tokens=1, verbose=0)
         print("[warm-up] done\n")
+        self.model.execute_gen_len = self.gen_len
       
         # accumulators — one per phase
         acc_prefill = _PhaseAccum("prefill",    prompt_len)
