@@ -340,7 +340,7 @@ class LLMPowerBench:
                 for i in range(self.model.execute_gen_len):
                     self.model.update_attention_mask(i, 0)
                     for j in range(num_layers):
-                        print("i: {i}, j: {j}")
+                        print(f"i: {i}, j: {j}")
                         for each_iter in range(n_iters_layer):
                             # print(f"each_iter: {each_iter}, i: {i}, j: {j}")
                             lt0 = time.perf_counter()
@@ -473,7 +473,7 @@ class LLMPowerBench:
 
     def save_json(self, r: InferenceResult, path: str):
         layers_dict = []
-        for each_gen_list in range(r.layers):
+        for each_gen_list in r.layers:
             cur_gen = []
             for each_layer_list in each_gen_list:
                 cur_layer = []
@@ -489,6 +489,6 @@ class LLMPowerBench:
                 "n_iters": r.n_iters,
                 "total_duration_s": r.total_duration_s,
                 "phases": [asdict(p) for p in r.phases],
-                "layers": [asdict(l) for l in r.layers],
+                "layers": layers_dict,
             }, f, indent=2)
         print(f"Saved → {path}")
