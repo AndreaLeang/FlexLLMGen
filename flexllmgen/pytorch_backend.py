@@ -151,6 +151,12 @@ class TorchTensor:
         self.delete()
         return ret
 
+    def move_pow(self, dst):
+        if self.device == dst:
+            return self
+        ret = self.copy(dst)
+        return ret
+
     def __str__(self):
         return (f"TorchTensor(shape={self.shape}, dtype={str(self.dtype)}, "
                 f"device={self.device.name if self.device else None})")
