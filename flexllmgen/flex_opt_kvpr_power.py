@@ -464,10 +464,13 @@ class SelfAttention:
             hidden_activation.smart_copy(dst, indices)
         )
 
-    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
+    def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None, repeating=False):
         # shape: (s, b * n_head, head_dim)
         k_home, v_home = cache_home.val
-        k_new, v_new = cache_write_buf.pop()
+        if repeating:
+            k_new, v_new = cache_write_buf.pop_rep()
+        else:
+            k_new, v_new = cache_write_buf.pop()
 
         if i == self.task.gen_len - 1:  # last token, no need to store cache
             return
