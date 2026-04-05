@@ -338,6 +338,7 @@ class LLMPowerBench:
         
                 # Generate
                 for i in range(self.model.execute_gen_len):
+                    print(f"i:{i}, self.model.execute_gen_len: {self.model.execute_gen_len}")
                     self.model.update_attention_mask(i, 0)
                     for j in range(num_layers):
                         print(f"i: {i}, j: {j}")
