@@ -1004,14 +1004,10 @@ class OptLM:
                 val.load_from_np(self.output_ids[left:right, pos-1:pos])
         else:  # load from the last layer
             if repeating:
-                print(f"load_hidden[i][j-1][k].val before mov: {self.hidden[i][j-1][k].val}")
                 val = self.hidden[i][j-1][k].pop_rep().move_pow(dst, repeating)
-                print(f"load_hidden[i][j-1][k].val after mov: {self.hidden[i][j-1][k].val}")
             else:
-                print("am popping self.hidden[i][j-1][k]")
                 val = self.hidden[i][j-1][k].pop().move(dst)
         self.hidden[i][j][k].store_pow(val)
-        print(f"load_hidden[i][j][k].val end: {self.hidden[i][j][k].val}")
 
     def store_hidden(self, i, j, k, repeating=False):
         # Handle corner cases
@@ -1053,16 +1049,10 @@ class OptLM:
         # Clear the weight_read_buf if it is the last gpu batch
         # Clear the cache_read_buf
         # Run layer computation
-        if j>0:
-            print(f"compute_layer[i][j-1][k].val before: {self.hidden[i][j-1][k].val}")
-        print(f"compute_layer[i][j][k].val before: {self.hidden[i][j][k].val}")
         self.layers[j].forward(self.hidden[i][j][k], self.cache_read_buf[j][k],
             self.weight_read_buf[j], self.attention_mask[k],
             self.cache_write_buf[j][k], i, k, self.hidden_compute_read_buf[j][k], 
             self.cpu_cache_read_buf[j][k], repeating)
-        if j>0:
-            print(f"compute_layer[i][j-1][k].val after: {self.hidden[i][j-1][k].val}")
-        print(f"compute_layer[i][j][k].val after: {self.hidden[i][j][k].val}")
 
     def sync(self):
         self.env.disk.synchronize()
