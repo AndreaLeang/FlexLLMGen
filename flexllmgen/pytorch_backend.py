@@ -124,7 +124,7 @@ class TorchTensor:
         else:
             self.load_from_np(np.load(filename))
 
-    def copy(self, dst, src_indices=None, kv_copy: int = 0, KVLoadTimer=None, KVStoreTimer=None):
+    def copy(self, dst, src_indices=None, kv_copy: int = 0, KVLoadTimer=None, KVStoreTimer=None, repeating=False):
         if src_indices:
             assert all(x.step is None for x in src_indices), "src indices have step"
             shape = tuple(x.stop - x.start for x in src_indices
@@ -136,7 +136,12 @@ class TorchTensor:
             ret = dst.allocate(shape, torch_dtype_to_np_dtype[self.dtype], self.data[2])
         else:
             ret = dst.allocate(shape, torch_dtype_to_np_dtype[self.dtype])
-        general_copy(ret, None, self, src_indices, kv_copy, KVLoadTimer, KVStoreTimer)
+
+        if repeating: 
+            new_dst = self.device
+        else:
+            new_dst = None
+        general_copy(ret, new_dst, self, src_indices, kv_copy, KVLoadTimer, KVStoreTimer)
         return ret
 
     def smart_copy(self, dst, src_indices=None, kv_copy: int = 0, KVLoadTimer=None, KVStoreTimer=None):
@@ -151,10 +156,10 @@ class TorchTensor:
         self.delete()
         return ret
 
-    def move_pow(self, dst):
+    def move_pow(self, dst, repeating=False):
         if self.device == dst:
             return self
-        ret = self.copy(dst)
+        ret = self.copy(dst, repeating=repeating)
         return ret
 
     def __str__(self):
