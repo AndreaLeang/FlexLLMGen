@@ -1014,7 +1014,7 @@ class OptLM:
         if j == self.num_layers - 1:  # store to output
             gpu_batch_size = self.policy.gpu_batch_size
             left, right = k * gpu_batch_size, (k + 1) * gpu_batch_size
-            ids = self.hidden[i][j][k].pop().data.detach().cpu().numpy()
+            ids = self.hidden[i][j][k].val().data.detach().cpu().numpy()
             pos = self.task.prompt_len + i
             if self.task.stop:
                 stopped = self.stopped[left:right]
