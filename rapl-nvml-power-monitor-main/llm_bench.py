@@ -75,9 +75,10 @@ class InferenceResult:
     prompt_tokens: int
     output_tokens: int
     n_iters:       int
+    n_iters_layer: int
     total_duration_s: float
     phases:        List[PhaseStats]
-    layers:        List[PhaseStats]
+    layers:        List[List[List[PhaseStats]]]
     all_samples:   List[PowerSample] = field(repr=False)
 
 
@@ -211,11 +212,11 @@ class LLMPowerBench:
 
     def run(
         self,
-        n_iters:         int   = 5,         # minimum iterations
-        n_iters_layer:   int   = 50,
-        min_duration_s:  float = 10.0,      # keep going until this elapsed
-        do_sample:       bool  = False,
-        temperature:     float = 1.0,
+        n_iters:                 int   = 5,         # minimum iterations
+        n_iters_layer:           int   = 200,
+        min_duration_s:          float = 10.0,      # keep going until this elapsed
+        do_sample:               bool  = False,
+        temperature:             float = 1.0,
     ) -> InferenceResult:
         """
         Runs prefill+decode repeatedly until both n_iters AND
@@ -261,9 +262,16 @@ class LLMPowerBench:
         acc_prefill = _PhaseAccum("prefill",    prompt_len)
         acc_decode  = _PhaseAccum("decode",     gen_len)
         all_acc_layers = []
-        for i in range(num_layers*num_gpu_batches*gen_len):
-            all_acc_layers.append( _PhaseAccum("layer_"+str(i%(num_gpu_batches*gen_len)), 1, layer_type="None", batch_num=i%num_gpu_batches, token_gen=-1))
-
+        for i in range(gen_len):
+            cur_gen = []
+            for j in range(num_layers):
+                cur_layer = []
+                for k in range(num_gpu_batches):
+                    cur_layer.append( _PhaseAccum("layer_"+str(j)+"_B_"+str(k) + "_G_"+str(i), 1, layer_type="None", batch_num=k, token_gen=i))
+                cur_gen.append(cur_layer)
+            all_acc_layers.append(cur_gen)
+        # L_0_B_0_G_0,  L_0_B_1_G_0, L_0_B_2_G_0, L_0_B_3_G_0, L_1_B_0_G_0, L_1_B_1_G_0
+      
         tot_refresh_cache_time = 0
         iteration = 0
         mon.start()
@@ -332,10 +340,9 @@ class LLMPowerBench:
                 for i in range(self.model.execute_gen_len):
                     self.model.update_attention_mask(i, 0)
                     for j in range(num_layers):
-                        #fix
                         all_acc_layers[j+i*num_layers].token_gen = i
                         for each_iter in range(n_iters_layer):
-                            print(f"each_iter: {each_iter}, i: {i}, j: {j}")
+                            # print(f"each_iter: {each_iter}, i: {i}, j: {j}")
                             lt0 = time.perf_counter()
                             li0 = len(mon.samples)
                             self.model.load_weight(i, j+1, 0)
@@ -348,38 +355,40 @@ class LLMPowerBench:
                             self.model.sync()
                             li1 = len(mon.samples)
                             lt1 = time.perf_counter()
-                            all_acc_layers[j+i*num_layers].add(mon.samples, li0, li1, lt0, lt1)
+                            all_acc_layers[i][j][0].add(mon.samples, li0, li1, lt0, lt1)
         
                     
-            # else:
-            #     # Prologue
-            #     for k in range(num_gpu_batches):
-            #         self.model.load_weight(0, 0, k)
-            #     self.model.load_hidden(0, 0, 0)
-            #     self.model.sync()
+            else:
+                # Prologue
+                for k in range(num_gpu_batches):
+                    self.model.load_weight(0, 0, k)
+                self.model.load_hidden(0, 0, 0)
+                self.model.sync()
         
-            #     # Generate
-            #     for i in range(self.model.execute_gen_len):
-            #         for k in range(num_gpu_batches):
-            #             self.update_attention_mask(i, k)
-            #         for j in range(num_layers):
-            #             for k in range(num_gpu_batches):
-            #                 lt0 = time.perf_counter()
-            #                 li0 = len(mon.samples)
-            #                 self.model.load_weight(i, j+1, k)
-            #                 self.model.load_hidden_compute(i,j, k+1)
-            #                 self.model.load_cache(i, j, k+1)
-            #                 self.model.store_hidden(i, j, k-1)
-            #                 self.model.load_hidden(i, j, k+1)
-            #                 self.model.compute_layer(i, j, k)
-            #                 self.model.store_cache(i, j, k-1)
-            #                 self.model.sync()
-            #                 li1 = len(mon.samples)
-            #                 lt1 = time.perf_counter()
-            #                 all_acc_layers[j*num_gpu_batches + k].add(mon.samples, li0, li1, lt0, lt1)
+                # Generate
+                for i in range(self.model.execute_gen_len):
+                    for k in range(num_gpu_batches):
+                        self.update_attention_mask(i, k)
+                    for j in range(num_layers):
+                        for k in range(num_gpu_batches):
+                            for each_iter in range(n_iters_layer):
+                              lt0 = time.perf_counter()
+                              li0 = len(mon.samples)
+                              self.model.load_weight(i, j+1, k)
+                              self.model.load_hidden_compute(i,j, k+1)
+                              self.model.load_cache(i, j, k+1)
+                              self.model.store_hidden(i, j, k-1, each_iter!=n_iters_layer-1)
+                              self.model.load_hidden(i, j, k+1, each_iter!=n_iters_layer-1)
+                              self.model.compute_layer(i, j, k, each_iter!=n_iters_layer-1)
+                              self.model.store_cache(i, j, k-1)
+                              self.model.sync()
+                              li1 = len(mon.samples)
+                              lt1 = time.perf_counter()
+                              all_acc_layers[i][j][k].add(mon.samples, li0, li1, lt0, lt1)
+                          
         
-            #     # Epilogue
-            #     self.model.store_hidden(gen_len-1, num_layers-1, num_gpu_batches-1)
+                # Epilogue
+                self.model.store_hidden(gen_len-1, num_layers-1, num_gpu_batches-1)
           
             out_ids = self.model.output_ids
 
@@ -414,7 +423,7 @@ class LLMPowerBench:
         return InferenceResult(
             prompt=task.inputs, output=output,
             prompt_tokens=prompt_len, output_tokens=output_len,
-            n_iters=iteration, total_duration_s=total_dur,
+            n_iters=iteration, n_iters_layer = n_iters_layer, total_duration_s=total_dur,
             phases=phases, layers=layers, all_samples=mon.samples,
         )
 
@@ -441,16 +450,18 @@ class LLMPowerBench:
                   f"{p.throughput_tok_s:>7.1f} "
                   f"{p.avg_cpu_pkg_w:>7.1f}W {p.avg_cpu_dram_w:>7.1f}W "
                   f"{gpu0:>6.1f}W{skt_str}  {p.energy_per_token_j:>7.4f}")
-        for p in r.layers:
-            gpu0    = p.avg_gpu_w[0] if p.avg_gpu_w else 0.0
-            skt_str = "".join(
-                f"  {p.avg_socket_pkg_w[i]:>6.1f}W {p.avg_socket_dram_w[i]:>6.1f}W"
-                for i in range(n_sockets)
-            )
-            print(f"  {p.name:<10} {p.n_iters:>5} {p.avg_duration_s:>7.3f}s "
-                  f"{p.throughput_tok_s:>7.1f} "
-                  f"{p.avg_cpu_pkg_w:>7.1f}W {p.avg_cpu_dram_w:>7.1f}W "
-                  f"{gpu0:>6.1f}W{skt_str}  {p.energy_per_token_j:>7.4f}")
+        for each_gen_layer_list in r.layers:
+            for each_layer_batch_list in each_gen_layer_list:
+                for p in each_layer_batch_list:
+                    gpu0    = p.avg_gpu_w[0] if p.avg_gpu_w else 0.0
+                    skt_str = "".join(
+                        f"  {p.avg_socket_pkg_w[i]:>6.1f}W {p.avg_socket_dram_w[i]:>6.1f}W"
+                        for i in range(n_sockets)
+                    )
+                    print(f"  {p.name:<10} {p.n_iters_layer:>5} {p.avg_duration_s:>7.3f}s "
+                          f"{p.throughput_tok_s:>7.1f} "
+                          f"{p.avg_cpu_pkg_w:>7.1f}W {p.avg_cpu_dram_w:>7.1f}W "
+                          f"{gpu0:>6.1f}W{skt_str}  {p.energy_per_token_j:>7.4f}")
         print(sep)
 
     def save_json(self, r: InferenceResult, path: str):
