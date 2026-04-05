@@ -131,7 +131,7 @@ class InputEmbed:
         w_token, w_pos = weight_home.val
         if k == 0:
             dst = self.weight_load_dst
-            weight_read_buf.store((w_token.smart_copy(dst), w_pos.smart_copy(dst)))
+            weight_read_buf.store_pow((w_token.smart_copy(dst), w_pos.smart_copy(dst)))
 
     def init_cache_one_gpu_batch(self, cache_home):
         pass  # do nothing
@@ -205,7 +205,7 @@ class OutputEmbed:
         if k == 0:
             dst1 = self.weight_load_dst
             dst2 = self.compute
-            weight_read_buf.store((w_ln.smart_copy(dst2), b_ln.smart_copy(dst2),
+            weight_read_buf.store_pow((w_ln.smart_copy(dst2), b_ln.smart_copy(dst2),
                 w_token.smart_copy(dst1)))
 
     def init_cache_one_gpu_batch(self, cache_home):
@@ -293,20 +293,14 @@ class SelfAttention:
     def load_weight(self, weight_home, weight_read_buf, k):
         w_q, b_q, w_k, b_k, w_v, b_v, w_out, b_out, w_ln, b_ln = weight_home.val
         if k == 0:
-            print("in load weight now")
-            print(f"weight_home: {weight_home.val}")
-            print(f"weight_read_buf: {weight_read_buf.val}")
             dst1 = self.weight_load_dst
             dst2 = self.compute
-            weight_read_buf.store((
+            weight_read_buf.store_pow((
                 w_q.smart_copy(dst1), b_q.smart_copy(dst2),
                 w_k.smart_copy(dst1), b_k.smart_copy(dst2),
                 w_v.smart_copy(dst1), b_v.smart_copy(dst2),
                 w_out.smart_copy(dst1), b_out.smart_copy(dst2),
                 w_ln.smart_copy(dst2), b_ln.smart_copy(dst2)))
-            print("done loading")
-            print(f"weight_home: {weight_home.val}")
-            print(f"weight_read_buf: {weight_read_buf.val}")
 
     def init_cache_one_gpu_batch(self, cache_home):
         if self.policy.cache_gpu_percent == 100:
@@ -373,12 +367,12 @@ class SelfAttention:
                        slice(0, k_home.shape[1]))
 
             if self.policy.attn_sparsity >= 1.0:
-                cache_read_buf.store((
+                cache_read_buf.store_pow((
                     k_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
                     v_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
                 ))
             else:
-                cache_read_buf.store((
+                cache_read_buf.store_pow((
                     k_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
                     (v_home, False),
                 ))
@@ -392,9 +386,9 @@ class SelfAttention:
 
             if self.policy.attn_sparsity >= 1.0:
                 general_copy(v_buf, indices, v_home, indices, kv_copy=1, KVLoadTimer=KVLoadTimer)
-                cache_read_buf.store(((k_buf, False), (v_buf, False)))
+                cache_read_buf.store_pow(((k_buf, False), (v_buf, False)))
             else:
-                cache_read_buf.store(((k_buf, False), ((v_home, v_buf), False)))
+                cache_read_buf.store_pow(((k_buf, False), ((v_home, v_buf), False)))
         elif path == 2:  # Copy to both GPU and CPU
             # The caches are stored on both GPU and other devices.
             # Compute attention on gpu for caches stored on gpu.
@@ -408,7 +402,7 @@ class SelfAttention:
                        slice(gpu_k_buf.shape[1], k_home.shape[1]))
             general_copy(k_buf, indices, k_home, indices, kv_copy=1, KVLoadTimer=KVLoadTimer)
             general_copy(v_buf, indices, v_home, indices, kv_copy=1, KVLoadTimer=KVLoadTimer)
-            cache_read_buf.store((((gpu_k_buf, k_buf,), False),
+            cache_read_buf.store_pow((((gpu_k_buf, k_buf,), False),
                                   ((gpu_v_buf, v_buf,), False)))
             assert self.policy.attn_sparsity >= 1.0, "attn sparsity is less than 1.0"
         elif path == 3: # KVPR: Both GPU and CPU compute MHA, and only CPU stores KV cache.
@@ -431,11 +425,11 @@ class SelfAttention:
             general_copy(k_buf, dst_cpu_indices, k_home, cpu_indices)
             general_copy(v_buf, dst_cpu_indices, v_home, cpu_indices)
             
-            cache_read_buf.store((
+            cache_read_buf.store_pow((
                 k_home.smart_copy(self.compute, gpu_indices),
                 v_home.smart_copy(self.compute, gpu_indices),
             ))
-            cpu_cache_read_buf.store(((k_buf, False), (v_buf, False)))
+            cpu_cache_read_buf.store_pow(((k_buf, False), (v_buf, False)))
         else:
             raise ValueError(f"Invalid path: {path}")
 
@@ -458,7 +452,7 @@ class SelfAttention:
             # dst = self.attention_compute
             dst = self.env.gpu
 
-        hidden_compute_read_buf.store(
+        hidden_compute_read_buf.store_pow(
             hidden_activation.smart_copy(dst, indices)
         )
 
@@ -557,7 +551,7 @@ class SelfAttention:
             h, new_k_cache, new_v_cache = self.compute.mha(h, mask, w_q, b_q,
                 w_k, b_k, w_v, b_v, w_out, b_out, w_ln, b_ln, n_head, donate,
                 self.policy.compress_cache, self.policy.comp_cache_config)
-            cache_write_buf.store((new_k_cache, new_v_cache))
+            cache_write_buf.store_pow((new_k_cache, new_v_cache))
             #KVPR
             if self.recompute_len > 0:
                 hidden_tensor = h.data[:, :self.recompute_len, :]
@@ -651,7 +645,7 @@ class SelfAttention:
                     k_cache, v_cache, donate, self.policy.attn_sparsity,
                     self.policy.compress_cache, self.policy.comp_cache_config, self.recompute_len)
             
-            cache_write_buf.store((new_k_cache, new_v_cache))
+            cache_write_buf.store_pow((new_k_cache, new_v_cache))
 
         hidden.val = h
 
@@ -696,7 +690,7 @@ class MLP:
         if k == 0:
             dst1 = self.weight_load_dst
             dst2 = self.compute
-            weight_read_buf.store((
+            weight_read_buf.store_pow((
                 wi.smart_copy(dst1), bi.smart_copy(dst2),
                 wo.smart_copy(dst1), bo.smart_copy(dst2),
                 w_ln.smart_copy(dst2), b_ln.smart_copy(dst2)))
@@ -759,7 +753,7 @@ class TransformerLayer:
         self.attention.load_weight(home1, read_buf1, k)
         self.mlp.load_weight(home2, read_buf2, k)
         if k == 0:
-            weight_read_buf.store((read_buf1, read_buf2))
+            weight_read_buf.store_pow((read_buf1, read_buf2))
 
     def init_cache_one_gpu_batch(self, cache_home):
         self.attention.init_cache_one_gpu_batch(cache_home)
@@ -1003,7 +997,7 @@ class OptLM:
         else:  # load from the last layer
             val = self.hidden[i][j-1][k].pop().move(dst)
 
-        self.hidden[i][j][k].store(val)
+        self.hidden[i][j][k].store_pow(val)
 
     def store_hidden(self, i, j, k):
         # Handle corner cases
@@ -1079,7 +1073,7 @@ class OptLM:
         val = attention_compute.allocate(
             (self.policy.gpu_batch_size, self.task.prompt_len), bool)
         val.load_from_np((input_ids != self.config.pad_token_id))
-        self.attention_mask[k].store(val)
+        self.attention_mask[k].store_pow(val)
 
     def generate(self,
                  inputs: Union[np.array, List[List[int]]],
