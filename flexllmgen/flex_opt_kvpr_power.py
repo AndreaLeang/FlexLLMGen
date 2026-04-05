@@ -996,7 +996,7 @@ class OptLM:
                 val.load_from_np(self.output_ids[left:right, pos-1:pos])
         else:  # load from the last layer
             if repeating:
-                val = self.hidden[i][j-1][k].pop_rep().move_pow(dst)
+                val = self.hidden[i][j-1][k].pop_rep().move_pow(dst, repeating)
             else:
                 val = self.hidden[i][j-1][k].pop().move(dst)
         self.hidden[i][j][k].store_pow(val)
@@ -1032,10 +1032,10 @@ class OptLM:
             x = self.hidden[i][j][k]
             if x.val:  # x may already be moved due to overlapping
                 if repeating:
-                    x.val = x.val.move_pow(self.act_home)
+                    x.val = x.val.move_pow(self.act_home, repeating)
                 else:
                     x.val = x.val.move(self.act_home)
-        # print(f"store_hidden[i][j][k].val after: {self.hidden[i][j][k].val}")
+        print(f"store_hidden[i][j][k].val after: {self.hidden[i][j][k].val}")
     
     def compute_layer(self, i, j, k, repeating=False):
         # Update the hidden in place
