@@ -372,6 +372,8 @@ class SelfAttention:
                        slice(0, k_home.shape[1]))
 
             if self.policy.attn_sparsity >= 1.0:
+                print(f"k_home: {k_home}")
+                print(f"dst: {dst}")
                 cache_read_buf.store_pow((
                     k_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
                     v_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
