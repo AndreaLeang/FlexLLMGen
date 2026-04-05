@@ -1021,7 +1021,7 @@ class OptLM:
             gpu_batch_size = self.policy.gpu_batch_size
             left, right = k * gpu_batch_size, (k + 1) * gpu_batch_size
             if repeating:
-                ids = self.hidden[i][j][k].pop_rep().data.detach().cpu().numpy()
+                ids = self.hidden[i][j][k].pop_rep().data.cpu().numpy()
             else:
                 ids = self.hidden[i][j][k].pop().data.detach().cpu().numpy()
             pos = self.task.prompt_len + i
