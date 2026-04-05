@@ -1006,6 +1006,9 @@ class OptLM:
         print(f"load_hidden[i][j][k].val end: {self.hidden[i][j][k].val}")
 
     def store_hidden(self, i, j, k, repeating=False):
+        if j>0:
+            print(f"store_hidden[i][j-1][k].val before: {self.hidden[i][j-1][k].val}")
+        print(f"store_hidden[i][j][k].val before: {self.hidden[i][j][k].val}")
         # Handle corner cases
         if k == -1:
             k = self.num_gpu_batches - 1
