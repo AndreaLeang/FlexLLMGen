@@ -168,7 +168,7 @@ class InputEmbed:
             (w_token, _), (w_pos, _) = weight_read_buf.val
 
         h = self.compute.opt_input_embed(h, mask,
-            w_token, w_pos, self.config.pad_token_id, donate, repeating)
+            w_token, w_pos, self.config.pad_token_id, donate)
         if not repeating:
             hidden.val = h
 
