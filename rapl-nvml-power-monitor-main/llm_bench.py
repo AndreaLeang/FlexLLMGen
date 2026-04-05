@@ -238,6 +238,12 @@ class LLMPowerBench:
         gpu_batch_size = self.block_size
         overlap = self.policy.overlap
         prompt_len, gen_len = self.prompt_len, self.gen_len
+
+        # Warm up
+        print("\n[warm-up] 3 iters, no min duration ...")
+        for i in range(3):
+            output_ids = self.model.generate(warmup_inputs, max_new_tokens=1, verbose=0)
+        print("[warm-up] done\n")
         self.model.execute_gen_len = self.gen_len
 
         # Setting up 
@@ -251,13 +257,6 @@ class LLMPowerBench:
             stop=None,
         )
         self.model.set_task(task)
-        
-        # Warm up
-        print("\n[warm-up] 3 iters, no min duration ...")
-        for i in range(3):
-            output_ids = self.model.generate(warmup_inputs, max_new_tokens=1, verbose=0)
-        print("[warm-up] done\n")
-        self.model.execute_gen_len = self.gen_len
       
         # accumulators — one per phase
         acc_prefill = _PhaseAccum("prefill",    prompt_len)
@@ -271,7 +270,7 @@ class LLMPowerBench:
                     cur_layer.append( _PhaseAccum("layer_"+str(j)+"_B_"+str(k) + "_G_"+str(i), 1, layer_type="None", batch_num=k, token_gen=i))
                 cur_gen.append(cur_layer)
             all_acc_layers.append(cur_gen)
-        # L_0_B_0_G_0,  L_0_B_1_G_0, L_0_B_2_G_0, L_0_B_3_G_0, L_1_B_0_G_0, L_1_B_1_G_0
+        # L_0_B_0_G_0,  L_0_B_1_G_0, L_0_B_2_G_0, L_0_B_3_G_0, L_1_B_0_G_0, L_1_B_1_G_0, ...
       
         tot_refresh_cache_time = 0
         iteration = 0
