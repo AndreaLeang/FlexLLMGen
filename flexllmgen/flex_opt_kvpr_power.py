@@ -971,7 +971,7 @@ class OptLM:
         if v:
             v.delete()
 
-    def load_hidden(self, i, j, k):
+    def load_hidden(self, i, j, k, repeating=False):
         # Handle corner cases
         if k == self.num_gpu_batches:
             k = 0
@@ -995,11 +995,14 @@ class OptLM:
                 val = dst.allocate((gpu_batch_size, 1), np.int32)
                 val.load_from_np(self.output_ids[left:right, pos-1:pos])
         else:  # load from the last layer
-            val = self.hidden[i][j-1][k].pop().move(dst)
+            if repeating:
+                val = self.hidden[i][j-1][k].val.move(dst)
+            else:
+                val = self.hidden[i][j-1][k].pop().move(dst)
 
         self.hidden[i][j][k].store_pow(val)
 
-    def store_hidden(self, i, j, k):
+    def store_hidden(self, i, j, k, repeating=False):
         # Handle corner cases
         if k == -1:
             k = self.num_gpu_batches - 1
@@ -1014,7 +1017,10 @@ class OptLM:
         if j == self.num_layers - 1:  # store to output
             gpu_batch_size = self.policy.gpu_batch_size
             left, right = k * gpu_batch_size, (k + 1) * gpu_batch_size
-            ids = self.hidden[i][j][k].val().data.detach().cpu().numpy()
+            if repeating:
+                ids = self.hidden[i][j][k].val.data.detach().cpu().numpy()
+            else:
+                ids = self.hidden[i][j][k].pop().data.detach().cpu().numpy()
             pos = self.task.prompt_len + i
             if self.task.stop:
                 stopped = self.stopped[left:right]
