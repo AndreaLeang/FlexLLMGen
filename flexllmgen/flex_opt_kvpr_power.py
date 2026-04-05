@@ -996,17 +996,12 @@ class OptLM:
                 val.load_from_np(self.output_ids[left:right, pos-1:pos])
         else:  # load from the last layer
             if repeating:
-                print(f"load_hidden[i][j-1][k].val before: {self.hidden[i][j-1][k].val}")
-                val = self.hidden[i][j-1][k].pop_rep().move(dst)
-                print(f"load_hidden[i][j-1][k].val now: {self.hidden[i][j-1][k].val}")
+                val = self.hidden[i][j-1][k].pop_rep().move_pow(dst)
             else:
                 val = self.hidden[i][j-1][k].pop().move(dst)
-        print(f"load_hidden[i][j][k].val before: {self.hidden[i][j][k].val}")
         self.hidden[i][j][k].store_pow(val)
-        print(f"load_hidden[i][j][k].val now: {self.hidden[i][j][k].val}")
 
     def store_hidden(self, i, j, k, repeating=False):
-        print(f"load_hidden[i][j][k].val before: {self.hidden[i][j][k].val}")
         # Handle corner cases
         if k == -1:
             k = self.num_gpu_batches - 1
@@ -1034,11 +1029,13 @@ class OptLM:
             else:
                 self.output_ids[left:right, pos:pos+1] = ids
         else:  # move to home
-            print(f"load_hidden[i][j][k].val before move: {self.hidden[i][j][k].val}")
             x = self.hidden[i][j][k]
             if x.val:  # x may already be moved due to overlapping
-                x.val = x.val.move(self.act_home)
-        print(f"load_hidden[i][j][k].val after: {self.hidden[i][j][k].val}")
+                if repeating:
+                    x.val = x.val.move_pow(self.act_home)
+                else:
+                    x.val = x.val.move(self.act_home)
+        # print(f"store_hidden[i][j][k].val after: {self.hidden[i][j][k].val}")
     
     def compute_layer(self, i, j, k, repeating=False):
         # Update the hidden in place
