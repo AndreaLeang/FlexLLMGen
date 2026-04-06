@@ -956,7 +956,7 @@ class OptLM:
 
     def store_cache(self, i, j, k, overlap=True, KVStoreTimer=None, repeating=False):
         # timer to record storing cache is passed here
-        print(f"repeating at start of store_cache of total layer: {repeating}")
+        # print(f"repeating at start of store_cache of total layer: {repeating}")
         # Handle corner cases
         if k == -1:
             k = self.num_gpu_batches - 1
