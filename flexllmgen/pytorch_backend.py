@@ -575,9 +575,9 @@ class TorchDevice:
 
     def _attention_weights(self, q, k, mask, b, src_s, n_head):
         # shape: (b * n_head, 1, s)
-        print("_attention_weights q: {q.shape}")
-        print("_attention_weights k: {k.shape}")
-        print("_attention_weights src_s: {src_s}")
+        print(f"_attention_weights q: {q.shape}")
+        print(f"_attention_weights k: {k.shape}")
+        print(f"_attention_weights src_s: {src_s}")
         attn_weights = torch.bmm(q, k)
         # shape: (b, 1, 1, s)
         mask = mask.view(b, 1, 1, src_s)
