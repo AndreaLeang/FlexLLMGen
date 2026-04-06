@@ -344,31 +344,32 @@ class LLMPowerBench:
                     for j in range(num_layers):
                         # print(f"j: {j}")
                         elapsed_layer = 0.0
+                        each_iter = 0
                         final_round = (False, False)
                         while(final_round[0] and final_round[1]):
-                            for each_iter in range(n_iters_layer):
-                                # print(f"each_iter: {each_iter}, i: {i}, j: {j}")
-                                # repeating = each_iter!=(n_iters_layer-1)
-                                repeating = final_round
-                                lt0 = time.perf_counter()
-                                li0 = len(mon.samples)
-                                self.model.load_weight(i, j+1, 0)
-                                self.model.load_hidden_compute(i,j+1, 0)
-                                self.model.load_cache(i, j+1, 0)
-                                self.model.load_hidden(i, j, 0, repeating=repeating)
-                                self.model.compute_layer(i, j, 0, repeating=repeating)
-                                self.model.store_cache(i, j-1, 0, repeating=repeating)
-                                self.model.store_hidden(i, j, 0, repeating=repeating)
-                                self.model.sync()
-                                li1 = len(mon.samples)
-                                lt1 = time.perf_counter()
-                                all_acc_layers[i][j][0].add(mon.samples, li0, li1, lt0, lt1)
-                                elapsed_layer += lt1-lt0
-                                if final_round[0]:
-                                    final_round[1] = True
-                                    break
-                                if elapsed_layer >= min_duration_layer_s:
-                                    final_round[0] = True
+                            each_iter += 1
+                            # print(f"each_iter: {each_iter}, i: {i}, j: {j}")
+                            # repeating = each_iter!=(n_iters_layer-1)
+                            repeating = final_round
+                            lt0 = time.perf_counter()
+                            li0 = len(mon.samples)
+                            self.model.load_weight(i, j+1, 0)
+                            self.model.load_hidden_compute(i,j+1, 0)
+                            self.model.load_cache(i, j+1, 0)
+                            self.model.load_hidden(i, j, 0, repeating=repeating)
+                            self.model.compute_layer(i, j, 0, repeating=repeating)
+                            self.model.store_cache(i, j-1, 0, repeating=repeating)
+                            self.model.store_hidden(i, j, 0, repeating=repeating)
+                            self.model.sync()
+                            li1 = len(mon.samples)
+                            lt1 = time.perf_counter()
+                            all_acc_layers[i][j][0].add(mon.samples, li0, li1, lt0, lt1)
+                            elapsed_layer += lt1-lt0
+                            if final_round[0]:
+                                final_round[1] = True
+                                break
+                            if each_iter >= n_iters_layer and elapsed_layer >= min_duration_layer_s:
+                                final_round[0] = True
                                   
         
                     
@@ -386,32 +387,33 @@ class LLMPowerBench:
                     for j in range(num_layers):
                         for k in range(num_gpu_batches):
                             elapsed_layer = 0.0
+                            each_iter = 0
                             final_round = (False, False)
                             while(final_round[0] and final_round[1]):
-                                for each_iter in range(n_iters_layer):
-                                    elapsed_layer = 0.0
-                                    final_round = False
-                                    # repeating = each_iter!=(n_iters_layer-1)
-                                    repeating = final_round
-                                    lt0 = time.perf_counter()
-                                    li0 = len(mon.samples)
-                                    self.model.load_weight(i, j+1, k)
-                                    self.model.load_hidden_compute(i,j, k+1)
-                                    self.model.load_cache(i, j, k+1)
-                                    self.model.store_hidden(i, j, k-1, repeating=repeating)
-                                    self.model.load_hidden(i, j, k+1, repeating=repeating)
-                                    self.model.compute_layer(i, j, k, repeating=repeating)
-                                    self.model.store_cache(i, j, k-1, repeating=repeating)
-                                    self.model.sync()
-                                    li1 = len(mon.samples)
-                                    lt1 = time.perf_counter()
-                                    all_acc_layers[i][j][k].add(mon.samples, li0, li1, lt0, lt1)
-                                    elapsed_layer += lt1-lt0
-                                    if final_round[0]:
-                                        final_round[1] = True
-                                        break
-                                    if elapsed_layer >= min_duration_layer_s:
-                                        final_round[0]=True
+                                each_iter += 1
+                                elapsed_layer = 0.0
+                                final_round = False
+                                # repeating = each_iter!=(n_iters_layer-1)
+                                repeating = final_round
+                                lt0 = time.perf_counter()
+                                li0 = len(mon.samples)
+                                self.model.load_weight(i, j+1, k)
+                                self.model.load_hidden_compute(i,j, k+1)
+                                self.model.load_cache(i, j, k+1)
+                                self.model.store_hidden(i, j, k-1, repeating=repeating)
+                                self.model.load_hidden(i, j, k+1, repeating=repeating)
+                                self.model.compute_layer(i, j, k, repeating=repeating)
+                                self.model.store_cache(i, j, k-1, repeating=repeating)
+                                self.model.sync()
+                                li1 = len(mon.samples)
+                                lt1 = time.perf_counter()
+                                all_acc_layers[i][j][k].add(mon.samples, li0, li1, lt0, lt1)
+                                elapsed_layer += lt1-lt0
+                                if final_round[0]:
+                                    final_round[1] = True
+                                    break
+                                if each_iter >= n_iters_layer and elapsed_layer >= min_duration_layer_s:
+                                    final_round[0]=True
                 # Epilogue
                 self.model.store_hidden(gen_len-1, num_layers-1, num_gpu_batches-1)
           
