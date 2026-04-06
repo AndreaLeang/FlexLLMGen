@@ -94,6 +94,8 @@ def main():
     parser.add_argument("--interval_ms",  type=int,   default=50)
     parser.add_argument("--n_iters",      type=int,   default=5,
                         help="minimum iterations per cell")
+    parser.add_argument("--n_iters_layer",type=int,   default=20,
+                        help="minimum iterations per cell")
     parser.add_argument("--min_duration", type=float, default=10.0,
                         help="minimum seconds per cell")
     parser.add_argument("--out_dir",      default="rapl-nvml-power-monitor-main/power_results")
@@ -140,6 +142,7 @@ def main():
 
     result = bench.run(
         n_iters=args.n_iters,
+        n_iters_layer=args.n_iters_layer,
         min_duration_s=args.min_duration,
     )
     bench.print_report(result)
