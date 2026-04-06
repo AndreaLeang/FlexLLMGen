@@ -98,8 +98,6 @@ def main():
                         help="minimum iterations per layer")
     parser.add_argument("--min_duration", type=float, default=10.0,
                         help="minimum seconds per cell")
-    parser.add_argument("--min_duration_layer_s", type=float, default=0.5,
-                        help="minimum seconds per layer")
     parser.add_argument("--out_dir",      default="rapl-nvml-power-monitor-main/power_results")
     parser.add_argument("--prompt-len", type=int, default=2048)
     parser.add_argument("--gen-len", type=int, default=16)
@@ -146,7 +144,6 @@ def main():
         n_iters=args.n_iters,
         n_iters_layer=args.n_iters_layer,
         min_duration_s=args.min_duration,
-        min_duration_layer_s=args.min_duration_layer_s,
     )
     bench.print_report(result)
 
