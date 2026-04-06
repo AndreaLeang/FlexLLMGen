@@ -189,9 +189,10 @@ def pinned_pred(bytes, hardware_config):
     return 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7
 
 
-def recomp_prep_pred(prompt_len, recomp_len, hardware_config):
-    #TODO: collect data
-    return 0
+# def recomp_prep_pred(prompt_len, recomp_len, hardware_config):
+#     #TODO: collect data
+#     # removed for now
+#     return 0
 
 def transfer_pred(bytes, hardware_config, single_directional=True):
     if bytes == 0:
@@ -201,11 +202,49 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
     
     return 3.626 * math.log10(bytes) + 26.13 
 
-def recomp_calc_pred(recomp_len, hardware_config):
+def recomp_calc_pred(opt_config, batch_size, recomp_len, hardware_config):
+    # cpu operations: 
+    # tmp_hidden_compute = F.layer_norm(hidden_compute.data, (hidden_dim,), weight=w_ln.data, bias=b_ln.data)
+    # k_compute = F.linear(tmp_hidden_compute, w_k_compute.data, bias=b_k.data)
+    # v_compute = F.linear(tmp_hidden_compute, w_v_compute.data, bias=b_v.data)
+    # k_compute = F.linear(tmp_hidden_compute, w_k_compute.data, bias=b_k.data)
+    # v_compute = F.linear(tmp_hidden_compute, w_v_compute.data, bias=b_v.data)
+    # k_cache_expanded[:compute_s].copy_(k_compute_new) 
+    # v_cache_expanded[:compute_s].copy_(v_compute_new)
+    # k_cache_expanded[compute_s:].copy_(k_cache.data)
+    # v_cache_expanded[compute_s:].copy_(v_cache.data)
+    
     #TODO: collect data
     return 0
 
 def layer_calc_pred(opt_config, batch_size, hardware_config, layer_type="MHA"):
+    # cpu operations: 
+    # MHA: 
+    hidden = F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data) --> 
+    b, tgt_s, h = inputs.shape
+    src_s = attention_mask.shape[1]
+    (head_dim = h1 // n_head, scaling = head_dim ** -0.5)
+  
+    q = F.linear(hidden, w_q.data, bias=b_q.data) * scaling --> ampere_fp16_s16816gemm_fp16_256x128_ldg8_relu_f2f_stages_64x3_tn & (element-wise mult) void at::native::vectorized_elementwise_kernel<4, at::native::AUnaryFunctor<c10::Half, c10::Half, c10::Half, at::native::binary_internal::MulFunctor<float> >, std::array<char*, 2ul> >(int, at::native::AUnaryFunctor<c10::Half, c10::Half, c10::Half, at::native::binary_internal::MulFunctor<float> >, std::array<char*, 2ul>)
+    k = F.linear(hidden, w_k.data, bias=b_k.data) --> ampere_fp16_s16816gemm_fp16_256x128_ldg8_relu_f2f_stages_64x3_tn
+    v = F.linear(hidden, w_v.data, bias=b_v.data) --> ampere_fp16_s16816gemm_fp16_256x128_ldg8_relu_f2f_stages_64x3_tn 
+    k[src_s - 1:src_s] = k_new --> Memcpy DtoD
+    v[src_s - 1:src_s] = v_new --> Memcpy DtoD
+    _attention_value --> 
+      attn_weights = torch.bmm(q, k) --> 
+      mask = mask.view(b, 1, 1, src_s)
+        # shape: (b * n_head, 1, s)
+        attn_weights = attn_weights.view(b, n_head, 1, src_s)
+        attn_weights = torch.where(mask, attn_weights, -1e4) --> 
+          - 
+          - atten:where --> void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::(anonymous namespace)::where_kernel_impl(at::TensorIterator&)::{lambda()#1}::operator()() const::{lambda()#2}::operator()() const::{lambda(bool, c10::Half, c10::Half)#1}>(at::TensorIteratorBase&, at::native::(anonymous namespace)::where_kernel_impl(at::TensorIterator&)::{lambda()#1}::operator()() const::{lambda()#2}::operator()() const::{lambda(bool, c10::Half, c10::Half)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::(anonymous namespace)::where_kernel_impl(at::TensorIterator&)::{lambda()#1}::operator()() const::{lambda()#2}::operator()() const::{lambda(bool, c10::Half, c10::Half)#1}>(at::TensorIteratorBase&, at::native::(anonymous namespace)::where_kernel_impl(at::TensorIterator&)::{lambda()#1}::operator()() const::{lambda()#2}::operator()() const::{lambda(bool, c10::Half, c10::Half)#1} const&)::{lambda(int)#1})
+        attn_weights = attn_weights.view(b * n_head, 1, src_s)
+        attn_weights = F.softmax(attn_weights, dim=2)
+  
+      rtn torch.bmm(attn_weights, v).view(b, n_head, tgt_s, head_dim)
+    
+    
+  
     #TODO
     return 0
 
