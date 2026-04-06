@@ -372,9 +372,6 @@ class SelfAttention:
                        slice(0, k_home.shape[1]))
 
             if self.policy.attn_sparsity >= 1.0:
-                # print(f"k_home: {k_home}")
-                # print(f"dst: {dst}")
-                # print(f"indicies: {indices}")
                 cache_read_buf.store_pow((
                     k_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
                     v_home.smart_copy(dst, indices, kv_copy=1, KVLoadTimer=KVLoadTimer),
@@ -535,9 +532,12 @@ class SelfAttention:
                 # print(f"hidden_compute after decompress.shape: {hidden_compute.shape}")
 
             b, compute_s, hidden_dim = hidden_compute.shape
-            # print(f"hidden_compute.shape: {hidden_compute.shape}")
+            print(f"hidden_compute.shape: {hidden_compute.shape}")
+            print(f"w_ln.data: {w_ln.data}")
+            print(f"b_ln.data: {b_ln.data}")
             head_dim = hidden_dim // n_head
             tmp_hidden_compute = F.layer_norm(hidden_compute.data, (hidden_dim,), weight=w_ln.data, bias=b_ln.data)
+            print(f"tmp_hidden_compute: {tmp_hidden_compute}")
             k_compute = F.linear(tmp_hidden_compute, w_k_compute.data, bias=b_k.data)
             v_compute = F.linear(tmp_hidden_compute, w_v_compute.data, bias=b_v.data)
             k_compute = k_compute.view(b, compute_s, n_head, head_dim)
