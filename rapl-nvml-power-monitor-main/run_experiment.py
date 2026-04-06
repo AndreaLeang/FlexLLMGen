@@ -94,7 +94,7 @@ def main():
     parser.add_argument("--interval_ms",  type=int,   default=50)
     parser.add_argument("--n_iters",      type=int,   default=5,
                         help="minimum iterations per cell")
-    parser.add_argument("--n_iters_layer",type=int,   default=20,
+    parser.add_argument("--n_iters_layer",type=int,   default=200,
                         help="minimum iterations per layer")
     parser.add_argument("--min_duration", type=float, default=10.0,
                         help="minimum seconds per cell")
