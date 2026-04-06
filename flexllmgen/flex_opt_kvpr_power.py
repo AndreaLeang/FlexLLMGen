@@ -532,31 +532,19 @@ class SelfAttention:
                 # print(f"hidden_compute after decompress.shape: {hidden_compute.shape}")
 
             b, compute_s, hidden_dim = hidden_compute.shape
-            print(f"hidden_compute.shape: {hidden_compute.shape}")
-            print(f"w_ln.data: {w_ln.shape}")
-            print(f"b_ln.data: {b_ln.shape}")
             head_dim = hidden_dim // n_head
             tmp_hidden_compute = F.layer_norm(hidden_compute.data, (hidden_dim,), weight=w_ln.data, bias=b_ln.data)
-            print(f"tmp_hidden_compute: {tmp_hidden_compute.shape}")
-            print(f"w_k_compute: {w_k_compute.shape}")
-            print(f"b_k: {b_k.shape}")
+            
             k_compute = F.linear(tmp_hidden_compute, w_k_compute.data, bias=b_k.data)
             v_compute = F.linear(tmp_hidden_compute, w_v_compute.data, bias=b_v.data)
             k_compute = k_compute.view(b, compute_s, n_head, head_dim)
             v_compute = v_compute.view(b, compute_s, n_head, head_dim)
-            print(f"k_compute before reshape: {k_compute.shape}")
-            print(f"v_compute before reshape: {v_compute.shape}")
+
             dim2_size = b * n_head * self.env.cpu.len_gpu // (self.env.cpu.len_gpu + self.env.cpu.len_cpu)
             k_compute_new = k_compute.permute(1, 0, 2, 3).reshape(compute_s, b * n_head, head_dim)
             v_compute_new = v_compute.permute(1, 0, 2, 3).reshape(compute_s, b * n_head, head_dim)
-            print(f"k_compute_new after reshape: {k_compute_new.shape}")
-            print(f"v_compute_new after reshape: {v_compute_new.shape}")
-            
             k_compute_new = k_compute.permute(1, 0, 2, 3).reshape(compute_s, b * n_head, head_dim)
             v_compute_new = v_compute.permute(1, 0, 2, 3).reshape(compute_s, b * n_head, head_dim)
-
-            print(f"k_compute_new after reshape2: {k_compute_new.shape}")
-            print(f"v_compute_new after reshape2: {v_compute_new.shape}")
             if self.cpu_gpu_compute:
                 # print(f"b: {b} n_head: {n_head} self.env.cpu.len_gpu: {self.env.cpu.len_gpu} self.env.cpu.len_cpu: {self.env.cpu.len_cpu}")
                 # print(f"dim2_size gpu: {dim2_size}")
