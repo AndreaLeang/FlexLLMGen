@@ -454,6 +454,7 @@ class TorchDevice:
         print(f"mha_gen w_out size: {w_out.shape}")
         print(f"mha_gen w_ln size: {w_ln.shape}")
         print(f"mha_gen b_ln size: {b_ln.shape}")
+        print(f"mha_gen inputs size: {inputs.shape}")
 
         hidden = F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data)
         print(f"mha_gen hidden size: {hidden.shape}")
