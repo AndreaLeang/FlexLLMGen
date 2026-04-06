@@ -338,12 +338,12 @@ class LLMPowerBench:
         
                 # Generate
                 for i in range(self.model.execute_gen_len):
-                    print(f"i:{i}, self.model.execute_gen_len: {self.model.execute_gen_len}")
+                    # print(f"i:{i}, self.model.execute_gen_len: {self.model.execute_gen_len}")
                     self.model.update_attention_mask(i, 0)
                     for j in range(num_layers):
-                        print(f"j: {j}")
+                        # print(f"j: {j}")
                         for each_iter in range(n_iters_layer):
-                            print(f"each_iter: {each_iter}, i: {i}, j: {j}")
+                            # print(f"each_iter: {each_iter}, i: {i}, j: {j}")
                             repeating = each_iter!=(n_iters_layer-1)
                             # if i > 0:
                             #     print(f"each_iter: {each_iter}, i: {i}, j: {j}")
@@ -362,34 +362,34 @@ class LLMPowerBench:
                             all_acc_layers[i][j][0].add(mon.samples, li0, li1, lt0, lt1)
         
                     
-            # else:
-            #     # Prologue
-            #     for k in range(num_gpu_batches):
-            #         self.model.load_weight(0, 0, k)
-            #     self.model.load_hidden(0, 0, 0)
-            #     self.model.sync()
+            else:
+                # Prologue
+                for k in range(num_gpu_batches):
+                    self.model.load_weight(0, 0, k)
+                self.model.load_hidden(0, 0, 0)
+                self.model.sync()
         
-            #     # Generate
-            #     for i in range(self.model.execute_gen_len):
-            #         for k in range(num_gpu_batches):
-            #             self.update_attention_mask(i, k)
-            #         for j in range(num_layers):
-            #             for k in range(num_gpu_batches):
-            #                 for each_iter in range(n_iters_layer):
-            #                   repeating = each_iter!=(n_iters_layer-1)
-            #                   lt0 = time.perf_counter()
-            #                   li0 = len(mon.samples)
-            #                   self.model.load_weight(i, j+1, k)
-            #                   self.model.load_hidden_compute(i,j, k+1)
-            #                   self.model.load_cache(i, j, k+1)
-            #                   self.model.store_hidden(i, j, k-1, repeating=repeating)
-            #                   self.model.load_hidden(i, j, k+1, repeating=repeating)
-            #                   self.model.compute_layer(i, j, k, repeating=repeating)
-            #                   self.model.store_cache(i, j, k-1, repeating=repeating)
-            #                   self.model.sync()
-            #                   li1 = len(mon.samples)
-            #                   lt1 = time.perf_counter()
-            #                   all_acc_layers[i][j][k].add(mon.samples, li0, li1, lt0, lt1)
+                # Generate
+                for i in range(self.model.execute_gen_len):
+                    for k in range(num_gpu_batches):
+                        self.update_attention_mask(i, k)
+                    for j in range(num_layers):
+                        for k in range(num_gpu_batches):
+                            for each_iter in range(n_iters_layer):
+                              repeating = each_iter!=(n_iters_layer-1)
+                              lt0 = time.perf_counter()
+                              li0 = len(mon.samples)
+                              self.model.load_weight(i, j+1, k)
+                              self.model.load_hidden_compute(i,j, k+1)
+                              self.model.load_cache(i, j, k+1)
+                              self.model.store_hidden(i, j, k-1, repeating=repeating)
+                              self.model.load_hidden(i, j, k+1, repeating=repeating)
+                              self.model.compute_layer(i, j, k, repeating=repeating)
+                              self.model.store_cache(i, j, k-1, repeating=repeating)
+                              self.model.sync()
+                              li1 = len(mon.samples)
+                              lt1 = time.perf_counter()
+                              all_acc_layers[i][j][k].add(mon.samples, li0, li1, lt0, lt1)
                           
         
                 # Epilogue
