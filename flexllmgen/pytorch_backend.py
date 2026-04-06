@@ -448,8 +448,13 @@ class TorchDevice:
         src_s = attention_mask.shape[1]
         head_dim = h // n_head
         scaling = head_dim ** -0.5
+        print(f"mha_gen w_q size: {w_q.shape}")
+        print(f"mha_gen w_k size: {w_k.shape}")
+        print(f"mha_gen w_v size: {w_v.shape}")
+        print(f"mha_gen w_out size: {w_out.shape}")
 
         hidden = F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data)
+        print(f"mha_gen hidden size: {hidden.shape}")
 
         # shape: (b, 1, h)
         q = F.linear(hidden, w_q.data, bias=b_q.data) * scaling
