@@ -465,6 +465,7 @@ class LLMPowerBench:
         for each_gen_layer_list in r.layers:
             for each_layer_batch_list in each_gen_layer_list:
                 for p in each_layer_batch_list:
+                    print(f"p: {p}")
                     gpu0    = p.avg_gpu_w[0] if p.avg_gpu_w else 0.0
                     skt_str = "".join(
                         f"  {p.avg_socket_pkg_w[i]:>6.1f}W {p.avg_socket_dram_w[i]:>6.1f}W"
