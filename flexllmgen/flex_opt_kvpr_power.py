@@ -467,6 +467,7 @@ class SelfAttention:
     def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None, repeating=False):
         # shape: (s, b * n_head, head_dim)
         print(f"repeating: {repeating}")
+        print(f"self.task.gen_len: {self.task.gen_len}")
         k_home, v_home = cache_home.val
         if repeating:
             k_new, v_new = cache_write_buf.pop_rep()
