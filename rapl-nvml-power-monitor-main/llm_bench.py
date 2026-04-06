@@ -345,9 +345,11 @@ class LLMPowerBench:
                         # print(f"j: {j}")
                         for each_iter in range(n_iters_layer):
                             elapsed_layer = 0.0
+                            final_round = False
                             while(True):
                                 # print(f"each_iter: {each_iter}, i: {i}, j: {j}")
-                                repeating = each_iter!=(n_iters_layer-1)
+                                # repeating = each_iter!=(n_iters_layer-1)
+                                repeating = final_round
                                 lt0 = time.perf_counter()
                                 li0 = len(mon.samples)
                                 self.model.load_weight(i, j+1, 0)
@@ -362,8 +364,11 @@ class LLMPowerBench:
                                 lt1 = time.perf_counter()
                                 all_acc_layers[i][j][0].add(mon.samples, li0, li1, lt0, lt1)
                                 elapsed_layer += lt1-lt0
-                                if elapsed_layer >= min_duration_layer_s:
+                                if final_round:
                                     break
+                                if elapsed_layer >= min_duration_layer_s:
+                                    final_round = True
+                                  
         
                     
             else:
@@ -381,8 +386,10 @@ class LLMPowerBench:
                         for k in range(num_gpu_batches):
                             for each_iter in range(n_iters_layer):
                               elapsed_layer = 0.0
+                              final_round = False
                               while(True):
-                                  repeating = each_iter!=(n_iters_layer-1)
+                                  # repeating = each_iter!=(n_iters_layer-1)
+                                  repeating = final_round
                                   lt0 = time.perf_counter()
                                   li0 = len(mon.samples)
                                   self.model.load_weight(i, j+1, k)
@@ -397,8 +404,10 @@ class LLMPowerBench:
                                   lt1 = time.perf_counter()
                                   all_acc_layers[i][j][k].add(mon.samples, li0, li1, lt0, lt1)
                                   elapsed_layer += lt1-lt0
-                                  if elapsed_layer >= min_duration_layer_s:
+                                  if final_round:
                                       break
+                                  if elapsed_layer >= min_duration_layer_s:
+                                      final_round=True
                 # Epilogue
                 self.model.store_hidden(gen_len-1, num_layers-1, num_gpu_batches-1)
           
