@@ -787,7 +787,7 @@ class TransformerLayer:
         pass
 
     def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None, repeating=False):
-        self.attention.store_cache(cache_home, cache_write_buf, i, KVStoreTimer=KVStoreTimer)
+        self.attention.store_cache(cache_home, cache_write_buf, i, KVStoreTimer=KVStoreTimer, repeating=repeating)
 
     def forward(self, hidden, cache_read_buf, weight_read_buf, attention_mask,
                 cache_write_buf, i, k, hidden_compute, cpu_cache_read_buf, repeating=False):
@@ -965,7 +965,7 @@ class OptLM:
             i -= 1
             if i == -1:
                 return
-        if i == self.task.gen_len - 1:  # last token, no need to store cache
+        if i == self.task.gen_len - 1 and not repeating:  # last token, no need to store cache
             self.cache_write_buf[j][k].pop()
             return
 
@@ -975,7 +975,7 @@ class OptLM:
             with torch.cuda.stream(self.store_cache_stream):
                 self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer, repeating=repeating)
         else:
-            self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer)
+            self.layers[j].store_cache(self.cache_home[j][k], self.cache_write_buf[j][k], i, KVStoreTimer=KVStoreTimer, repeating=repeating)
         
 
     def delete_cache(self, j, k):
