@@ -448,16 +448,7 @@ class TorchDevice:
         src_s = attention_mask.shape[1]
         head_dim = h // n_head
         scaling = head_dim ** -0.5
-        print(f"mha_gen w_q size: {w_q.shape}")
-        print(f"mha_gen w_k size: {w_k.shape}")
-        print(f"mha_gen w_v size: {w_v.shape}")
-        print(f"mha_gen w_out size: {w_out.shape}")
-        print(f"mha_gen w_ln size: {w_ln.shape}")
-        print(f"mha_gen b_ln size: {b_ln.shape}")
-        print(f"mha_gen inputs size: {inputs.shape}")
-
         hidden = F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data)
-        print(f"mha_gen hidden size: {hidden.shape}")
 
         # shape: (b, 1, h)
         q = F.linear(hidden, w_q.data, bias=b_q.data) * scaling
@@ -575,9 +566,6 @@ class TorchDevice:
 
     def _attention_weights(self, q, k, mask, b, src_s, n_head):
         # shape: (b * n_head, 1, s)
-        print(f"_attention_weights q: {q.shape}")
-        print(f"_attention_weights k: {k.shape}")
-        print(f"_attention_weights src_s: {src_s}")
         attn_weights = torch.bmm(q, k)
         # shape: (b, 1, 1, s)
         mask = mask.view(b, 1, 1, src_s)
