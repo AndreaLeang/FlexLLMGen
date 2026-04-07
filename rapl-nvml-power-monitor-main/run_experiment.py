@@ -106,6 +106,8 @@ def main():
     parser.add_argument("--off-per", type=int, default=0)
     parser.add_argument("--recomp-per", type=int, default=0)
 
+    parser.add_argument("--layer-focus", action=store_true)
+
 
 
     args = parser.parse_args()
@@ -132,7 +134,6 @@ def main():
     n_cells    = len(PROMPTS) * len(OUTPUT_LENGTHS)
     cell_count = 0
 
-    # FIX BELOW
 
     tag = cell_tag(args.model, args.prompt_len, args.gen_len, args.block_size*args.num_blocks, args.block_size)
 
@@ -140,11 +141,18 @@ def main():
     print(f"  [{cell_count}/{n_cells}]  {tag}")
     print(f"{'='*64}")
 
-    result = bench.run(
-        n_iters=args.n_iters,
-        n_iters_layer=args.n_iters_layer,
-        min_duration_s=args.min_duration,
-    )
+    if args.layer_focus:
+        result = bench.run_layers(
+            n_iters=args.n_iters,
+            n_iters_layer=args.n_iters_layer,
+            min_duration_s=args.min_duration,
+        )
+    else:
+        result = bench.run(
+            n_iters=args.n_iters,
+            n_iters_layer=args.n_iters_layer,
+            min_duration_s=args.min_duration,
+        )
     bench.print_report(result)
 
     # save per-cell JSON (full detail including raw phase data)
