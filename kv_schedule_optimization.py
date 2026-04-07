@@ -244,7 +244,7 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
     if bytes == 0:
         return 0,0
     if single_directional:
-        return 1.415 * math.log10(bytes) + 13.38
+        return 0, 1.415 * math.log10(bytes) + 13.38
     
     return 0, 3.626 * math.log10(bytes) + 26.13 
 
