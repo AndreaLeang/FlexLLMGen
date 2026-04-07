@@ -210,7 +210,162 @@ class LLMPowerBench:
         self.model      = OptLM(self.opt_config, self.env, "~/opt_weights", self.policy, self.recomp_len, False)
         return self
 
+
     def run(
+        self,
+        n_iters:                 int   = 5,         # minimum iterations
+        n_iters_layer:           int   = 200,
+        min_duration_s:          float = 10.0,      # keep going until this elapsed
+        do_sample:               bool  = False,
+        temperature:             float = 1.0,
+    ) -> InferenceResult:
+        """
+        Runs prefill+decode repeatedly until both n_iters AND
+        min_duration_s are satisfied, then reports averaged stats.
+        The power monitor runs continuously across all iterations.
+        """
+
+        mon = PowerMonitor(
+            interval_ms=self.interval_ms,
+            gpu_indices=self.gpu_indices,
+            socket_ids=self.socket_ids,
+        )
+
+        # tokenize inputs & warmup
+        warmup_inputs = get_test_inputs(32, self.num_prompts, self.tokenizer)
+        inputs = get_test_inputs(self.prompt_len, self.num_prompts, self.tokenizer)
+        num_layers = self.model.num_layers
+        num_gpu_batches = self.num_of_blocks
+        gpu_batch_size = self.block_size
+        overlap = self.policy.overlap
+        prompt_len, gen_len = self.prompt_len, self.gen_len
+
+        # Warm up
+        print("\n[warm-up] 3 iters, no min duration ...")
+        for i in range(3):
+            output_ids = self.model.generate(warmup_inputs, max_new_tokens=1, verbose=0)
+        print("[warm-up] done\n")
+        self.model.execute_gen_len = self.gen_len
+
+        # Setting up 
+        task = Task(
+            inputs=inputs,
+            prompt_len= prompt_len,
+            gen_len=gen_len,
+            cut_gen_len=None,
+            do_sample=False,
+            temperature=1.0,
+            stop=None,
+        )
+        self.model.set_task(task)
+      
+        # accumulators — one per phase
+        acc_prefill = _PhaseAccum("prefill",    prompt_len)
+        acc_decode  = _PhaseAccum("decode",     gen_len)
+              
+        tot_refresh_cache_time = 0
+        iteration = 0
+        mon.start()
+        loop_start = time.perf_counter()
+
+        while True:
+            iteration += 1
+            # ── Refresh Cache ───────────────────────────────────────────────
+            # Intermediate tensors
+            # The following buffers store values used
+            # for the i-th token, j-th layer, k-th gpu batch.
+            t0 = time.perf_counter()
+            # Output token ids
+            self.model.output_ids = np.full((len(task.inputs), prompt_len + gen_len),
+                self.model.config.pad_token_id, dtype=np.int32)
+            self.model.stopped = np.zeros((len(task.inputs), 1), dtype=bool)
+            self.model.output_ids[:, :prompt_len] = np.asarray(task.inputs)
+            #Intermediate Tensors
+            for j in range(num_layers):
+                for k in range(num_gpu_batches):
+                    self.model.cache_home[j][k].clear()
+                    self.model.cache_read_buf[j][k].clear()
+                    self.model.cache_write_buf[j][k].clear()
+                    self.model.cpu_cache_read_buf[j][k].clear()
+                    self.model.hidden_compute_home[j][k].clear()
+                    self.model.hidden_compute_read_buf[j][k].clear()
+            for j in range(num_layers):
+                self.model.weight_read_buf[j].clear()
+            for k in range(num_gpu_batches):
+                self.model.attention_mask[k].clear()
+            self.model.hidden = array_3d(gen_len, num_layers, num_gpu_batches, ValueHolder)
+            t1 = time.perf_counter()
+            tot_refresh_cache_time += t1-t0
+
+            # ── prefill ───────────────────────────────────────────────
+            t0 = time.perf_counter()
+            i0 = len(mon.samples)
+            for j in range(num_layers):
+                for k in range(num_gpu_batches):
+                    self.model.init_cache(j, k)
+                    if self.recomp_len > 0:
+                        self.model.init_hidden(j, k)
+            torch.cuda.synchronize()
+            i1 = len(mon.samples)
+            t1 = time.perf_counter()
+            acc_prefill.add(mon.samples, i0, i1, t0, t1)
+
+            # ── decode ────────────────────────────────────────────────
+            t0 = time.perf_counter()
+            i0 = len(mon.samples)
+          
+            # Power Caputure for entire inference
+            if num_gpu_batches == 1:
+                self.model.generation_loop_overlap_single_batch()
+            else:
+                self.model.generation_loop_overlap_multi_batch()
+          
+            out_ids = self.model.output_ids
+
+            torch.cuda.synchronize()
+            i1 = len(mon.samples)
+            t1 = time.perf_counter()
+            acc_decode.add(mon.samples, i0, i1, t0, t1)
+
+            elapsed    = time.perf_counter() - loop_start
+
+            print(f"iterations {iteration}  "
+                  f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
+                  f"decode {acc_decode.durations[-1]*1000:.0f}ms  "
+                  f"elapsed {elapsed:.1f}s")
+
+            # stop when BOTH conditions met
+            if iteration >= n_iters and elapsed >= min_duration_s:
+                break
+
+        mon.stop()
+        total_dur = time.perf_counter() - loop_start - tot_refresh_cache_time
+
+        # decode output from last iteration
+        new_ids    = out_ids[0][prompt_len:]
+        output     = self.tokenizer.decode(new_ids, skip_special_tokens=True)
+        output_len = len(new_ids)
+
+        phases = [acc_prefill.to_stats(), acc_decode.to_stats()]
+        layers = []
+        for i in range(gen_len):
+            cur_gen = []
+            for j in range(num_layers):
+                cur_layer = []
+                for k in range(num_gpu_batches):
+                    cur_layer.append(all_acc_layers[i][j][k].to_stats())
+                cur_gen.append(cur_layer)
+            layers.append(cur_gen)      
+
+        return InferenceResult(
+            prompt=task.inputs, output=output,
+            prompt_tokens=prompt_len, output_tokens=output_len,
+            n_iters=iteration, n_iters_layer = n_iters_layer, total_duration_s=total_dur,
+            phases=phases, layers=[], all_samples=mon.samples,
+        )
+      
+
+    def run_layers(
         self,
         n_iters:                 int   = 5,         # minimum iterations
         n_iters_layer:           int   = 200,
@@ -341,7 +496,7 @@ class LLMPowerBench:
                     # print(f"i:{i}, self.model.execute_gen_len: {self.model.execute_gen_len}")
                     self.model.update_attention_mask(i, 0)
                     for j in range(num_layers):
-                        print(f"i:{i}, j: {j}")
+                        # print(f"i:{i}, j: {j}")
                         for each_iter in range(n_iters_layer):
                             # print(f"each_iter: {each_iter}, i: {i}, j: {j}")
                             repeating = each_iter!=(n_iters_layer-1)
