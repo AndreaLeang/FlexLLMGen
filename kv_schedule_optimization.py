@@ -136,21 +136,38 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
     # Forward Pass Prediction
     #is_load_store: 0: none, 1: load only, 2: store only, 3: load and store
-    input_output_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "input") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "input") +(num_batches)*layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "output") + layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "output")
+    input_energy, input_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "input")
+    input_energy, input_latency += (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "input")
+    output_energy, output_latency =  (num_batches)*layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "output")
+    output_energy, output_latency += layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "output")
     
     for cur_gen_len in range(1, gen_len+1):
         if num_batches == 1:
-            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA"))
-            tot_MLP_latency = num_hidden_layers*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP"))
+            tot_MHA_energy, tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA"))
+            tot_MLP_energy, tot_MLP_latency = num_hidden_layers*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP"))
         else:
-            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") + layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") + (num_batches-2)*layer_prediction(model, 3, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA"))
-            tot_MLP_latency = (num_hidden_layers-1)*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") + layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") + (num_batches-2)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP"))
-            tot_MLP_latency += layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
-
+            tot_MHA_energy, tot_MHA_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
+            tot_MHA_energy, tot_MHA_latency += layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
+            tot_MHA_energy, tot_MHA_latency += (num_batches-2)*layer_prediction(model, 3, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
+            tot_MHA_energy *= num_hidden_layers
+            tot_MHA_latency *= num_hidden_layers
+          
+            tot_MLP_energy, tot_MLP_latency = layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
+            tot_MLP_energy, tot_MLP_latency += layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
+            tot_MLP_energy, tot_MLP_latency += (num_batches-2)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+            
+            tot_MLP_energy *= (num_hidden_layers-1)
+            tot_MLP_latency *= (num_hidden_layers-1)
+            tot_MLP_energy, tot_MLP_latency += layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
+            tot_MLP_energy, tot_MLP_latency += (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+      
         middle_layer_latency = tot_MHA_latency + tot_MLP_latency
+        middle_layer_energy = tot_MHA_energy + tot_MLP_energy
 
-        one_forward_latency = input_output_latency + middle_layer_latency
+        one_forward_latency = input_latency + middle_layer_latency + output_latency
+        one_forward_energy = input_energy + middle_layer_energy + output_energy
         tot_latency += one_forward_latency
+        tot_energy  += one_forward_energy
 
     # get total energy and latency
     return tot_energy, tot_latency
