@@ -218,7 +218,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         first_half_latency = max(pinned_latency, transfer_latency)
         recomp_energy = 0
         recomp_latency = 0
-        if layer_type == "MHA":
+        if layer_type == "MHA" and recomp_len > 0:
             recomp_energy, recomp_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
         second_single_dir = is_load_store == 1
         k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
