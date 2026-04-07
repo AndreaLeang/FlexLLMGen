@@ -42,6 +42,9 @@ from flexllmgen.opt_config import get_opt_config
 # from flexllmgen.flex_opt import Policy
 from flexllmgen.utils import GB, T
 
+sys.path.append( '/home/akleang/akleang/energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
+from gee.gee_utils import get_gee
+
 alpha_g = 0.8
 alpha_c = 0.8
 alpha_n = 0.8
@@ -123,7 +126,7 @@ def get_batch_sizes(num_of_prompts):
     return possible_batch_sizes
 
 
-def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches):
+def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator):
     #offloading percent is amount offloaded to the cpu
     
     tot_energy = 0
@@ -132,16 +135,16 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
     # Forward Pass Prediction
     #is_load_store: 0: none, 1: load only, 2: store only, 3: load and store
-    input_output_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "input") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "input") +(num_batches)*layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "output") + layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "output")
+    input_output_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "input") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "input") +(num_batches)*layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "output") + layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "output")
     
     for cur_gen_len in range(1, gen_len+1):
         if num_batches == 1:
-            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MHA"))
-            tot_MLP_latency = num_hidden_layers*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP"))
+            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA"))
+            tot_MLP_latency = num_hidden_layers*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP"))
         else:
-            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MHA") + layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MHA") + (num_batches-2)*layer_prediction(model, 3, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MHA"))
-            tot_MLP_latency = (num_hidden_layers-1)*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP") + layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP") + (num_batches-2)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP"))
-            tot_MLP_latency += layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, "MLP")
+            tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") + layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") + (num_batches-2)*layer_prediction(model, 3, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA"))
+            tot_MLP_latency = (num_hidden_layers-1)*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") + layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") + (num_batches-2)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP"))
+            tot_MLP_latency += layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") + (num_batches-1)*layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
 
         middle_layer_latency = tot_MHA_latency + tot_MLP_latency
 
@@ -160,33 +163,40 @@ def get_bytes_to_store(batch_size):
     kv_store_bytes = batch_size * 8192 # 1 token per batch
     return kv_store_bytes
 
-def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, layer_type="MHA"):
+def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, layer_type="MHA"):
     #layer type determines the actual recomputation time + compute layer time
-    layer_calc_time = layer_calc_pred(opt_config, batch_size, hardware_config, layer_type)
+    layer_calc_time, layer_calc_energy = layer_calc_pred(opt_config, batch_size, hardware_config, gpu_estimator, layer_type)
   
     if is_load_store == 0:
         #no load or store, just the layer computations
-        return layer_calc_time
+        return layer_calc_energy, layer_calc_time
     elif is_load_store == 2:
         # store only --> single directional
-        return max(layer_calc_time, transfer_pred(get_bytes_to_store(batch_size), hardware_config))
+        transfer_energy, transfer_lat = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
+        return layer_calc_energy+transfer_energy, max(layer_calc_time, transfer_lat)
     else:
         recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
         #use is_load_store==1 as single directional
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional
-        pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
-        first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
-        recomp_latency = 0
+        pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
+        # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
+        transfer_energy, transfer_lat = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
+        first_half_latency = max(pinned_latency, transfer_lat)
+        recomp_energy, recomp_latency = (0,0)
         if layer_type == "MHA":
-            recomp_latency = recomp_calc_pred(recomp_len, hardware_config)
+            recomp_energy, recomp_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
         second_single_dir = is_load_store == 1
-        second_half_latency = max(pinned_latency + recomp_latency + layer_calc_time, transfer_pred(kv_load_bytes, hardware_config)+ transfer_pred(kv_load_bytes, hardware_config, single_directional = second_single_dir))
-
-        return first_half_latency + second_half_latency
+        k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
+        v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, single_directional = second_single_dir)
+        second_half_latency = max(pinned_latency + recomp_latency + layer_calc_time, k_transfer_latency + v_transfer_latency)
+        tot_energy = pinned_energy + transfer_energy + recomp_energy + k_transfer_energy + v_transfer_energy
+      
+        return tot_energy, first_half_latency + second_half_latency
 
 
 def pinned_pred(bytes, hardware_config):
-    return 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7
+    #TODO: energy
+    return 0, 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7
 
 
 # def recomp_prep_pred(prompt_len, recomp_len, hardware_config):
@@ -195,70 +205,132 @@ def pinned_pred(bytes, hardware_config):
 #     return 0
 
 def transfer_pred(bytes, hardware_config, single_directional=True):
+    #TODO: energy
     if bytes == 0:
         return 0
     if single_directional:
         return 1.415 * math.log10(bytes) + 13.38
     
-    return 3.626 * math.log10(bytes) + 26.13 
+    return 0, 3.626 * math.log10(bytes) + 26.13 
 
-def recomp_calc_pred(opt_config, batch_size, recomp_len, hardware_config):
-    # cpu operations: 
-    # tmp_hidden_compute = F.layer_norm(hidden_compute.data, (hidden_dim,), weight=w_ln.data, bias=b_ln.data)
-    # k_compute = F.linear(tmp_hidden_compute, w_k_compute.data, bias=b_k.data)
-    # v_compute = F.linear(tmp_hidden_compute, w_v_compute.data, bias=b_v.data)
-    # k_compute = F.linear(tmp_hidden_compute, w_k_compute.data, bias=b_k.data)
-    # v_compute = F.linear(tmp_hidden_compute, w_v_compute.data, bias=b_v.data)
-    # k_cache_expanded[:compute_s].copy_(k_compute_new) 
-    # v_cache_expanded[:compute_s].copy_(v_compute_new)
-    # k_cache_expanded[compute_s:].copy_(k_cache.data)
-    # v_cache_expanded[compute_s:].copy_(v_cache.data)
+def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len, gpu_estimator, hardware_config):
+    # estimator: op
+    # FlashAttention: ['flashattention_v2']
+    # elementWise   : ['pointwise_mul', 'pointwise_add', 'scalar_mul', 'scalar_add', 'typecast_to_fp32', 'typecast_to_bf16', 'relu', 'gelu', 'silu', 'tanh', 'sigmoid', 'unspecified_activation', 'unspecified_tensor', 'unspecified_scalar']
+    # gemmLike      : ['gemm', 'fmha-approximate']
+    # NonLinear     : ['softmax', 'layernorm', 'softmax_fusion', 'layernorm_fusion']
+    # energaizer-ispass26-artifact/experiments_single/gee_estimator.py --> query specs 
+    all_queries = []
+    all_query_types = []
+  
+    layer_norm_query = {'batch': batch_size \
+                         'dim': recomp_len, \
+                         'prec': 'bf16'}
+    layer_norm_query_type = ('layernorm')
+    all_queries.append(layer_norm_query)
+    all_query_types.append(layer_norm_query_type)
+  
+    linear_query = {
+    	'batch': batch_size,
+    	'dimM': recomp_len,
+    	'dimN': opt_config.hidden_size,
+    	'dimK': opt_config.hidden_size,
+    	'precM': 'bf16',
+    	'precA': 'bf16',
+    	'useTensorCore':  True
+    }
+    linear_query_type = ('gemm', 'tc', 'bf16')
+    for i in range(2):
+        all_queries.append(linear_query)
+        all_query_types.append(linear_query_type)
     
-    #TODO: collect data
-    return 0
+    reshape_query = {
+        'dim ': batch_size*opt_config.n_head,
+        'op': 'unspecified_tensor',
+        'prec': 'bf16',
+    }
+    reshape_query_type = ('typecast_to_bf16')
+    for i in range(4):
+        all_queries.append(reshape_query)
+        all_query_types.append(reshape_query_type)
+  
+    copy_1_query = {
+        'dim ': recomp_len,
+        'op': 'unspecified_tensor',
+        'prec': 'bf16',
+    }
+    copy_1_query_type = ('typecast_to_bf16')
+    for i in range(2):
+        all_queries.append(copy_1_query)
+        all_query_types.append(copy_1_query_type)
+    
+    copy_2_query = {
+        'dim ': prompt_len + cur_gen_len - recomp_len,
+        'op': 'unspecified_tensor',
+        'prec': 'bf16',
+    }
+    copy_2_query_type = ('typecast_to_bf16')
+    for i in range(2):
+        all_queries.append(copy_2_query)
+        all_query_types.append(copy_2_query_type)
+
+    #TODO: verify target frequency
+    target_freq = 20
+    tot_lat = 0
+    tot_energy = 0
+    for each_ind in range(len(all_queries)):
+        latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
+        tot_lat += latency
+        tot_energy += energy
+    
+    return tot_energy, tot_lat
 
 def layer_calc_pred(opt_config, batch_size, hardware_config, layer_type="MHA"):
-    # cpu operations: 
-    # MHA: 
-    hidden = F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data) --> 
-    b, tgt_s, h = inputs.shape
-    src_s = attention_mask.shape[1]
-    (head_dim = h1 // n_head, scaling = head_dim ** -0.5)
-  
-    q = F.linear(hidden, w_q.data, bias=b_q.data) * scaling --> ampere_fp16_s16816gemm_fp16_256x128_ldg8_relu_f2f_stages_64x3_tn & (element-wise mult) void at::native::vectorized_elementwise_kernel<4, at::native::AUnaryFunctor<c10::Half, c10::Half, c10::Half, at::native::binary_internal::MulFunctor<float> >, std::array<char*, 2ul> >(int, at::native::AUnaryFunctor<c10::Half, c10::Half, c10::Half, at::native::binary_internal::MulFunctor<float> >, std::array<char*, 2ul>)
-    k = F.linear(hidden, w_k.data, bias=b_k.data) --> ampere_fp16_s16816gemm_fp16_256x128_ldg8_relu_f2f_stages_64x3_tn
-    v = F.linear(hidden, w_v.data, bias=b_v.data) --> ampere_fp16_s16816gemm_fp16_256x128_ldg8_relu_f2f_stages_64x3_tn 
-    k[src_s - 1:src_s] = k_new --> Memcpy DtoD
-    v[src_s - 1:src_s] = v_new --> Memcpy DtoD
-    _attention_value --> 
-      attn_weights = torch.bmm(q, k) --> 
-      mask = mask.view(b, 1, 1, src_s)
-        # shape: (b * n_head, 1, s)
-        attn_weights = attn_weights.view(b, n_head, 1, src_s)
-        attn_weights = torch.where(mask, attn_weights, -1e4) --> 
-          - 
-          - atten:where --> void at::native::elementwise_kernel<128, 4, at::native::gpu_kernel_impl_nocast<at::native::(anonymous namespace)::where_kernel_impl(at::TensorIterator&)::{lambda()#1}::operator()() const::{lambda()#2}::operator()() const::{lambda(bool, c10::Half, c10::Half)#1}>(at::TensorIteratorBase&, at::native::(anonymous namespace)::where_kernel_impl(at::TensorIterator&)::{lambda()#1}::operator()() const::{lambda()#2}::operator()() const::{lambda(bool, c10::Half, c10::Half)#1} const&)::{lambda(int)#1}>(int, at::native::gpu_kernel_impl_nocast<at::native::(anonymous namespace)::where_kernel_impl(at::TensorIterator&)::{lambda()#1}::operator()() const::{lambda()#2}::operator()() const::{lambda(bool, c10::Half, c10::Half)#1}>(at::TensorIteratorBase&, at::native::(anonymous namespace)::where_kernel_impl(at::TensorIterator&)::{lambda()#1}::operator()() const::{lambda()#2}::operator()() const::{lambda(bool, c10::Half, c10::Half)#1} const&)::{lambda(int)#1})
-        attn_weights = attn_weights.view(b * n_head, 1, src_s)
-        attn_weights = F.softmax(attn_weights, dim=2)
-  
-      rtn torch.bmm(attn_weights, v).view(b, n_head, tgt_s, head_dim)
+
+    # W_k, w_q, w_v, w_out = [opt_config.hidden_size, opt_config.hidden_size]
+    # 1x F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data)
+    # inputs.data: [batch_size, 1, opt_config.hidden_size]
+    # 3x F.linear(hidden, w_q.data, bias=b_q.data)
+    # xAT+b → [batch_size, 1, opt_config.hidden_size]*[4096, 4096]T + [opt_config.hidden_size]
+    # 3x REshape: (batch_size, n_head, 1, head_dim) → (b*n_head, 1, head_dim) 
+    
+    # n_head*head_dim = opt_config.hidden_size
+    # Cur_seq_len = prompt_len + cur_gen_len
+    # _attention_value:
+    # torch.bmm(q, k): [batch_size * num_head, 1, head_dim] * [batch_size * num_head, head_dim, cur_seq_len]
+    # torch.where() → elementwise [batch_size, 1, 1, cur_seq_len] skim over [batch_size, num_head, 1, cur_seq_len]
+    # (no gpu op) view atten_weights → [batch_size*num_head, 1, cur_seq_len]
+    # Torch.softmax on dim=2 for  [batch_size*num_head, 1, cur_seq_len]
+    
+    
+    # torch.bmm(attn_weights, v).view(b, n_head, tgt_s, head_dim)
+    # [batch_size*n_head, 1, cur_seq_len] * [batch_size * n_head, cur_seq_len, head_dim]
+    
+    # Back to MHA: 
+    # (b, 1, h)
+    # (no gpu op) Value (rtn from MHA) = value.transpose(1, 2).view(b, tgt_s, h)
+    # (b, n_head, 1, head_dim) → (b, 1,  n_head, head_dim) → (b, 1, opt_config.hidden_size)
+    # value = F.linear(value, w_out.data, bias=b_out.data)
+    # xAT+b → [b, 1, opt_config.hidden_size]*[opt_config.hidden_size, opt_config.hidden_size]T + [opt_config.hidden_size]
+    # Add: value.add_(inputs.data)
+    # [batch_size, 1, opt_config.hidden_size] + [batch_size, 1, opt_config.hidden_size]
+
     
     
   
     #TODO
-    return 0
+    return 0, 0
 
 
-def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, var_to_min="latency"):
+def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, gpu_estimator, var_to_min="latency"):
     # break model into layers
   
     ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
+                                                                                                                                                                                       
     # understand what unique batch size is available 
     batch_sizes = get_batch_sizes(num_of_prompts)
-    print(f'got batch sizes: {batch_sizes}')
     # understand what % offloadings are available 
     all_feasible_strategies_dict = get_available_offloadings(opt_config, hardware_config, batch_sizes, prompt_len+gen_len)
-    print(f'got all feasible strats: {all_feasible_strategies_dict}')
     
     ### ITERATE AND COMPARE STRATEGIES
 
@@ -275,7 +347,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                 each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
                 print(f'cur strat: {each_batch_size}, {each_feasible_offloading}, {each_recomp_len}')
                 #Model Prediction 
-                cur_energy, cur_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size)
+                cur_energy, cur_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
                 if save_results: 
                     cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
                     all_results[cur_strat] = (cur_energy, cur_latency)
@@ -341,5 +413,11 @@ if __name__ == "__main__":
     config.nmem = args.nvme_mem * GB
 
     #TODO: specify hardware config
-    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save)
+    gpu_estimator = get_gee(gpu_yaml_path=/home/akleang/akleang/energaizer-ispass26-artifact/config/gpu/yz8.yaml, 
+                        lut_yaml_path=/home/akleang/akleang/energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml, 
+                        dvfs_aware=True, dvfs_inference_mode='all', 
+                        dvfs_supply_voltage=/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json,
+                        dvfs_idle_power=/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json, 
+                        lut_folder_abs_path=/home/akleang/akleang/energaizer-ispass26-artifact/database/data)
+    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, gpu_estimator, args.save)
 
