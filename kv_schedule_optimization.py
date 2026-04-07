@@ -417,11 +417,11 @@ if __name__ == "__main__":
     config.nmem = args.nvme_mem * GB
 
     #TODO: specify hardware config
-    gpu_estimator = get_gee(gpu_yaml_path=/home/akleang/akleang/energaizer-ispass26-artifact/config/gpu/yz8.yaml, 
-                        lut_yaml_path=/home/akleang/akleang/energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml, 
+    gpu_estimator = get_gee(gpu_yaml_path="/home/akleang/akleang/energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
+                        lut_yaml_path="/home/akleang/akleang/energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
                         dvfs_aware=True, dvfs_inference_mode='all', 
-                        dvfs_supply_voltage=/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json,
-                        dvfs_idle_power=/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json, 
-                        lut_folder_abs_path=/home/akleang/akleang/energaizer-ispass26-artifact/database/data)
+                        dvfs_supply_voltage="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
+                        dvfs_idle_power="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
+                        lut_folder_abs_path="/home/akleang/akleang/energaizer-ispass26-artifact/database/data")
     disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, gpu_estimator, args.save)
 
