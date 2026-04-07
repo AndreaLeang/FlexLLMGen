@@ -208,7 +208,7 @@ def pinned_pred(bytes, hardware_config):
 def transfer_pred(bytes, hardware_config, single_directional=True):
     #TODO: energy
     if bytes == 0:
-        return 0
+        return 0,0
     if single_directional:
         return 1.415 * math.log10(bytes) + 13.38
     
