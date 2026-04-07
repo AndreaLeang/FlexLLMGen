@@ -223,8 +223,8 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     all_queries = []
     all_query_types = []
   
-    layer_norm_query = {'batch': batch_size \
-                         'dim': recomp_len, \
+    layer_norm_query = {'batch': batch_size,
+                         'dim': recomp_len, 
                          'prec': 'bf16'}
     layer_norm_query_type = ('layernorm')
     all_queries.append(layer_norm_query)
@@ -232,9 +232,9 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
   
     linear_query = {
     	'batch': batch_size,
-    	'dimM': recomp_len,
-    	'dimN': opt_config.hidden_size,
-    	'dimK': opt_config.hidden_size,
+    	'dimM' : recomp_len,
+    	'dimN' : opt_config.hidden_size,
+    	'dimK' : opt_config.hidden_size,
     	'precM': 'bf16',
     	'precA': 'bf16',
     	'useTensorCore':  True
@@ -286,7 +286,11 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     return tot_energy, tot_lat
 
 def layer_calc_pred(opt_config, batch_size, hardware_config, layer_type="MHA"):
-
+    #input: 
+    #output: 
+    #MLP: 
+  
+    #MHA: 
     # W_k, w_q, w_v, w_out = [opt_config.hidden_size, opt_config.hidden_size]
     # 1x F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data)
     # inputs.data: [batch_size, 1, opt_config.hidden_size]
