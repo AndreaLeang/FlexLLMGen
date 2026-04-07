@@ -129,7 +129,8 @@ def get_batch_sizes(num_of_prompts):
 
 def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator):
     #offloading percent is amount offloaded to the cpu
-    
+    print(f"strategy_prediction gpu_est: {gpu_estimator}")
+
     tot_energy = 0
     tot_latency = 0
     num_hidden_layers = model.num_hidden_layers
@@ -200,6 +201,7 @@ def get_bytes_to_store(batch_size):
 
 def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, layer_type="MHA"):
     #layer type determines the actual recomputation time + compute layer time
+    print(f"layer_prediction gpu_est: {gpu_estimator}")
     layer_calc_time, layer_calc_energy = layer_calc_pred(opt_config, batch_size, hardware_config, gpu_estimator, layer_type)
   
     if is_load_store == 0:
@@ -215,9 +217,10 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
         # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
-        transfer_energy, transfer_lat = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
-        first_half_latency = max(pinned_latency, transfer_lat)
-        recomp_energy, recomp_latency = (0,0)
+        transfer_energy, transfer_latency = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
+        first_half_latency = max(pinned_latency, transfer_latency)
+        recomp_energy = 0
+        recomp_latency = 0
         if layer_type == "MHA":
             recomp_energy, recomp_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
         second_single_dir = is_load_store == 1
@@ -249,6 +252,7 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
     return 0, 3.626 * math.log10(bytes) + 26.13 
 
 def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len, gpu_estimator, hardware_config):
+    print(f"recomp_calc_pred gpu_estimator: {gpu_estimator}")
     # estimator: op
     # FlashAttention: ['flashattention_v2']
     # elementWise   : ['pointwise_mul', 'pointwise_add', 'scalar_mul', 'scalar_add', 'typecast_to_fp32', 'typecast_to_bf16', 'relu', 'gelu', 'silu', 'tanh', 'sigmoid', 'unspecified_activation', 'unspecified_tensor', 'unspecified_scalar']
@@ -459,6 +463,6 @@ if __name__ == "__main__":
                         dvfs_supply_voltage_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
                         dvfs_idle_power_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
                         lut_folder_abs_path="/home/akleang/akleang/energaizer-ispass26-artifact/database/data")
-    print("got gpu_est")
+    print(f"gpu_est: {gpu_estimator}")
     disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, gpu_estimator, args.save)
 
