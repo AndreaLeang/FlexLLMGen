@@ -286,7 +286,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     
     return tot_energy, tot_lat
 
-def layer_calc_pred(opt_config, batch_size, hardware_config, layer_type="MHA"):
+def layer_calc_pred(opt_config, batch_size, hardware_config, gpu_estimator, layer_type="MHA"):\
     #input: 
     #output: 
     #MLP: 
@@ -424,5 +424,6 @@ if __name__ == "__main__":
                         dvfs_supply_voltage_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
                         dvfs_idle_power_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
                         lut_folder_abs_path="/home/akleang/akleang/energaizer-ispass26-artifact/database/data")
+    print("got gpu_est")
     disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, gpu_estimator, args.save)
 
