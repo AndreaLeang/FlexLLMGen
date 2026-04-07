@@ -310,10 +310,11 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         all_query_types.append(copy_2_query_type)
 
     #TODO: verify target frequency
-    target_freq = 201
+    target_freq = 1305
     tot_lat = 0
     tot_energy = 0
     for each_ind in range(len(all_queries)):
+        print(f"each_ind: {each_ind}")
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
         tot_lat += latency
         tot_energy += energy
