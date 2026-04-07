@@ -126,10 +126,8 @@ def get_batch_sizes(num_of_prompts):
         cur_num_batches //= 2
     return possible_batch_sizes
 
-
 def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator):
     #offloading percent is amount offloaded to the cpu
-    print(f"strategy_prediction gpu_est: {gpu_estimator}")
 
     tot_energy = 0
     tot_latency = 0
@@ -201,7 +199,6 @@ def get_bytes_to_store(batch_size):
 
 def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, layer_type="MHA"):
     #layer type determines the actual recomputation time + compute layer time
-    print(f"layer_prediction gpu_est: {gpu_estimator}")
     layer_calc_time, layer_calc_energy = layer_calc_pred(opt_config, batch_size, hardware_config, gpu_estimator, layer_type)
   
     if is_load_store == 0:
@@ -252,7 +249,6 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
     return 0, 3.626 * math.log10(bytes) + 26.13 
 
 def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len, gpu_estimator, hardware_config):
-    print(f"recomp_calc_pred gpu_estimator: {gpu_estimator}")
     # estimator: op
     # FlashAttention: ['flashattention_v2']
     # elementWise   : ['pointwise_mul', 'pointwise_add', 'scalar_mul', 'scalar_add', 'typecast_to_fp32', 'typecast_to_bf16', 'relu', 'gelu', 'silu', 'tanh', 'sigmoid', 'unspecified_activation', 'unspecified_tensor', 'unspecified_scalar']
@@ -317,7 +313,6 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     target_freq = 201
     tot_lat = 0
     tot_energy = 0
-    print(gpu_estimator)
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
         tot_lat += latency
@@ -463,6 +458,5 @@ if __name__ == "__main__":
                         dvfs_supply_voltage_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
                         dvfs_idle_power_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
                         lut_folder_abs_path="/home/akleang/akleang/energaizer-ispass26-artifact/database/data")
-    print(f"gpu_est: {gpu_estimator}")
-    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, gpu_estimator, args.save)
+    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, gpu_estimator)
 
