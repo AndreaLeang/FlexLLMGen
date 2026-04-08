@@ -280,7 +280,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         all_query_types.append(linear_query_type)
     
     reshape_query = {
-        'dim ': batch_size*opt_config.n_head,
+        'dim': batch_size*opt_config.n_head,
         'op': 'unspecified_tensor',
         'prec': 'bf16',
     }
@@ -290,7 +290,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         all_query_types.append(reshape_query_type)
   
     copy_1_query = {
-        'dim ': recomp_len,
+        'dim': recomp_len,
         'op': 'unspecified_tensor',
         'prec': 'bf16',
     }
@@ -300,7 +300,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         all_query_types.append(copy_1_query_type)
     
     copy_2_query = {
-        'dim ': prompt_len + cur_gen_len - recomp_len,
+        'dim': prompt_len + cur_gen_len - recomp_len,
         'op': 'unspecified_tensor',
         'prec': 'bf16',
     }
