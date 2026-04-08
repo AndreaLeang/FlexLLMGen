@@ -269,10 +269,11 @@ class TorchDevice:
         if donate[1]: attention_mask.delete()
 
         # token embedding
+        print(f"input token_ids: {token_ids.shape}")
+        print(f"input w_token: {w_token.shape}")
         token_embed = F.embedding(token_ids, w_token.data, pad_token_id)
 
         # pos embedding
-        print(f"input w_token: {w_token.shape}")
         positions = torch.cumsum(mask, dim=1).int() * mask + 1
         print(f"input positions: {positions.shape}")
 
@@ -741,6 +742,7 @@ class TorchDevice:
             wo = wo.device.decompress(wo)
 
         b, s, h = inputs.shape
+        print(f"mlp input: {inputs.shape}")
 
         out = F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data)
         out = F.linear(out, wi.data, bias=bi.data)
