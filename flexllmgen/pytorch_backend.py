@@ -274,6 +274,7 @@ class TorchDevice:
         token_embed = F.embedding(token_ids, w_token.data, pad_token_id)
 
         # pos embedding
+        print(f"input mask: {mask.shape}")
         positions = torch.cumsum(mask, dim=1).int() * mask + 1
         print(f"input positions: {positions.shape}")
 
