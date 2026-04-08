@@ -258,6 +258,7 @@ class LLMPowerBench:
             stop=None,
         )
         self.model.set_task(task)
+        self.model.execute_gen_len = self.gen_len
       
         # accumulators — one per phase
         acc_prefill = _PhaseAccum("prefill",    prompt_len)
@@ -316,6 +317,7 @@ class LLMPowerBench:
           
             # Power Caputure for entire inference
             if num_gpu_batches == 1:
+                print(f"self.model.execute_gen_len: {self.model.execute_gen_len}")
                 self.model.generation_loop_overlap_single_batch()
             else:
                 self.model.generation_loop_overlap_multi_batch()
