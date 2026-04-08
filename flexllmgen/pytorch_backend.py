@@ -272,6 +272,8 @@ class TorchDevice:
         token_embed = F.embedding(token_ids, w_token.data, pad_token_id)
 
         # pos embedding
+        print(f"input w_token: {w_token.shape}")
+        print(f"input positions before: {positions.shape}")
         positions = torch.cumsum(mask, dim=1).int() * mask + 1
 
         # cut positions if `past_key_values_length` is > 0
@@ -280,6 +282,10 @@ class TorchDevice:
 
         pos_embed = F.embedding(positions, w_pos.data)
 
+        print(f"input positions after: {positions.shape}")
+        print(f"input mask: {mask.shape}")
+        print(f"input token_embed: {token_embed.shape}")
+        print(f"input pos_embed: {pos_embed.shape}")
         data = token_embed + pos_embed
         return TorchTensor.create_from_torch(data, self)
 
@@ -290,11 +296,15 @@ class TorchDevice:
             w_token = w_token.device.decompress(w_token)
 
         b, s, h = inputs.shape
-
+        print(f"output inputs: {inputs.shape}")
+        print(f"w_ln inputs: {w_ln.shape}")
+                             
         hidden = F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data)
         if donate[0]: inputs.delete()
 
         # output embedding
+        print(f"output hidden: {hidden.shape}")
+        print(f"output w_token: {w_token.shape}")
         logits = F.linear(hidden, w_token.data)
         last_token_logits = logits[:,-1,:]
 
@@ -303,6 +313,8 @@ class TorchDevice:
             ids = torch.multinomial(probs, num_samples=1)
         else:
             ids = last_token_logits.argmax(dim=1, keepdim=True)
+            print(f"output last_token_logits: {last_token_logits.shape}")
+            print(f"output ids: {ids.shape}")
         return TorchTensor.create_from_torch(ids, self)
 
     def init_cache_one_gpu_batch(self, config, task, policy):
@@ -729,11 +741,17 @@ class TorchDevice:
             wo = wo.device.decompress(wo)
 
         b, s, h = inputs.shape
+        print(f"mlp inputs shape: {inputs.shape}")
+        print(f"mlp w_ln: {w_ln.shape}")
+        
 
         out = F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data)
+        print(f"mlp out: {out.shape}")
         out = F.linear(out, wi.data, bias=bi.data)
+        print(f"mlp wi: {out.shape}")
         F.relu(out, inplace=True)
         out = F.linear(out, wo.data, bias=bo.data)
+        print(f"mlp wi: {wo.shape}")
 
         out.add_(inputs.data)
         if donate[0]: inputs.delete()
