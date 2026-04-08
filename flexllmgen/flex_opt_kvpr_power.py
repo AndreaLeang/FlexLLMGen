@@ -167,6 +167,8 @@ class InputEmbed:
         else:
             (w_token, _), (w_pos, _) = weight_read_buf.val
 
+        print(f"opt_input_embed w_pos: {w_pos}")
+        print(f"opt_input_embed w_pos.shape: {w_pos.shape}")
         h = self.compute.opt_input_embed(h, mask,
             w_token, w_pos, self.config.pad_token_id, donate)
         if not repeating:
