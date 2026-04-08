@@ -235,7 +235,9 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
 
 def pinned_pred(bytes, hardware_config):
     #TODO: energy
-    return 0, 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7
+    latency_us = 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7
+    latency = latency_us / 1000000.0
+    return 0, latency
 
 
 # def recomp_prep_pred(prompt_len, recomp_len, hardware_config):
@@ -247,10 +249,14 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
     #TODO: energy
     if bytes == 0:
         return 0,0
+    bytes = bytes / 1000000000.0 # bytes --> GB
     if single_directional:
-        return 0, 1.415 * math.log10(bytes) + 13.38
+        bandwidth = 1.415 * math.log10(bytes) + 13.38
+    else: 
+        bandwidth = 3.626 * math.log10(bytes) + 26.13 
+    latency = bytes/bandwidth
     
-    return 0, 3.626 * math.log10(bytes) + 26.13 
+    return 0, latency
 
 def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len, gpu_estimator, hardware_config):
     # estimator: op
@@ -324,45 +330,129 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     
     return tot_energy, tot_lat
 
-def layer_calc_pred(opt_config, batch_size, hardware_config, gpu_estimator, layer_type="MHA"):\
+def layer_calc_pred(opt_config, batch_size, hardware_config, gpu_estimator, layer_type="MHA"):
+    all_queries = []
+    all_query_types = []
+  
     #input: 
     #output: 
     #MLP: 
   
-    #MHA: 
-    # W_k, w_q, w_v, w_out = [opt_config.hidden_size, opt_config.hidden_size]
-    # 1x F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data)
-    # inputs.data: [batch_size, 1, opt_config.hidden_size]
-    # 3x F.linear(hidden, w_q.data, bias=b_q.data)
-    # xAT+b → [batch_size, 1, opt_config.hidden_size]*[4096, 4096]T + [opt_config.hidden_size]
-    # 3x REshape: (batch_size, n_head, 1, head_dim) → (b*n_head, 1, head_dim) 
-    
-    # n_head*head_dim = opt_config.hidden_size
-    # Cur_seq_len = prompt_len + cur_gen_len
-    # _attention_value:
-    # torch.bmm(q, k): [batch_size * num_head, 1, head_dim] * [batch_size * num_head, head_dim, cur_seq_len]
-    # torch.where() → elementwise [batch_size, 1, 1, cur_seq_len] skim over [batch_size, num_head, 1, cur_seq_len]
-    # (no gpu op) view atten_weights → [batch_size*num_head, 1, cur_seq_len]
-    # Torch.softmax on dim=2 for  [batch_size*num_head, 1, cur_seq_len]
-    
-    
-    # torch.bmm(attn_weights, v).view(b, n_head, tgt_s, head_dim)
-    # [batch_size*n_head, 1, cur_seq_len] * [batch_size * n_head, cur_seq_len, head_dim]
-    
-    # Back to MHA: 
-    # (b, 1, h)
-    # (no gpu op) Value (rtn from MHA) = value.transpose(1, 2).view(b, tgt_s, h)
-    # (b, n_head, 1, head_dim) → (b, 1,  n_head, head_dim) → (b, 1, opt_config.hidden_size)
-    # value = F.linear(value, w_out.data, bias=b_out.data)
-    # xAT+b → [b, 1, opt_config.hidden_size]*[opt_config.hidden_size, opt_config.hidden_size]T + [opt_config.hidden_size]
-    # Add: value.add_(inputs.data)
-    # [batch_size, 1, opt_config.hidden_size] + [batch_size, 1, opt_config.hidden_size]
-
-    
-    
+    #MHA:
+    if layer_type == "MHA":
+        hidden_size = opt_config.hidden_size
+        num_head = opt_config.n_head
+        head_dim = hidden_size // num_head
+        cur_seq_len = prompt_len + gen_len
+      
+        layer_norm_query = {'batch': batch_size,
+                             'dim': 1, 
+                             'prec': 'bf16'}
+        layer_norm_query_type = ('layernorm')
+        all_queries.append(layer_norm_query)
+        all_query_types.append(layer_norm_query_type)
+      
+        linear_query = {
+        	'batch': batch_size,
+        	'dimM' : 1,
+        	'dimN' : hidden_size,
+        	'dimK' : hidden_size,
+        	'precM': 'bf16',
+        	'precA': 'bf16',
+        	'useTensorCore':  True
+        }
+        linear_query_type = ('gemm', 'tc', 'bf16')
+        for i in range(3):
+            all_queries.append(linear_query)
+            all_query_types.append(linear_query_type)
+      
+        # 3x REshape: (batch_size, n_head, 1, head_dim) → (b*n_head, 1, head_dim) 
+        reshape_query = {
+            'dim': batch_size*num_head,
+            'op': 'unspecified_tensor',
+            'prec': 'bf16',
+        }
+        reshape_query_type = ('elementwise')
+        for i in range(3):
+            all_queries.append(reshape_query)
+            all_query_types.append(reshape_query_type)
+          
+        bmm_query = {
+        	'batch': batch_size*num_head,
+        	'dimM' : 1,
+        	'dimN' : head_dim,
+        	'dimK' : cur_seq_len,
+        	'precM': 'bf16',
+        	'precA': 'bf16',
+        	'useTensorCore':  True
+        }
+        bmm_query_type = ('gemm', 'tc', 'bf16')
+        all_queries.append(bmm_query)
+        all_query_types.append(bmm_query_type)
+          
+        where_query = {
+            'dim': num_head,
+            'op': 'unspecified_tensor',
+            'prec': 'bf16',
+        }
+        where_query_type = ('elementwise')
+        all_queries.append(where_query)
+        all_query_types.append(where_query_type)
+      
+        softmax_query = {'batch': batch_size*num_head,
+                         'dim': cur_seq_len, 
+                         'prec': 'bf16'}
+        softmax_query_type = ('softmax')
+        all_queries.append(softmax_query)
+        all_query_types.append(softmax_query_type)
+        
+        bmm_query = {
+        	'batch': batch_size*num_head,
+        	'dimM' : 1,
+        	'dimN' : cur_seq_len,
+        	'dimK' : head_dim,
+        	'precM': 'bf16',
+        	'precA': 'bf16',
+        	'useTensorCore':  True
+        }
+        bmm_query_type = ('gemm', 'tc', 'bf16')
+        all_queries.append(bmm_query)
+        all_query_types.append(bmm_query_type)
+        
+        linear_query = {
+        	'batch': batch_size,
+        	'dimM' : 1,
+        	'dimN' : hidden_size,
+        	'dimK' : hidden_size,
+        	'precM': 'bf16',
+        	'precA': 'bf16',
+        	'useTensorCore':  True
+        }
+        linear_query_type = ('gemm', 'tc', 'bf16')
+        all_queries.append(linear_query)
+        all_query_types.append(linear_query_type)
+          
+        # [batch_size, 1, opt_config.hidden_size] + [batch_size, 1, opt_config.hidden_size]
+        # testing dim as tuple
+        add_query = {
+            'dim': (batch_size, 1, hidden_size),
+            'op': 'pointwise_add',
+            'prec': 'bf16',
+        }
+        add_query_type = ('elementwise')
+        all_queries.append(add_query)
+        all_query_types.append(add_query_type)
   
-    #TODO
-    return 0, 0
+    #TODO: verify target frequency
+    target_freq = 1305
+    tot_lat = 0
+    tot_energy = 0
+    for each_ind in range(len(all_queries)):
+        latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
+        tot_lat += latency
+        tot_energy += energy
+    
+    return tot_energy, tot_lat
 
 
 def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, gpu_estimator, var_to_min="latency"):
