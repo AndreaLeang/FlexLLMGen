@@ -149,8 +149,12 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
   
     for cur_gen_len in range(1, gen_len+1):
         if num_batches == 1:
-            tot_MHA_energy, tot_MHA_latency = num_hidden_layers*(layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA"))
-            tot_MLP_energy, tot_MLP_latency = num_hidden_layers*(layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP"))
+            tot_MHA_energy, tot_MHA_latency =layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
+            tot_MHA_energy *= num_hidden_layers
+            tot_MHA_latency *= num_hidden_layers
+            tot_MLP_energy, tot_MLP_latency = layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+            tot_MLP_energy *= num_hidden_layers
+            tot_MLP_latency *= num_hidden_layers
         else:
             tot_MHA_energy, tot_MHA_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
             single_store_MHA_energy, single_store_MHA_latency = layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
