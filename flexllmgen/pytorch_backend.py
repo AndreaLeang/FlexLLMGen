@@ -280,7 +280,9 @@ class TorchDevice:
         # cut positions if `past_key_values_length` is > 0
         past_key_values_length = mask.shape[1] - token_ids.shape[1]
         positions = positions[:, past_key_values_length:]
-
+        print(f"input past_key_values_length: {past_key_values_length}")
+        print(f"input positions before: {positions.shape}")
+        print(f"input w_pos: {w_pos.shape}")
         pos_embed = F.embedding(positions, w_pos.data)
 
         print(f"input positions after: {positions.shape}")
