@@ -743,15 +743,22 @@ class TorchDevice:
         b, s, h = inputs.shape
         print(f"mlp inputs shape: {inputs.shape}")
         print(f"mlp w_ln: {w_ln.shape}")
+        print(f"mlp b_ln: {b_ln.shape}")
         
 
         out = F.layer_norm(inputs.data, (h,), weight=w_ln.data, bias=b_ln.data)
         print(f"mlp out: {out.shape}")
+        print(f"mlp wi: {wi.shape}")
+        print(f"mlp bi: {bi.shape}")
         out = F.linear(out, wi.data, bias=bi.data)
-        print(f"mlp wi: {out.shape}")
+        print(f"mlp out: {out.shape}")
         F.relu(out, inplace=True)
+        print(f"mlp out: {out.shape}")
+        print(f"mlp wo: {wo.shape}")
+        print(f"mlp bo: {bo.shape}")
         out = F.linear(out, wo.data, bias=bo.data)
-        print(f"mlp wi: {wo.shape}")
+        print(f"mlp out: {out.shape}")
+        
 
         out.add_(inputs.data)
         if donate[0]: inputs.delete()
