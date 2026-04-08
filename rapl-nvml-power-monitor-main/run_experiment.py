@@ -106,7 +106,7 @@ def main():
     parser.add_argument("--off-per", type=int, default=0)
     parser.add_argument("--recomp-per", type=int, default=0)
 
-    parser.add_argument("--layer-focus", action=store_true)
+    parser.add_argument("--layer-focus", action="store_true")
 
 
 
