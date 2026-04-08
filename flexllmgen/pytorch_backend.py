@@ -273,8 +273,8 @@ class TorchDevice:
 
         # pos embedding
         print(f"input w_token: {w_token.shape}")
-        print(f"input positions before: {positions.shape}")
         positions = torch.cumsum(mask, dim=1).int() * mask + 1
+        print(f"input positions: {positions.shape}")
 
         # cut positions if `past_key_values_length` is > 0
         past_key_values_length = mask.shape[1] - token_ids.shape[1]
