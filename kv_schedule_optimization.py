@@ -284,7 +284,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         'op': 'unspecified_tensor',
         'prec': 'bf16',
     }
-    reshape_query_type = ('unspecified_tensor')
+    reshape_query_type = ('elementwise')
     for i in range(4):
         all_queries.append(reshape_query)
         all_query_types.append(reshape_query_type)
@@ -294,7 +294,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         'op': 'unspecified_tensor',
         'prec': 'bf16',
     }
-    copy_1_query_type = ('unspecified_tensor')
+    copy_1_query_type = ('elementwise')
     for i in range(2):
         all_queries.append(copy_1_query)
         all_query_types.append(copy_1_query_type)
@@ -304,7 +304,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         'op': 'unspecified_tensor',
         'prec': 'bf16',
     }
-    copy_2_query_type = ('unspecified_tensor')
+    copy_2_query_type = ('elementwise')
     for i in range(2):
         all_queries.append(copy_2_query)
         all_query_types.append(copy_2_query_type)
