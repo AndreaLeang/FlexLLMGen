@@ -407,7 +407,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         print(f"layer calc: output")
         #output:  
         layer_norm_query = {'batch': batch_size,
-                             'dim': hidden_size, 
+                             'dim': prev_not_seen*hidden_size, 
                              'prec': 'bf16'}
         layer_norm_query_type = ('layernorm')
         all_queries.append(layer_norm_query)
@@ -441,7 +441,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         ffn_embed_dim = opt_config.ffn_embed_dim
       
         layer_norm_query = {'batch': batch_size,
-                             'dim': hidden_size, 
+                             'dim': prev_not_seen*hidden_size, 
                              'prec': 'bf16'}
         layer_norm_query_type = ('layernorm')
         all_queries.append(layer_norm_query)
@@ -498,7 +498,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         head_dim = hidden_size // num_head
       
         layer_norm_query = {'batch': batch_size,
-                             'dim': 1, 
+                             'dim': 1*hidden_size, 
                              'prec': 'bf16'}
         layer_norm_query_type = ('layernorm')
         all_queries.append(layer_norm_query)
@@ -520,7 +520,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
       
         # 3x REshape: (batch_size, n_head, 1, head_dim) → (b*n_head, 1, head_dim) 
         reshape_query = {
-            'dim': batch_size*num_head,
+            'dim': batch_size*num_head*1*head_dim,
             'op': 'unspecified_tensor',
             'prec': 'bf16',
         }
@@ -541,7 +541,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         bmm_query_type = ('gemm', 'tc', 'bf16')
         all_queries.append(bmm_query)
         all_query_types.append(bmm_query_type)
-          
+
+        # torch.where() → elementwise [batch_size, 1, 1, cur_seq_len] skim over [batch_size, num_head, 1, cur_seq_len]
         where_query = {
             'dim': num_head,
             'op': 'unspecified_tensor',
@@ -585,9 +586,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         all_query_types.append(linear_query_type)
           
         # [batch_size, 1, opt_config.hidden_size] + [batch_size, 1, opt_config.hidden_size]
-        # testing dim as tuple
         add_query = {
-            'dim': (batch_size, 1, hidden_size),
+            'dim': batch_size*1*hidden_size,
             'op': 'pointwise_add',
             'prec': 'bf16',
         }
