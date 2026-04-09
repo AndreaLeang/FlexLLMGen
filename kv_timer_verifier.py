@@ -62,13 +62,13 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         event = data['traceEvents'][event_idx]
 
         if event['name'] == 'pytorch_backend.py(142): smart_copy': 
+            print("found smart copy")
             for interval in load_intervals:
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                     if interval[0] not in pinned_smart_copy_intervals:
                         pinned_smart_copy_intervals[interval[0]] = []
                     pinned_smart_copy_intervals[interval[0]].append((event['ts'], event['ts'] + event['dur']))
                     break
-    print(f"pinned_smart_copy_intervals: {len(pinned_smart_copy_intervals.keys())}")
     # Connect Memcpyasync bytes to each smart copy
 
     # Connect pinned to smart copy & record both the time for pinned & bytes
