@@ -147,7 +147,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     output_energy += no_store_output_energy
     output_latency += no_store_output_latency
   
-    for cur_gen_len in range(1, gen_len+1):
+    for cur_gen_len in range(gen_len):
         if num_batches == 1:
             tot_MHA_energy, tot_MHA_latency =layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
             tot_MHA_energy *= num_hidden_layers
@@ -203,7 +203,7 @@ def get_bytes_to_store(batch_size):
 
 def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, layer_type="MHA"):
     #layer type determines the actual recomputation time + compute layer time
-    layer_calc_time, layer_calc_energy = layer_calc_pred(opt_config, batch_size, hardware_config, gpu_estimator, layer_type)
+    layer_calc_time, layer_calc_energy = layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type)
   
     if is_load_store == 0:
         #no load or store, just the layer computations
@@ -330,20 +330,125 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     
     return tot_energy, tot_lat
 
-def layer_calc_pred(opt_config, batch_size, hardware_config, gpu_estimator, layer_type="MHA"):
+def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type="MHA"):
     all_queries = []
     all_query_types = []
+
+    hidden_size = opt_config.hidden_size
+    cur_seq_len = prompt_len + gen_len
   
     #input: 
-    #output: 
-    #MLP: 
+    if layer_type == "input":
+        prev_not_seen = 1
+        if gen_len == 0:
+            prev_not_seen = prompt_len
+        
+        embed_query = {
+            'dim': batch_size*prev_not_seen,
+            'op': 'unspecified_tensor',
+            'prec': 'bf16',
+        }
+        embed_query_type = ('elementwise')
+        all_queries.append(embed_query)
+        all_query_types.append(embed_query_type)
+      
+        cumsum_query = {
+            'dim': batch_size*cur_seq_len,
+            'op': 'unspecified_tensor',
+            'prec': 'bf16',
+        }
+        cumsum_query_type = ('elementwise')
+        all_queries.append(cumsum_query)
+        all_query_types.append(cumsum_query_type)
+        int_query = {
+            'dim': batch_size*cur_seq_len,
+            'op': 'typecast_to_bf16',
+            'prec': 'bf16',
+        }
+        int_query_type = ('elementwise')
+        all_queries.append(int_query)
+        all_query_types.append(int_query_type)
+        matMul_element_query = {
+            'dim': batch_size*cur_seq_len,
+            'op': 'pointwise_mul',
+            'prec': 'bf16',
+        }
+        matMul_element_query_type = ('elementwise')
+        all_queries.append(matMul_element_query)
+        all_query_types.append(matMul_element_query_type)
+        add_scal_query = {
+            'dim': batch_size*cur_seq_len,
+            'op': 'scalar_add',
+            'prec': 'bf16',
+        }
+        add_scal_query_type = ('elementwise')
+        all_queries.append(add_scal_query)
+        all_query_types.append(add_scal_query_type)
+
+        embed_query = {
+            'dim': batch_size*prev_not_seen,
+            'op': 'unspecified_tensor',
+            'prec': 'bf16',
+        }
+        embed_query_type = ('elementwise')
+        all_queries.append(embed_query)
+        all_query_types.append(embed_query_type)
+      
+        data = token_embed + pos_embed
+          Add → [batch_size, prev_not_seen, hidden_size] add [batch_size, prev_not_seen, hidden_size]
+        add_mat_query = {
+            'dim': batch_size*prev_not_seen*hidden_size,
+            'op': 'pointwise_add',
+            'prec': 'bf16',
+        }
+        add_mat_query_type = ('elementwise')
+        all_queries.append(add_mat_query)
+        all_query_types.append(add_mat_query_type)
+
+    elif layer_type == "output":
+        #output:  
+        layer_norm_query = {'batch': batch_size,
+                             'dim': hidden_size, 
+                             'prec': 'bf16'}
+        layer_norm_query_type = ('layernorm')
+        all_queries.append(layer_norm_query)
+        all_query_types.append(layer_norm_query_type)
+      
+        
+        logits = F.linear(hidden, w_token.data)
+          Matmul [batch_size, prev_not_seen, hidden_size], [opt_config.vocab_size, hidden_size]
+        linear_query = {
+        	'batch': batch_size,
+        	'dimM' : prev_not_seen,
+        	'dimN' : hidden_size,
+        	'dimK' : opt_config.vocab_size,
+        	'precM': 'bf16',
+        	'precA': 'bf16',
+        	'useTensorCore':  True
+        }
+        linear_query_type = ('gemm', 'tc', 'bf16')
+        all_queries.append(linear_query)
+        all_query_types.append(linear_query_type)
+
+        argmax_query = {
+            'dim': batch_size*opt_config.vocab_size,
+            'op': 'scalar_add',
+            'prec': 'bf16',
+        }
+        argmax_query_type = ('elementwise')
+        all_queries.append(argmax_query)
+        all_query_types.append(argmax_query_type)
+
+        
+
+    elif layer_type == "MLP":
+        #MLP: 
+        return 0, 0
   
-    #MHA:
-    if layer_type == "MHA":
-        hidden_size = opt_config.hidden_size
+    
+    elif layer_type == "MHA":
         num_head = opt_config.n_head
         head_dim = hidden_size // num_head
-        cur_seq_len = prompt_len + gen_len
       
         layer_norm_query = {'batch': batch_size,
                              'dim': 1, 
@@ -442,6 +547,9 @@ def layer_calc_pred(opt_config, batch_size, hardware_config, gpu_estimator, laye
         add_query_type = ('elementwise')
         all_queries.append(add_query)
         all_query_types.append(add_query_type)
+    else: 
+        print(f"Layer type {layer_type} not supported")
+        return 0, 0
   
     #TODO: verify target frequency
     target_freq = 1305
