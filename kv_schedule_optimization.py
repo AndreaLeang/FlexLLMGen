@@ -362,7 +362,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         all_query_types.append(cumsum_query_type)
         int_query = {
             'dim': batch_size*cur_seq_len,
-            'op': 'typecast_to_bf16',
+            'op': 'pointwise_add',
             'prec': 'bf16',
         }
         int_query_type = ('elementwise')
@@ -438,7 +438,58 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
 
     elif layer_type == "MLP":
         #MLP: 
-        return 0, 0
+        ffn_embed_dim = opt_config.ffn_embed_dim
+      
+        layer_norm_query = {'batch': batch_size,
+                             'dim': hidden_size, 
+                             'prec': 'bf16'}
+        layer_norm_query_type = ('layernorm')
+        all_queries.append(layer_norm_query)
+        all_query_types.append(layer_norm_query_type)
+
+        linear_query = {
+        	'batch': batch_size,
+        	'dimM' : prev_not_seen,
+        	'dimN' : hidden_size,
+        	'dimK' : ffn_embed_dim,
+        	'precM': 'bf16',
+        	'precA': 'bf16',
+        	'useTensorCore':  True
+        }
+        linear_query_type = ('gemm', 'tc', 'bf16')
+        all_queries.append(linear_query)
+        all_query_types.append(linear_query_type)
+    
+        relu_query = {
+            'dim': batch_size*prev_not_seen*ffn_embed_dim,
+            'op': 'relu',
+            'prec': 'bf16',
+        }
+        relu_query_type = ('elementwise')
+        all_queries.append(relu_query)
+        all_query_types.append(relu_query_type)
+      
+        linear_query = {
+        	'batch': batch_size,
+        	'dimM' : prev_not_seen,
+        	'dimN' : ffn_embed_dim,
+        	'dimK' : hidden_size,
+        	'precM': 'bf16',
+        	'precA': 'bf16',
+        	'useTensorCore':  True
+        }
+        linear_query_type = ('gemm', 'tc', 'bf16')
+        all_queries.append(linear_query)
+        all_query_types.append(linear_query_type)
+      
+        add_query = {
+            'dim': batch_size*prev_not_seen*ffn_embed_dim,
+            'op': 'pointwise_add',
+            'prec': 'bf16',
+        }
+        add_query_type = ('elementwise')
+        all_queries.append(add_query)
+        all_query_types.append(add_query_type)
   
     
     elif layer_type == "MHA":
