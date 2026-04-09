@@ -77,7 +77,6 @@ class TorchTensor:
     def __init__(self, shape, dtype, data, device, name=None):
         if isinstance(data, torch.Tensor):
             assert data.device == device.dev, "data device is not equal to device dev"
-
         self.shape = shape
         self.dtype = dtype
         self.data = data
@@ -85,7 +84,6 @@ class TorchTensor:
 
         # Whether delete the file when the tensor is deleted
         self.delete_file = True
-
         self.name = name or TorchTensor.next_name()
 
     @property
@@ -117,13 +115,11 @@ class TorchTensor:
                 general_copy(self, None, tmp, None)
             else:
                 self.data.copy_(torch.from_numpy(np_array))
-
     def load_from_np_file(self, filename):
         if self.device.device_type == DeviceType.DISK:
             shutil.copy(filename, self.data)
         else:
             self.load_from_np(np.load(filename))
-
     def copy(self, dst, src_indices=None, kv_copy: int = 0, KVLoadTimer=None, KVStoreTimer=None, repeating=False):
         if src_indices:
             assert all(x.step is None for x in src_indices), "src indices have step"
@@ -136,14 +132,13 @@ class TorchTensor:
             ret = dst.allocate(shape, torch_dtype_to_np_dtype[self.dtype], self.data[2])
         else:
             ret = dst.allocate(shape, torch_dtype_to_np_dtype[self.dtype])
-
         if repeating: 
             new_dst = self.device
         else:
             new_dst = None
         general_copy(ret, new_dst, self, src_indices, kv_copy, KVLoadTimer, KVStoreTimer)
         return ret
-
+        
     def smart_copy(self, dst, src_indices=None, kv_copy: int = 0, KVLoadTimer=None, KVStoreTimer=None):
         if self.device == dst and src_indices==None:
             return self, False
@@ -165,7 +160,6 @@ class TorchTensor:
     def __str__(self):
         return (f"TorchTensor(shape={self.shape}, dtype={str(self.dtype)}, "
                 f"device={self.device.name if self.device else None})")
-
 
 class TorchDevice:
     """Wrap tensor and computation APIs of a single CPU or GPU."""
@@ -228,7 +222,6 @@ class TorchDevice:
                 updated_shape = (max_seq_len, b * n_head * self.len_cpu // (self.len_gpu + self.len_cpu), head_dim)
                 k_cache = self.allocate(updated_shape, np.float32, pin_memory=False)
                 v_cache = self.allocate(updated_shape, np.float32, pin_memory=False)
-
                 # # regular
                 # k_cache = self.allocate(shape, np.float32, pin_memory=False)
                 # v_cache = self.allocate(shape, np.float32, pin_memory=False)
@@ -236,20 +229,16 @@ class TorchDevice:
         else:
             self.compressed_device.init_attention_compute_workspace(
                 config, task, policy)
-
     def next_attention_compute_workspace(self):
         self.workspace_pt = (self.workspace_pt + 1) % len(
             self.attention_compute_workspace)
         return self.attention_compute_workspace[self.workspace_pt]
-
     def del_attention_compute_workspace(self):
         self.attention_compute_workspace = None
-
     def gen_attention_mask(self, token_ids, pad_token_id, donate):
         data = token_ids.data.ne(pad_token_id)
         if donate[0]: token_ids.delete()
         return TorchTensor.create_from_torch(data, self)
-
     def extend_attention_mask(self, attention_mask, donate):
         bs = attention_mask.shape[0]
         data = torch.concat((attention_mask.data,
@@ -277,6 +266,7 @@ class TorchDevice:
         # cut positions if `past_key_values_length` is > 0
         past_key_values_length = mask.shape[1] - token_ids.shape[1]
         positions = positions[:, past_key_values_length:]
+        
         pos_embed = F.embedding(positions, w_pos.data)
 
         data = token_embed + pos_embed
@@ -372,7 +362,6 @@ class TorchDevice:
             w_k = w_k.device.decompress(w_k)
             w_v = w_v.device.decompress(w_v)
             w_out = w_out.device.decompress(w_out)
-
         b, s, h = inputs.shape
         head_dim = h // n_head
         scaling = head_dim ** -0.5
@@ -413,25 +402,26 @@ class TorchDevice:
         # shape: (b, s, h)
         value = value.transpose(1, 2).reshape(b, s, h)
         value = F.linear(value, w_out.data, bias=b_out.data)
-
         value.add_(inputs.data)
 
         if donate[0]: inputs.delete()
         if donate[1]: attention_mask.delete()
-
         # (s, b * n_head, head_dim)
         k = k.permute(2, 0, 1)
         v = v.permute(1, 0, 2)
-
         if compress_cache:
             k = self.compressed_device.compress(k, comp_config)
             v = self.compressed_device.compress(v, comp_config)
         else:
             k = TorchTensor.create_from_torch(k, self)
             v = TorchTensor.create_from_torch(v, self)
-
         return TorchTensor.create_from_torch(value, self), k, v
 
+
+
+
+
+    
     def mha_gen(self, inputs, attention_mask, w_q, b_q, w_k, b_k, w_v, b_v,
                 w_out, b_out, w_ln, b_ln, n_head, k_cache, v_cache, donate,
                 attn_sparsity, compress_cache, comp_config, recompute_len=0):
@@ -692,6 +682,7 @@ class TorchDevice:
         v_gpu = v_gpu[:src_s, :seg, :]
         k_gpu[src_s-1:src_s, :, :] = k_new[:, :seg, :]
         v_gpu[src_s-1:src_s, :, :] = v_new[:, :seg, :]
+                
         # shape: (b * n_head, head_dim, s)
         k_gpu = k_gpu.permute(1, 2, 0)
         # shape: (b * n_head, s, head_dim)
