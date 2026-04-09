@@ -62,7 +62,6 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         event = data['traceEvents'][event_idx]
 
         if event['name'] == 'pytorch_backend.py(142): smart_copy': 
-            print("found smart copy")
             for interval in load_intervals:
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                     if interval[0] not in pinned_smart_copy_intervals:
