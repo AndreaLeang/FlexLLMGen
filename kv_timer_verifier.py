@@ -68,6 +68,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                         pinned_smart_copy_intervals[interval[0]] = []
                     pinned_smart_copy_intervals[interval[0]].append((event['ts'], event['ts'] + event['dur']))
                     break
+    print(f"pinned_smart_copy_intervals: {len(pinned_smart_copy_intervals.keys())}")
     # Connect Memcpyasync bytes to each smart copy
 
     # Connect pinned to smart copy & record both the time for pinned & bytes
@@ -106,13 +107,11 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                     load_memcpy_correlations.append(event['args']['correlation'])
                     #which smart copy is this memcpyasync connecting to?
-                    if interval[0] in pinned_smart_copy_intervals:
-                        # if this load has smart copies
-                        smart_copy_intervals = pinned_smart_copy_intervals[interval[0]]
-                        if event['ts'] >= smart_copy_intervals[0][0] and event['ts'] < smart_copy_intervals[0][1]:
-                            smart_load_cache_big_blocks[smart_copy_intervals[0][0]] = (smart_copy_intervals[0][1], event['args']['correlation'])
-                        else:
-                            smart_load_cache_big_blocks[smart_copy_intervals[1][0]] = (smart_copy_intervals[1][1], event['args']['correlation'])
+                    smart_copy_intervals = pinned_smart_copy_intervals[interval[0]]
+                    if event['ts'] >= smart_copy_intervals[0][0] and event['ts'] < smart_copy_intervals[0][1]:
+                        smart_load_cache_big_blocks[smart_copy_intervals[0][0]] = (smart_copy_intervals[0][1], event['args']['correlation'])
+                    else:
+                        smart_load_cache_big_blocks[smart_copy_intervals[1][0]] = (smart_copy_intervals[1][1], event['args']['correlation'])
 
                     if get_cpu_time:
                         total_loading_cache_time_cpu += event['dur']
