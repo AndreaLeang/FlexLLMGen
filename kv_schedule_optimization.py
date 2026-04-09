@@ -394,8 +394,6 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         all_queries.append(embed_query)
         all_query_types.append(embed_query_type)
       
-        data = token_embed + pos_embed
-          Add → [batch_size, prev_not_seen, hidden_size] add [batch_size, prev_not_seen, hidden_size]
         add_mat_query = {
             'dim': batch_size*prev_not_seen*hidden_size,
             'op': 'pointwise_add',
@@ -414,9 +412,6 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         all_queries.append(layer_norm_query)
         all_query_types.append(layer_norm_query_type)
       
-        
-        logits = F.linear(hidden, w_token.data)
-          Matmul [batch_size, prev_not_seen, hidden_size], [opt_config.vocab_size, hidden_size]
         linear_query = {
         	'batch': batch_size,
         	'dimM' : prev_not_seen,
