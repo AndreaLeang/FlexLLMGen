@@ -342,7 +342,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
   
     #input: 
     if layer_type == "input":
-        print(f"layer calc: input")
+        # print(f"layer calc: input")
         embed_query = {
             'dim': batch_size*prev_not_seen,
             'op': 'unspecified_tensor',
@@ -404,7 +404,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         all_query_types.append(add_mat_query_type)
 
     elif layer_type == "output":
-        print(f"layer calc: output")
+        # print(f"layer calc: output")
         #output:  
         layer_norm_query = {'batch': batch_size,
                              'dim': prev_not_seen*hidden_size, 
@@ -436,7 +436,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         all_query_types.append(argmax_query_type)
 
     elif layer_type == "MLP":
-        print(f"layer calc: MLP")
+        # print(f"layer calc: MLP")
         #MLP: 
         ffn_embed_dim = opt_config.ffn_embed_dim
       
@@ -493,7 +493,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
   
     
     elif layer_type == "MHA":
-        print(f"layer calc: MHA")
+        # print(f"layer calc: MHA")
         num_head = opt_config.n_head
         head_dim = hidden_size // num_head
       
