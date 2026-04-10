@@ -90,7 +90,6 @@ class CostModelConfig:
 
 def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len):
     total_available_gpu = hardware_config.gmem # Bytes
-    print(f"total_available_gpu mem (bytes): {total_available_gpu}")
     total_weight_bytes = opt_config.model_bytes() # Bytes
     num_heads = opt_config.n_head
 
@@ -113,6 +112,7 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len)
             print(f"strat: batch size: {each_batch_size}, offloading: {each_possible_offloading}")
             print(f"bytes : total_weight_bytes: {total_weight_bytes}, actual_kv_cache_bytes: {actual_kv_cache_bytes}, total_hidden_bytes: {total_hidden_bytes}")
             print(f"bytes sum: {total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes}")
+            print(f"total_available_gpu mem (bytes): {total_available_gpu}")
           
             if total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes <= total_available_gpu:
                 if each_batch_size not in feasible_strategies:
@@ -610,7 +610,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
         tot_lat += latency
         tot_energy += energy
-    print(f"layer_calc: energy: {tot_energy}, latency: {tot_lat}")
+    print(f"layer_calc: type: {layer_type}, energy: {tot_energy}, latency: {tot_lat}")
     return tot_energy, tot_lat
 
 
