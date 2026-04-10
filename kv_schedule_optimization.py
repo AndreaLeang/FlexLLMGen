@@ -241,6 +241,7 @@ def pinned_pred(bytes, hardware_config):
     #TODO: energy
     latency_us = 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7
     latency = latency_us / 1000000.0
+    print(f"pinned: bytes (B): {bytes}, latency (s): {latency}")
     return 0, latency
 
 
@@ -259,6 +260,7 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
     else: 
         bandwidth = 3.626 * math.log10(bytes) + 26.13 
     latency = bytes/bandwidth
+    print(f"transfer: single dir: {single_directional}, bytes (GB): {bytes}, bandwidth: {bandwidth}, latency: {latency}")
     
     return 0, latency
 
@@ -610,7 +612,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
         tot_lat += latency
         tot_energy += energy
-    print(f"layer_calc: type: {layer_type}, energy: {tot_energy}, latency: {tot_lat}")
+    tot_lat /= 1000.0 # ms --> s
+    print(f"layer_calc: type: {layer_type}, energy (J): {tot_energy}, latency (s) : {tot_lat}")
     return tot_energy, tot_lat
 
 
