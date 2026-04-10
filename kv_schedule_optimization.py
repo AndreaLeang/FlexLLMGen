@@ -90,6 +90,7 @@ class CostModelConfig:
 
 def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len):
     total_available_gpu = hardware_config.gmem # Bytes
+    print(f"total_available_gpu mem (bytes): {total_available_gpu}")
     total_weight_bytes = opt_config.model_bytes() # Bytes
     num_heads = opt_config.n_head
 
@@ -109,6 +110,8 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len)
         for each_possible_offloading in batch_size_to_distinct_offloadings[each_batch_size]:
             num_prompts_on_gpu = int(each_batch_size* num_heads * (100-each_possible_offloading) / 100) // num_heads
             actual_kv_cache_bytes = (num_prompts_on_gpu / each_batch_size) * total_kv_cache_bytes
+            print(f"strat: batch size: {each_batch_size}, offloading: {each_possible_offloading}")
+            print(f"bytes : total_weight_bytes: {total_weight_bytes}, actual_kv_cache_bytes: {actual_kv_cache_bytes}, total_hidden_bytes: {total_hidden_bytes}")
 
             if total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes <= total_available_gpu:
                 if each_batch_size not in feasible_strategies:
