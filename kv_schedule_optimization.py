@@ -112,7 +112,8 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len)
             actual_kv_cache_bytes = (num_prompts_on_gpu / each_batch_size) * total_kv_cache_bytes
             print(f"strat: batch size: {each_batch_size}, offloading: {each_possible_offloading}")
             print(f"bytes : total_weight_bytes: {total_weight_bytes}, actual_kv_cache_bytes: {actual_kv_cache_bytes}, total_hidden_bytes: {total_hidden_bytes}")
-
+            print(f"bytes sum: {total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes}")
+          
             if total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes <= total_available_gpu:
                 if each_batch_size not in feasible_strategies:
                     feasible_strategies[each_batch_size] = []
@@ -609,7 +610,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
         tot_lat += latency
         tot_energy += energy
-    print(f"layer_calc: energy: {tot_energy}, latency: {tot_latency}")
+    print(f"layer_calc: energy: {tot_energy}, latency: {tot_lat}")
     return tot_energy, tot_lat
 
 
