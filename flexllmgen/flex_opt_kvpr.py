@@ -29,7 +29,7 @@ from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     torch_mem_stats, torch_dtype_to_np_dtype, write_benchmark_log,
     read_benchmark_log, get_optimal_split_point)
 
-# from experimental.cost_model import get_optimal_policy
+from experimental.cost_model import get_optimal_policy
 
 import torch
 import torchvision.models as models
