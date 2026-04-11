@@ -152,6 +152,10 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     output_latency += no_store_output_latency
   
     for cur_gen_len in range(gen_len):
+        tot_MHA_energy = 0
+        tot_MHA_latency = 0
+        tot_MLP_energy = 0
+        tot_MLP_latency = 0
         if num_batches == 1:
             tot_MHA_energy, tot_MHA_latency =layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
             tot_MHA_energy *= num_hidden_layers
@@ -195,7 +199,11 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
       
         middle_layer_latency = tot_MHA_latency + tot_MLP_latency
         middle_layer_energy = tot_MHA_energy + tot_MLP_energy
-
+        print(f"each total input latency: {input_latency}")
+        print(f"total forward pass MHA latency: {tot_MHA_latency}")
+        print(f"total forward pass MLP latency: {tot_MLP_latency}")
+        print(f"each total output latency: {output_latency}")
+        print(f"total forward pass middle layers latency: {middle_layer_latency}")
         one_forward_latency = input_latency + middle_layer_latency + output_latency
         one_forward_energy = input_energy + middle_layer_energy + output_energy
         tot_latency += one_forward_latency
