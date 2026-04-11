@@ -624,7 +624,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     return tot_energy, tot_lat
 
 
-def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, gpu_estimator, var_to_min="latency"):
+def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, gpu_estimator, testing, var_to_min="latency"):
     # break model into layers
   
     ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
@@ -734,5 +734,5 @@ if __name__ == "__main__":
                         dvfs_supply_voltage_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
                         dvfs_idle_power_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
                         lut_folder_abs_path="/home/akleang/akleang/energaizer-ispass26-artifact/database/data")
-    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, gpu_estimator)
+    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.test, gpu_estimator)
 
