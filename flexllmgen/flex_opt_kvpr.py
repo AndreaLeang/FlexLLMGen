@@ -1578,9 +1578,9 @@ def run_flexllmgen(args):
         args.hc = None
         print("going to calc optimal policy...")
         # Commented out for pulp import related issues
-        # policy, est_max_throughput = get_optimal_policy(args.gpu_mem, args.cpu_mem, args.nvme_mem, args)
-        policy = None
-        est_max_throughput = None
+        policy, est_max_throughput = get_optimal_policy(args.gpu_mem, args.cpu_mem, args.nvme_mem, args)
+        # policy = None
+        # est_max_throughput = None
     else:
         policy = Policy(args.gpu_batch_size, args.num_gpu_batches,
                         args.percent[0], args.percent[1],
