@@ -207,6 +207,7 @@ def get_bytes_to_store(batch_size):
 
 def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, layer_type="MHA"):
     #layer type determines the actual recomputation time + compute layer time
+    print("layer info: layer_type: {layer_type}, gen_len: {gen_len}, recomp_len: {recomp_len}")
     layer_calc_time, layer_calc_energy = layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type)
   
     if is_load_store == 0:
@@ -214,14 +215,17 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         return layer_calc_energy, layer_calc_time
     elif is_load_store == 2:
         # store only --> single directional
+        print("transfer is store")
         transfer_energy, transfer_lat = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
         return layer_calc_energy+transfer_energy, max(layer_calc_time, transfer_lat)
     else:
         recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
+        print(f"recomp_bytes: {recomp_bytes}, kv_load_bytes: {kv_load_bytes}")
         #use is_load_store==1 as single directional
-        #recomp transfer & first kv load are always single directional. the second kv load uses single_directional
+        #recomp transfer & first kv load are always single directional. the second kv load uses single_directional indicator
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
         # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
+        print("store: ")
         transfer_energy, transfer_latency = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
         first_half_latency = max(pinned_latency, transfer_latency)
         recomp_energy = 0
@@ -229,6 +233,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         if layer_type == "MHA" and recomp_len > 0:
             recomp_energy, recomp_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
         second_single_dir = is_load_store == 1
+        print("k values load: ")
         k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
         v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, single_directional = second_single_dir)
         second_half_latency = max(pinned_latency + recomp_latency + layer_calc_time, k_transfer_latency + v_transfer_latency)
@@ -239,6 +244,8 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
 
 def pinned_pred(bytes, hardware_config):
     #TODO: energy
+    if bytes == 0:
+        return 0, 0
     latency_us = 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7
     latency = latency_us / 1000000.0
     print(f"pinned: bytes (B): {bytes}, latency (s): {latency}")
