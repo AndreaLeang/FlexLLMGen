@@ -144,6 +144,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     load_input_energy, load_input_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "input")
     no_load_input_energy, no_load_input_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "input")
     input_energy = (num_batches-1)*no_load_input_energy + load_input_energy 
+    input_latency = (num_batches-1)*no_load_input_latency + load_input_latency 
   
     # output: store + nothing*(num_batches -1) 
     store_output_energy, store_output_latency =  layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "output")
