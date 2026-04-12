@@ -391,8 +391,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     hidden_size = opt_config.hidden_size
     cur_seq_len = prompt_len + gen_len
     prev_not_seen = 1
-    # if gen_len == 0:
-    #     prev_not_seen = prompt_len
+    if gen_len == 0:
+        prev_not_seen = prompt_len
   
     #input: 
     if layer_type == "input":
