@@ -660,6 +660,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     tot_energy = 0
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
+        if layer_type == "input":
+            print(f"layer calc input operation: {all_queries[each_ind]}, latency: {latency}")
         tot_lat += latency
         tot_energy += energy
     tot_lat /= 1000.0 # ms --> s
