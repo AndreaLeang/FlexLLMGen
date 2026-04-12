@@ -228,6 +228,8 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         one_forward_energy = input_energy + middle_layer_energy + output_energy
         tot_latency += one_forward_latency
         tot_energy  += one_forward_energy
+        print(f"total latency of this forward pass: {one_forward_latency}")
+        print(f"total latency seen so far: {tot_latency}")
 
     # get total energy and latency
     return tot_energy, tot_latency
