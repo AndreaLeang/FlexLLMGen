@@ -146,12 +146,18 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     
     input_energy = (num_batches-1)*no_load_input_energy + load_input_energy 
     input_latency = (num_batches-1)*no_load_input_latency + load_input_latency 
+    print(f"load_input_latency: {load_input_latency}")
+    print(f"no_load_input_latency: {no_load_input_latency}")
+    print(f"total input_latency: {input_latency}")
   
     # output: store + nothing*(num_batches -1) 
     store_output_energy, store_output_latency =  layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "output")
     no_store_output_energy, no_store_output_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "output")
     default_output_energy = (num_batches-1)*no_store_output_energy
     default_output_latency = (num_batches-1)*no_store_output_latency
+    print(f"store_output_latency: {store_output_latency}")
+    print(f"no_store_output_latency: {no_store_output_latency}")
+    print(f"default_output_energy: {default_output_energy}")
   
     for cur_gen_len in range(gen_len):
         
@@ -242,8 +248,8 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         return layer_calc_energy, layer_calc_latency
     elif is_load_store == 2:
         # store only --> single directional
-        print("transfer is store")
         transfer_energy, transfer_lat = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
+        print(f"store only: latency is max of layer calc: {layer_calc_latency} and transfer: {transfer_lat}")
         return layer_calc_energy+transfer_energy, max(layer_calc_latency, transfer_lat)
     else:
         recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
@@ -252,20 +258,21 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional indicator
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
         # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
-        print("store: ")
         transfer_energy, transfer_latency = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
+        print(f"load and store first half: latency is max of pinned: {pinned_latency} and transfer: {transfer_latency}")
         first_half_latency = max(pinned_latency, transfer_latency)
         recomp_energy = 0
         recomp_latency = 0
         if layer_type == "MHA" and recomp_len > 0:
             recomp_energy, recomp_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
-        print("k values load: ")
+        
         k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
         if is_load_store == 1: #use is_load_store==1 as single directional
             v_transfer_energy = k_transfer_energy
             v_transfer_latency = k_transfer_latency
         else: 
             v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, single_directional = False)
+        print(f"load and store second half: latency is max of pinned + recomp+layer calc: {pinned_latency + recomp_latency + layer_calc_latency} and transfer: {k_transfer_latency + v_transfer_latency}")
         second_half_latency = max(pinned_latency + recomp_latency + layer_calc_latency, k_transfer_latency + v_transfer_latency)
         tot_energy = pinned_energy + transfer_energy + recomp_energy + k_transfer_energy + v_transfer_energy
       
