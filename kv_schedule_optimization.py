@@ -227,6 +227,11 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
     print(f"layer info: layer_type: {layer_type}, gen_len: {gen_len}, recomp_len: {recomp_len}")
     layer_calc_energy, layer_calc_latency = layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type)
   
+    if layer_type == "MHA" and recomp_len > 0:
+        recomp_energy, recomp_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
+        layer_calc_energy += recomp_energy
+        layer_calc_latency += recomp_latency
+  
     if is_load_store == 0:
         #no load or store, just the layer computations
         print(f"no load or store layer: layer_type: {layer_type}, layer_calc_tim")
@@ -246,11 +251,6 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         transfer_energy, transfer_latency = transfer_pred(recomp_bytes, hardware_config)
         print(f"load and store first half: latency is max of pinned: {pinned_latency} and transfer: {transfer_latency}")
         first_half_latency = max(pinned_latency, transfer_latency)
-        recomp_energy = 0
-        recomp_latency = 0
-        if layer_type == "MHA" and recomp_len > 0:
-            print("doing recomp_calc_prep")
-            recomp_energy, recomp_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
         
         k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
         if is_load_store == 1: #use is_load_store==1 as single directional
@@ -258,8 +258,8 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
             v_transfer_latency = k_transfer_latency
         else: 
             v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, single_directional = False)
-        print(f"load and store second half: latency is max of pinned + recomp+layer calc: {pinned_latency + recomp_latency + layer_calc_latency} and transfer: {k_transfer_latency + v_transfer_latency}")
-        second_half_latency = max(pinned_latency + recomp_latency + layer_calc_latency, k_transfer_latency + v_transfer_latency)
+        print(f"load and store second half: latency is max of pinned + layer calc: {pinned_latency  + layer_calc_latency} and transfer: {k_transfer_latency + v_transfer_latency}")
+        second_half_latency = max(pinned_latency  + layer_calc_latency, k_transfer_latency + v_transfer_latency)
         tot_energy = pinned_energy + transfer_energy + recomp_energy + k_transfer_energy + v_transfer_energy
       
         return tot_energy, first_half_latency + second_half_latency
