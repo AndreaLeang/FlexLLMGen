@@ -361,9 +361,10 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     tot_energy = 0
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
+        print("recomp gpu op: query type: {all_query_types[each_ind]}, latency: {latency}")
         tot_lat += latency
         tot_energy += energy
-    print("recomp layer calc: latency: {tot_lat}")
+    print(f"recomp layer calc: latency: {tot_lat}")
     return tot_energy, tot_lat
 
 def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type="MHA"):
