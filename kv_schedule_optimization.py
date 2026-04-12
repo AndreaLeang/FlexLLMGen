@@ -288,7 +288,7 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
         bandwidth = 1.415 * math.log10(bytes) + 13.38
     else: 
         bandwidth = 3.626 * math.log10(bytes) + 26.13 
-    latency = bytes/bandwidth
+    latency = max(bytes/bandwidth, 0)
     print(f"transfer: single dir: {single_directional}, bytes (GB): {bytes}, bandwidth: {bandwidth}, latency: {latency}")
     
     return 0, latency
@@ -362,7 +362,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
         tot_lat += latency
         tot_energy += energy
-    
+    print("recomp layer calc: latency: {tot_lat}")
     return tot_energy, tot_lat
 
 def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type="MHA"):
