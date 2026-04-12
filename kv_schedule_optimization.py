@@ -243,7 +243,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional indicator
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
         # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
-        transfer_energy, transfer_latency = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
+        transfer_energy, transfer_latency = transfer_pred(recomp_bytes, hardware_config)
         print(f"load and store first half: latency is max of pinned: {pinned_latency} and transfer: {transfer_latency}")
         first_half_latency = max(pinned_latency, transfer_latency)
         recomp_energy = 0
