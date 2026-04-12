@@ -143,6 +143,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     # input: nothing*(num_batches -1) + load
     load_input_energy, load_input_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "input")
     no_load_input_energy, no_load_input_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, "input")
+    
     input_energy = (num_batches-1)*no_load_input_energy + load_input_energy 
     input_latency = (num_batches-1)*no_load_input_latency + load_input_latency 
   
@@ -233,16 +234,17 @@ def get_bytes_to_store(batch_size):
 def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, layer_type="MHA"):
     #layer type determines the actual recomputation time + compute layer time
     print(f"layer info: layer_type: {layer_type}, gen_len: {gen_len}, recomp_len: {recomp_len}")
-    layer_calc_time, layer_calc_energy = layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type)
+    layer_calc_energy, layer_calc_latency = layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type)
   
     if is_load_store == 0:
         #no load or store, just the layer computations
-        return layer_calc_energy, layer_calc_time
+        print(f"no load or store layer: layer_type: {layer_type}, layer_calc_tim")
+        return layer_calc_energy, layer_calc_latency
     elif is_load_store == 2:
         # store only --> single directional
         print("transfer is store")
         transfer_energy, transfer_lat = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
-        return layer_calc_energy+transfer_energy, max(layer_calc_time, transfer_lat)
+        return layer_calc_energy+transfer_energy, max(layer_calc_latency, transfer_lat)
     else:
         recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
         print(f"recomp_bytes: {recomp_bytes}, kv_load_bytes: {kv_load_bytes}")
@@ -261,7 +263,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         print("k values load: ")
         k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
         v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, single_directional = second_single_dir)
-        second_half_latency = max(pinned_latency + recomp_latency + layer_calc_time, k_transfer_latency + v_transfer_latency)
+        second_half_latency = max(pinned_latency + recomp_latency + layer_calc_latency, k_transfer_latency + v_transfer_latency)
         tot_energy = pinned_energy + transfer_energy + recomp_energy + k_transfer_energy + v_transfer_energy
       
         return tot_energy, first_half_latency + second_half_latency
