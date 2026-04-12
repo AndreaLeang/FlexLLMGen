@@ -393,8 +393,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     hidden_size = opt_config.hidden_size
     cur_seq_len = prompt_len + gen_len
     prev_not_seen = 1
-    # if gen_len == 0:
-    #     prev_not_seen = prompt_len
+    if gen_len == 0:
+        prev_not_seen = prompt_len
   
     #input: 
     if layer_type == "input":
@@ -463,7 +463,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         # print(f"layer calc: output")
         #output:  
         layer_norm_query = {'batch': batch_size,
-                             'dim': prev_not_seen*hidden_size, 
+                             'dim': hidden_size, 
                              'prec': 'bf16'}
         layer_norm_query_type = ('layernorm')
         all_queries.append(layer_norm_query)
@@ -497,7 +497,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         ffn_embed_dim = opt_config.ffn_embed_dim
       
         layer_norm_query = {'batch': batch_size,
-                             'dim': prev_not_seen*hidden_size, 
+                             'dim': hidden_size, 
                              'prec': 'bf16'}
         layer_norm_query_type = ('layernorm')
         all_queries.append(layer_norm_query)
