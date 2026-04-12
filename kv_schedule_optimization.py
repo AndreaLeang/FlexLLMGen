@@ -639,8 +639,6 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     tot_energy = 0
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
-        if layer_type == "MLP":
-            print(f"layer calc input operation: {all_queries[each_ind]}, latency: {latency}")
         tot_lat += latency
         tot_energy += energy
     tot_lat /= 1000.0 # ms --> s
@@ -670,7 +668,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
     if testing: 
         test_batch_size = 1
         test_offloading_per = 100
-        test_recomp_len = 0
+        test_recomp_len = 4096
         cur_energy, cur_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, test_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
         if save_results: 
             cur_strat = (test_batch_size, test_offloading_per, test_recomp_len)
