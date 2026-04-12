@@ -354,6 +354,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         print(f"recomp gpu op: query: {all_queries[each_ind]}, latency: {latency}")
         tot_lat += latency
         tot_energy += energy
+    tot_lat /= 1000.0 # ms --> s
     print(f"recomp layer calc: latency: {tot_lat}")
     return tot_energy, tot_lat
 
