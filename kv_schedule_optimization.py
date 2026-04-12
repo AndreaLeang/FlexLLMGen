@@ -671,7 +671,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         all_results = {}
 
     if testing: 
-        test_batch_size = 1
+        test_batch_size = 2
         test_offloading_per = 100
         test_recomp_len = 0
         cur_energy, cur_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, test_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
