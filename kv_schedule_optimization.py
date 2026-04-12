@@ -249,6 +249,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         recomp_energy = 0
         recomp_latency = 0
         if layer_type == "MHA" and recomp_len > 0:
+            print("doing recomp_calc_prep")
             recomp_energy, recomp_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
         
         k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
