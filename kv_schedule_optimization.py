@@ -268,7 +268,7 @@ def pinned_pred(bytes, hardware_config):
     #TODO: energy
     if bytes == 0:
         return 0, 0
-    latency_us = 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7
+    latency_us = max(0, 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7)
     latency = latency_us / 1000000.0
     print(f"pinned: bytes (B): {bytes}, latency (s): {latency}")
     return 0, latency
