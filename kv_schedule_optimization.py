@@ -48,7 +48,6 @@ from gee.gee_utils import get_gee
 
 alpha_g = 0.8
 alpha_c = 0.8
-alpha_n = 0.8
 
 
 @dataclasses.dataclass
@@ -61,30 +60,10 @@ class CostModelConfig:
     h2: int = 12288 * 4
     nh: int = 96
 
-    gmem: int = 15 * GB
-    cmem: int = 204 * GB
-    nmem: int = 1500 * GB
+    gmem: int = 40 * GB
+    cmem: int = 200 * GB
 
-    # hardware constants
-    # default value aligned on google cloud T4
-    ctog_bdw: float = 12.89 * GB
-    gtoc_bdw_cache: float = 0.97 * GB
-    gtoc_bdw_hidden: float = 4.82 * GB
-
-    dtoc_bdw: float = 0.473 * GB
-    ctod_bdw_cache_p: float = 0.746 * GB
-    ctod_bdw_hidden_p: float = 2.015 * GB
-    ctod_bdw_g: float = 2.015 * GB
-
-    mm_flops_p: float = 21.24 * T
-    mm_flops_g: float = 4.3 * T
-    bmm_flops_p: float = 9.97 * T
-    bmm_flops_g: float = 0.079 * T
-    cpu_flops: float = 0.0123 * T
-
-    c1: float = 0.0168
-    c2: float = 0.0328
-    c3: float = 0.0621
+    
 
 
 
@@ -701,8 +680,9 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
     else: 
         for each_batch_size in batch_sizes:
             for each_feasible_offloading in all_feasible_strategies_dict[each_batch_size]:
-                for each_recomp_percent in range(0, 100, 10):
+                for each_recomp_percent in range(0, 110, 10):
                     each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
+                    print(" ")
                     print(f'cur strat: {each_batch_size}, {each_feasible_offloading}, {each_recomp_len}')
                     #Model Prediction 
                     cur_energy, cur_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
@@ -747,9 +727,11 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, default="facebook/opt-175b")
     parser.add_argument("--prompt-len", type=int, default=512)
     parser.add_argument("--gen-len", type=int, default=32)
-    parser.add_argument("--gpu-mem", type=int, default=15)
+  
+    parser.add_argument("--gpu-mem", type=int, default=40)
     parser.add_argument("--cpu-mem", type=int, default=200)
-    parser.add_argument("--nvme-mem", type=int, default=1500)
+    parser.add_argument("--per-cpu-mem", "--cpu-usage", type=int, default = 100)
+    parser.add_argument("--per-gpu-mem", "--gpu-usage", type=int, default = 90)
 
     parser.add_argument("--np", "--num-prompts", type=int)
     parser.add_argument("--test", "--testing", action="store_true")
@@ -768,11 +750,15 @@ if __name__ == "__main__":
     config.s = args.prompt_len
     config.n = args.gen_len
 
-    config.gmem = args.gpu_mem * GB
-    config.cmem = args.cpu_mem * GB
-    config.nmem = args.nvme_mem * GB
+    alpha_c = args.cpu_usage / 100
+    alpha_g = args.gpu_usage / 100
+
+    config.cmem = alpha_c * args.cpu_mem * GB
+    config.gmem = alpha_g * args.gpu_mem * GB
+    
 
     #TODO: specify hardware config
+    print("currently getting gpu estimator")
     gpu_estimator = get_gee(gpu_yaml_path="/home/akleang/akleang/energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
                         lut_yaml_path="/home/akleang/akleang/energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
                         dvfs_aware=True, dvfs_inference_mode='all', 
