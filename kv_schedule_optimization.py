@@ -248,7 +248,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
     else:
         recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
         print(f"recomp_bytes: {recomp_bytes}, kv_load_bytes: {kv_load_bytes}")
-        #use is_load_store==1 as single directional
+        
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional indicator
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
         # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
@@ -259,10 +259,13 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         recomp_latency = 0
         if layer_type == "MHA" and recomp_len > 0:
             recomp_energy, recomp_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
-        second_single_dir = is_load_store == 1
         print("k values load: ")
         k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
-        v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, single_directional = second_single_dir)
+        if is_load_store == 1: #use is_load_store==1 as single directional
+            v_transfer_energy = k_transfer_energy
+            v_transfer_latency = k_transfer_latency
+        else: 
+            v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, single_directional = False)
         second_half_latency = max(pinned_latency + recomp_latency + layer_calc_latency, k_transfer_latency + v_transfer_latency)
         tot_energy = pinned_energy + transfer_energy + recomp_energy + k_transfer_energy + v_transfer_energy
       
@@ -671,7 +674,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         all_results = {}
 
     if testing: 
-        test_batch_size = 2
+        test_batch_size = 1
         test_offloading_per = 100
         test_recomp_len = 0
         cur_energy, cur_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, test_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
