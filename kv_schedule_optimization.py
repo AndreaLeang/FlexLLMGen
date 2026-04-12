@@ -248,9 +248,9 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional indicator
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
         # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
-        transfer_energy, transfer_latency = transfer_pred(recomp_bytes, hardware_config)
-        print(f"load and store first half: latency is max of pinned: {pinned_latency} and transfer: {transfer_latency}")
-        first_half_latency = max(pinned_latency, transfer_latency)
+        recomp_transfer_energy, recomp_transfer_latency = transfer_pred(recomp_bytes, hardware_config)
+        print(f"load and store first half: latency is max of pinned: {pinned_latency} and transfer: {recomp_transfer_latency}")
+        first_half_latency = max(pinned_latency, recomp_transfer_latency)
         
         k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
         if is_load_store == 1: #use is_load_store==1 as single directional
@@ -259,8 +259,8 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         else: 
             v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, single_directional = False)
         print(f"load and store second half: latency is max of pinned + layer calc: {pinned_latency  + layer_calc_latency} and transfer: {k_transfer_latency + v_transfer_latency}")
-        second_half_latency = max(pinned_latency  + layer_calc_latency, k_transfer_latency + v_transfer_latency)
-        tot_energy = pinned_energy + transfer_energy + recomp_energy + k_transfer_energy + v_transfer_energy
+        second_half_latency = max(pinned_latency + layer_calc_latency, k_transfer_latency + v_transfer_latency)
+        tot_energy = pinned_energy + recomp_transfer_energy + layer_calc_energy + k_transfer_energy + v_transfer_energy
       
         return tot_energy, first_half_latency + second_half_latency
 
