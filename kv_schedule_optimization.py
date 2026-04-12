@@ -324,16 +324,6 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     for i in range(2):
         all_queries.append(linear_query)
         all_query_types.append(linear_query_type)
-    
-    reshape_query = {
-        'dim': batch_size*opt_config.n_head,
-        'op': 'unspecified_tensor',
-        'prec': 'bf16',
-    }
-    reshape_query_type = ('elementwise')
-    for i in range(4):
-        all_queries.append(reshape_query)
-        all_query_types.append(reshape_query_type)
   
     copy_1_query = {
         'dim': recomp_len,
@@ -361,7 +351,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     tot_energy = 0
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
-        print(f"recomp gpu op: query type: {all_query_types[each_ind]}, latency: {latency}")
+        print(f"recomp gpu op: query: {all_queries[each_ind]}, latency: {latency}")
         tot_lat += latency
         tot_energy += energy
     print(f"recomp layer calc: latency: {tot_lat}")
