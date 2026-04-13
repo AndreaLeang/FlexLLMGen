@@ -575,9 +575,17 @@ def get_layer_composition(json_filename):
     # saving data 
     all_file_var = json_filename.split('-')
     csv_filename = json_filename.split('-percent')[0] + '-' + all_file_var[9] + '-' + all_file_var[10] + '_layer_latencies.csv' # added header for recomp
+    avg_csv_filename = json_filename.split('-gbs')[0] + '_layer_latencies_avg.csv' # added header for recomp
+    
     fieldnames = ['layer_type', 'latency (us)']
+    avg_fieldnames = ['Prompt Len', 'Batch Size', 'Num of batches', 'Offloading Percent', 'Recomp Len', 'MHA Avg Latency (s)', 'MLP Avg Latency (s)',  'Input Avg Latency (s)',  'Output Avg Latency (s)']
+    avg_MHA_lat = 0.0
+    avg_MLP_lat = 0.0
+    avg_input_lat = 0.0
+    avg_output_lat = 0.0
 
     write_header = not os.path.exists(csv_filename)
+    avg_write_header = not os.path.exists(avg_csv_filename)
     
     # Open the file in append mode ('a')
     with open(csv_filename, 'a', newline='') as csvfile:
@@ -585,13 +593,37 @@ def get_layer_composition(json_filename):
         if write_header:
             writer.writeheader()
         for each_mha in mha_latencies:
+            avg_MHA_lat += each_mha
             writer.writerow({'layer_type': "MHA", 'latency (us)': each_mha})
         for each_mlp in mlp_latencies:
+            avg_MLP_lat += each_mlp
             writer.writerow({'layer_type': "MLP", 'latency (us)': each_mlp})
         for each_input in input_latencies:
+            avg_input_lat += each_input
             writer.writerow({'layer_type': "input", 'latency (us)': each_input})
         for each_output in output_latencies:
+            avg_output_lat += each_output
             writer.writerow({'layer_type': "output", 'latency (us)': each_output})
+            
+    with open(avg_csv_filename, 'a', newline='') as avg_csvfile:
+        writer = csv.DictWriter(csvfile, fieldnames=avg_fieldnames)
+        if avg_write_header:
+            writer.writeheader()
+        avg_MHA_lat = (avg_MHA_lat / 1000000.0 ) / len(mha_latencies)
+        avg_MLP_lat = (avg_MLP_lat / 1000000.0 ) / len(mlp_latencies)
+        avg_input_lat = (avg_input_lat / 1000000.0 ) / len(input_latencies)
+        avg_output_lat = (avg_output_lat / 1000000.0 ) / len(output_latencies)
+        writer.writerow({
+            'Prompt Len': all_file_var[4][6:], 
+            'Batch Size': all_file_var[2][3:], 
+            'Num of batches': all_file_var[3][4:], 
+            'Offloading Percent': all_file_var[10], 
+            'Recomp Len': all_file_var[14], 
+            'layer_type': "MHA", 
+            'MHA Avg Latency (s)': avg_MHA_lat, 
+            'MLP Avg Latency (s)': avg_MLP_lat,  
+            'Input Avg Latency (s)': avg_input_lat,  
+            'Output Avg Latency (s)'}: avg_output_lat)
         
     return {"MHA":len(mha_latencies), "MLP":len(mlp_latencies), "input":len(input_latencies), "output":len(output_latencies)}
     
