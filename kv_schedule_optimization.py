@@ -197,12 +197,18 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
       
         middle_layer_latency = tot_MHA_latency + tot_MLP_latency
         middle_layer_energy = tot_MHA_energy + tot_MLP_energy
+
+        print(f"avg single layer input latency: {input_latency / num_batches}")
+        print(f"avg single layer MHA latency: {tot_MHA_latency / (num_batches*num_hidden_layers)}")
+        print(f"avg single layer MLP latency: {tot_MLP_latency / (num_batches*num_hidden_layers)}")
+        print(f"avg single layer output latency: {output_latency / num_batches}")
       
-        print(f"each total input latency: {input_latency}")
-        print(f"total forward pass MHA latency: {tot_MHA_latency}")
-        print(f"total forward pass MLP latency: {tot_MLP_latency}")
-        print(f"each total output latency: {output_latency}")
-        print(f"total forward pass middle layers latency: {middle_layer_latency}")
+        # print(f"each total input latency: {input_latency}")
+        # print(f"total forward pass MHA latency: {tot_MHA_latency}")
+        # print(f"total forward pass MLP latency: {tot_MLP_latency}")
+        # print(f"each total output latency: {output_latency}")
+        # print(f"total forward pass middle layers latency: {middle_layer_latency}")
+      
         one_forward_latency = input_latency + middle_layer_latency + output_latency
         one_forward_energy = input_energy + middle_layer_energy + output_energy
         tot_latency += one_forward_latency
@@ -351,7 +357,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     tot_energy = 0
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
-        print(f"recomp gpu op: query: {all_queries[each_ind]}, latency: {latency}")
+        # print(f"recomp gpu op: query: {all_queries[each_ind]}, latency: {latency}")
         tot_lat += latency
         tot_energy += energy
     tot_lat /= 1000.0 # ms --> s
