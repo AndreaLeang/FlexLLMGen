@@ -578,14 +578,14 @@ def get_layer_composition(json_filename):
     avg_csv_filename = json_filename.split('-gbs')[0] + '_layer_latencies_avg.csv' # added header for recomp
     
     fieldnames = ['layer_type', 'latency (us)']
-    avg_fieldnames = ['Prompt Len', 'Batch Size', 'Num of batches', 'Offloading Percent', 'Recomp Len', 'MHA Avg Latency (s)', 'MLP Avg Latency (s)',  'Input Avg Latency (s)',  'Output Avg Latency (s)']
+    avg_fieldnames = ['Prompt Len', 'Batch Size', 'Num of batches', 'Offloading Percent', 'Recomp Len', 'MHA Avg Latency (s)', 'MLP Avg Latency (s)', 'Input Avg Latency (s)', 'Output Avg Latency (s)']
     avg_MHA_lat = 0.0
     avg_MLP_lat = 0.0
     avg_input_lat = 0.0
     avg_output_lat = 0.0
 
     write_header = not os.path.exists(csv_filename)
-    avg_write_header = not os.path.exists(avg_csv_filename)
+    
     
     # Open the file in append mode ('a')
     with open(csv_filename, 'a', newline='') as csvfile:
@@ -604,11 +604,13 @@ def get_layer_composition(json_filename):
         for each_output in output_latencies:
             avg_output_lat += each_output
             writer.writerow({'layer_type': "output", 'latency (us)': each_output})
-            
+
+    avg_write_header = not os.path.exists(avg_csv_filename)
     with open(avg_csv_filename, 'a', newline='') as avg_csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=avg_fieldnames)
         if avg_write_header:
             writer.writeheader()
+            
         avg_MHA_lat = (avg_MHA_lat / 1000000.0 ) / len(mha_latencies)
         avg_MLP_lat = (avg_MLP_lat / 1000000.0 ) / len(mlp_latencies)
         avg_input_lat = (avg_input_lat / 1000000.0 ) / len(input_latencies)
