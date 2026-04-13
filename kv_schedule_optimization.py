@@ -243,10 +243,10 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         recomp_energy, recomp_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
         layer_calc_energy += recomp_energy
         layer_calc_latency += recomp_latency
+        print(f"MHA energy: {layer_calc_energy} {recomp_energy}")
   
     if is_load_store == 0:
         #no load or store, just the layer computations
-        print(f"no load or store layer: layer_type: {layer_type}, layer_calc_tim")
         return layer_calc_energy, layer_calc_latency
     elif is_load_store == 2:
         # store only --> single directional
@@ -644,8 +644,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     tot_energy = 0
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
-        if layer_type == "MHA":
-            print(f"MHA layer calc operations: query type: {all_query_types[each_ind]}, energy: {energy}")
+        # if layer_type == "MHA":
+        #     print(f"MHA layer calc operations: query type: {all_query_types[each_ind]}, energy: {energy}")
         # elif layer_type == "output":
         #     print(f"output layer calc operations: query type: {all_query_types[each_ind]}, latency: {latency}")
         tot_lat += latency
