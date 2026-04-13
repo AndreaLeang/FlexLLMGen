@@ -213,6 +213,11 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         avg_latency_per_layer["output"] = (avg_latency_per_layer["output"][0]+output_latency, avg_latency_per_layer["output"][1] + num_batches)
         avg_latency_per_layer["MHA"] = (avg_latency_per_layer["MHA"][0]+tot_MHA_latency, avg_latency_per_layer["MHA"][1] + num_batches*num_hidden_layers)
         avg_latency_per_layer["MLP"] = (avg_latency_per_layer["MLP"][0]+tot_MLP_latency, avg_latency_per_layer["MLP"][1] + num_batches*num_hidden_layers)\
+
+        print(f"layer avg input latency: {input_latency/ num_batches}")
+        print(f"layer avg MHA latency: {tot_MHA_latency/ (num_batches*num_hidden_layers)}")
+        print(f"layer avg MLP latency: {tot_MLP_latency/ (num_batches*num_hidden_layers)}")
+        print(f"layer avg output latency: {output_latency / num_batches}")
       
         # print(f"each total input latency: {input_latency}")
         # print(f"total forward pass MHA latency: {tot_MHA_latency}")
@@ -244,7 +249,7 @@ def get_bytes_to_store(batch_size):
 
 def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, layer_type="MHA"):
     #layer type determines the actual recomputation time + compute layer time
-    print(f"layer info: layer_type: {layer_type}, gen_len: {gen_len}, recomp_len: {recomp_len}")
+    print(f"layer info: layer_type: {layer_type}, gen_len: {gen_len}, load or store: {is_load_store}, recomp_len: {recomp_len}")
     layer_calc_energy, layer_calc_latency = layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type)
   
     if layer_type == "MHA" and recomp_len > 0:
@@ -267,7 +272,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
         # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
         recomp_transfer_energy, recomp_transfer_latency = transfer_pred(recomp_bytes, hardware_config)
-        print(f"load and store first half: latency is max of pinned: {pinned_latency} and transfer: {recomp_transfer_latency}")
+        # print(f"load and store first half: latency is max of pinned: {pinned_latency} and transfer: {recomp_transfer_latency}")
         first_half_latency = max(pinned_latency, recomp_transfer_latency)
         
         k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
@@ -276,7 +281,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
             v_transfer_latency = k_transfer_latency
         else: 
             v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, single_directional = False)
-        print(f"load and store second half: latency is max of pinned + layer calc: {pinned_latency  + layer_calc_latency} and transfer: {k_transfer_latency + v_transfer_latency}")
+        # print(f"load and store second half: latency is max of pinned + layer calc: {pinned_latency  + layer_calc_latency} and transfer: {k_transfer_latency + v_transfer_latency}")
         second_half_latency = max(pinned_latency + layer_calc_latency, k_transfer_latency + v_transfer_latency)
         tot_energy = pinned_energy + recomp_transfer_energy + layer_calc_energy + k_transfer_energy + v_transfer_energy
       
@@ -746,7 +751,7 @@ if __name__ == "__main__":
     parser.add_argument("--gpu-mem", type=int, default=40)
     parser.add_argument("--cpu-mem", type=int, default=200)
     parser.add_argument("--cpu-usage", "--per-cpu-mem", type=int, default = 100)
-    parser.add_argument("--gpu-usage", "--per-gpu-mem",type=int, default = 90)
+    parser.add_argument("--gpu-usage", "--per-gpu-mem",type=int, default = 80)
 
     parser.add_argument("--np", "--num-prompts", type=int)
     parser.add_argument("--test", "--testing", action="store_true")
