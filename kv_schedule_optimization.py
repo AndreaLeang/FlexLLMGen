@@ -66,6 +66,7 @@ class CostModelConfig:
     
 
 def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len, min_offloading=True):
+    print("getting available offloadings: ")
     total_available_gpu = hardware_config.gmem # Bytes
     total_weight_bytes = opt_config.model_bytes() # Bytes
     num_heads = opt_config.n_head
@@ -670,9 +671,9 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         all_results = {}
 
     if testing: 
-        test_batch_size = 1
-        test_offloading_per = 100
-        test_recomp_len = 4096
+        test_batch_size = 2
+        test_offloading_per = 40
+        test_recomp_len = 2048
         cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, test_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
         if save_results: 
             cur_strat = (test_batch_size, test_offloading_per, test_recomp_len)
