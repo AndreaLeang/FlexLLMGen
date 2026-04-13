@@ -65,7 +65,7 @@ class CostModelConfig:
 
     
 
-def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len):
+def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len, min_offloading=True):
     total_available_gpu = hardware_config.gmem # Bytes
     total_weight_bytes = opt_config.model_bytes() # Bytes
     num_heads = opt_config.n_head
@@ -95,6 +95,8 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len)
                 if each_batch_size not in feasible_strategies:
                     feasible_strategies[each_batch_size] = []
                 feasible_strategies[each_batch_size].append(each_possible_offloading)
+                if min_offloading: 
+                    break
     return feasible_strategies
     
 
