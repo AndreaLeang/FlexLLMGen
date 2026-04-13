@@ -644,8 +644,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     tot_energy = 0
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
-        # if layer_type == "MLP":
-        #     print(f"MLP layer calc operations: query type: {all_query_types[each_ind]}, latency: {latency}")
+        if layer_type == "MHA":
+            print(f"MHA layer calc operations: query type: {all_query_types[each_ind]}, energy: {energy}")
         # elif layer_type == "output":
         #     print(f"output layer calc operations: query type: {all_query_types[each_ind]}, latency: {latency}")
         tot_lat += latency
