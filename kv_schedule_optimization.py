@@ -346,16 +346,17 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     for i in range(2):
         all_queries.append(copy_1_query)
         all_query_types.append(copy_1_query_type)
-    
-    copy_2_query = {
-        'dim': prompt_len + cur_gen_len - recomp_len,
-        'op': 'unspecified_tensor',
-        'prec': 'bf16',
-    }
-    copy_2_query_type = ('elementwise')
-    for i in range(2):
-        all_queries.append(copy_2_query)
-        all_query_types.append(copy_2_query_type)
+
+    if (prompt_len + cur_gen_len - recomp_len) > 0:
+        copy_2_query = {
+            'dim': prompt_len + cur_gen_len - recomp_len,
+            'op': 'unspecified_tensor',
+            'prec': 'bf16',
+        }
+        copy_2_query_type = ('elementwise')
+        for i in range(2):
+            all_queries.append(copy_2_query)
+            all_query_types.append(copy_2_query_type)
 
     #TODO: verify target frequency
     target_freq = 1305
