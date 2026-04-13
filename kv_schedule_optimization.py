@@ -315,6 +315,7 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
         bandwidth = 1.415 * math.log10(bytes) + 13.38
     else: 
         bandwidth = 3.626 * math.log10(bytes) + 26.13 
+    bandwidth = max(min(bandwidth, 14.0), 0)
     latency = max(bytes/bandwidth, 0)
     print(f"transfer: single dir: {single_directional}, bytes (GB): {bytes}, bandwidth: {bandwidth}, latency: {latency}")
     
