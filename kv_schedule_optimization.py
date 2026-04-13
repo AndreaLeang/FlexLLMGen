@@ -248,7 +248,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
 def get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len):
     recomp_load_bytes = recomp_len * 8192 * batch_size # 8192 bytes/token
-    kv_load_bytes = (prompt_len + gen_len-recomp_len) * 8192 * (batch_size-((batch_size*(100-offload_percent))//100))
+    kv_load_bytes = (prompt_len + gen_len-recomp_len) * 8192 * (batch_size-((batch_size*(100-offload_percent))//100)) 
     return recomp_load_bytes, kv_load_bytes
 
 def get_bytes_to_store(batch_size):
@@ -687,7 +687,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
 
     if testing: 
         test_batch_size = 2
-        test_offloading_per = 40
+        test_offloading_per = 60
         test_recomp_len = 0
         cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, test_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
         if save_results: 
