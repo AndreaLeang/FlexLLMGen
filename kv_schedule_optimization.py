@@ -220,6 +220,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         tot_energy  += one_forward_energy
         print(f"total latency of this forward pass: {one_forward_latency}")
         print(f"total latency seen so far: {tot_latency}")
+        print(f"total energy seen so far: {tot_energy}")
 
     # get total energy and latency
     return tot_energy, tot_latency
@@ -643,10 +644,10 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     tot_energy = 0
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
-        if layer_type == "MLP":
-            print(f"MLP layer calc operations: query type: {all_query_types[each_ind]}, latency: {latency}")
-        elif layer_type == "output":
-            print(f"output layer calc operations: query type: {all_query_types[each_ind]}, latency: {latency}")
+        # if layer_type == "MLP":
+        #     print(f"MLP layer calc operations: query type: {all_query_types[each_ind]}, latency: {latency}")
+        # elif layer_type == "output":
+        #     print(f"output layer calc operations: query type: {all_query_types[each_ind]}, latency: {latency}")
         tot_lat += latency
         tot_energy += energy
     tot_lat /= 1000.0 # ms --> s
