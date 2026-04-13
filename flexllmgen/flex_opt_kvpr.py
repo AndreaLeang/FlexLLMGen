@@ -1699,7 +1699,7 @@ def run_flexllmgen(args):
         print(f"Real Total Throughput: {total_throughput:.2f} token/s")
         print(f"Prefill Throughput: {prefill_throughput:.2f} token/s")
         print(f"Decode Throughput: {decode_throughput:.2f} token/s")
-    return total_throughput
+    return total_throughput, decode_latency
 
 def run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len, env):
 
@@ -1871,22 +1871,25 @@ if __name__ == "__main__":
                             if not single_cpu: # otherwise, use specified percent
                                 args.percent = [all_model_weight_on_gpu[model], 100-all_model_weight_on_gpu[model], 100-cpu_range, cpu_range, 100, 0]
                             tot_throughput = 0.0
+                            tot_decode_lat = 0.0
                             num_valid_iter = 0
                             for each_iter in range(args.sweep_average):
-                                cur_throughput = run_flexllmgen(args)
+                                cur_throughput, decode_latency = run_flexllmgen(args)
                                 if cur_throughput is None:
                                     break
                                 num_valid_iter += 1
                                 tot_throughput += cur_throughput
+                                tot_decode_lat += decode_latency
                             if num_valid_iter == 0:
                                 all_policies.append((prompt_len, gen_len, cpu_range, re_len, None))
                             else:
                                 tot_throughput /= float(num_valid_iter)
-                                all_policies.append((prompt_len, gen_len, cpu_range, re_len, tot_throughput))
+                                tot_decode_lat /= float(num_valid_iter)
+                                all_policies.append((prompt_len, gen_len, cpu_range, re_len, tot_throughput, tot_decode_lat))
         all_policies_avg[model] = all_policies
 
     csv_filename = get_filename(args).split("gbs")[0] + 'throughput.csv'
-    fieldnames = ['model', 'iter','gbs', 'ngbs', 'prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'recompute_len', 'Throughput (token/s)']
+    fieldnames = ['model', 'iter','gbs', 'ngbs', 'prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'recompute_len', 'Throughput (token/s)', 'Decode Latency (s)']
 
     if not os.path.exists(csv_filename):
         with open(csv_filename, 'w', newline='') as csvfile:
@@ -1903,6 +1906,7 @@ if __name__ == "__main__":
                 cur_kv_cpu_percent = each_run[2]
                 cur_recompute_len = each_run[3]
                 cur_throughput = each_run[4]
-                writer.writerow({'model': model, 'iter': args.sweep_average, 'gbs': args.gpu_batch_size, 'ngbs': args.num_gpu_batches, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'recompute_len': cur_recompute_len,  'Throughput (token/s)': cur_throughput})
+                decode_lat = each_run[5]
+                writer.writerow({'model': model, 'iter': args.sweep_average, 'gbs': args.gpu_batch_size, 'ngbs': args.num_gpu_batches, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'recompute_len': cur_recompute_len,  'Throughput (token/s)': cur_throughput, 'Decode Latency (s)': decode_lat})
             print(f"model: {model}")
             print(f"(prompt_len, gen_len, cpu_range, avg throughput) over {args.sweep_average} iterations: {all_policies_avg[model]}")
