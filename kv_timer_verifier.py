@@ -606,7 +606,7 @@ def get_layer_composition(json_filename):
             writer.writerow({'layer_type': "output", 'latency (us)': each_output})
 
     avg_write_header = not os.path.exists(avg_csv_filename)
-    with open(avg_csv_filename, 'a', newline='') as avg_csvfile:
+    with open(avg_csv_filename, 'a', newline='') as csvfile:
         writer = csv.DictWriter(csvfile, fieldnames=avg_fieldnames)
         if avg_write_header:
             writer.writeheader()
