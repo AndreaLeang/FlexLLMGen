@@ -202,6 +202,11 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         print(f"avg single layer MHA latency: {tot_MHA_latency / (num_batches*num_hidden_layers)}")
         print(f"avg single layer MLP latency: {tot_MLP_latency / (num_batches*num_hidden_layers)}")
         print(f"avg single layer output latency: {output_latency / num_batches}")
+
+        print(f"avg single layer input energy: {input_energy / num_batches}")
+        print(f"avg single layer MHA energy: {tot_MHA_energy / (num_batches*num_hidden_layers)}")
+        print(f"avg single layer MLP energy: {tot_MLP_energy / (num_batches*num_hidden_layers)}")
+        print(f"avg single layer output energy: {output_energy / num_batches}")
       
         # print(f"each total input latency: {input_latency}")
         # print(f"total forward pass MHA latency: {tot_MHA_latency}")
