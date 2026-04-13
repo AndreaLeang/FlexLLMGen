@@ -6,8 +6,8 @@ pip install pulp
 
 Example Usages:
 1. Find a policy:
-python cost_model.py --model facebook/opt-30b --prompt-len 512 --gen-len 32 \
-                     --gpu-mem 16 --cpu-mem 200 --nvme-mem 1500
+python kv_schedule_optimization.py --model facebook/opt-6.7b --prompt-len 4096 --gen-len 16 \
+                     --gpu-mem 16 --cpu-mem 200 
 2. Estimate the throughput for a given policy:
 python cost_model.py --model facebook/opt-30b --prompt-len 512 --gen-len 32 \
                      --gpu-mem 16 --cpu-mem 200 --nvme-mem 1500 \
@@ -65,7 +65,7 @@ class CostModelConfig:
 
     
 
-def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len, min_offloading=True):
+def get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_prompts, seq_len, min_offloading=True):
     print("getting available offloadings: ")
     total_available_gpu = hardware_config.gmem # Bytes
     total_weight_bytes = opt_config.model_bytes() # Bytes
@@ -83,11 +83,13 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, seq_len,
     for each_batch_size in batch_sizes:
         total_kv_cache_bytes = opt_config.cache_bytes(each_batch_size, seq_len) # Bytes (Toal KV Cache per forward pass) (seq_len = prompt_len+gen_len)
         total_hidden_bytes = opt_config.hidden_bytes(each_batch_size, seq_len) # Bytes (Total Hidden State per forward pass) (seq_len = prompt_len+gen_len)
-      
+        num_batches = num_of_prompts // each_batch_size
+
         for each_possible_offloading in batch_size_to_distinct_offloadings[each_batch_size]:
             num_prompts_on_gpu = int(each_batch_size* num_heads * (100-each_possible_offloading) / 100) // num_heads
-            actual_kv_cache_bytes = (num_prompts_on_gpu / each_batch_size) * total_kv_cache_bytes
+            actual_kv_cache_bytes = (num_prompts_on_gpu / each_batch_size) * num_batches * total_kv_cache_bytes
             print(f"strat: batch size: {each_batch_size}, offloading: {each_possible_offloading}")
+            print(f"tot possible kv cache: {total_kv_cache_bytes}")
             print(f"bytes : total_weight_bytes: {total_weight_bytes}, actual_kv_cache_bytes: {actual_kv_cache_bytes}, total_hidden_bytes: {total_hidden_bytes}")
             print(f"bytes sum: {total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes}")
             print(f"total_available_gpu mem (bytes): {total_available_gpu}")
@@ -377,8 +379,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     hidden_size = opt_config.hidden_size
     cur_seq_len = prompt_len + gen_len
     prev_not_seen = 1
-    # if gen_len == 0:
-    #     prev_not_seen = prompt_len
+    if gen_len == 0:
+        prev_not_seen = prompt_len
   
     #input: 
     if layer_type == "input":
@@ -659,7 +661,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
     # understand what unique batch size is available 
     batch_sizes = get_batch_sizes(num_of_prompts)
     # understand what % offloadings are available 
-    all_feasible_strategies_dict = get_available_offloadings(opt_config, hardware_config, batch_sizes, prompt_len+gen_len)
+    all_feasible_strategies_dict = get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_prompts, prompt_len+gen_len)
     
     ### ITERATE AND COMPARE STRATEGIES
 
