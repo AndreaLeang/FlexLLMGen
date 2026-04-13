@@ -159,12 +159,14 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
             # input: nothing*(num_batches -1) + load
             load_input_energy, load_input_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
             no_load_input_energy, no_load_input_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
-            
+            print(f"load input: {load_input_latency}")
+            print(f"no load input: {no_load_input_latency}")
             input_energy = (num_batches-1)*no_load_input_energy + load_input_energy 
             input_latency = (num_batches-1)*no_load_input_latency + load_input_latency 
     
             # output: store + nothing*(num_batches -1) 
             no_store_output_energy, no_store_output_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
+            print(f"no store output: {no_store_output_latency}")
             default_output_energy = (num_batches-1)*no_store_output_energy
             default_output_latency = (num_batches-1)*no_store_output_latency
             if cur_gen_len == gen_len -1:
@@ -184,16 +186,22 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
             single_load_MHA_energy, single_load_MHA_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
             single_store_MHA_energy, single_store_MHA_latency = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
             bi_dir_MHA_energy, bi_dir_MHA_latency = layer_prediction(model, bi_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
-            
+            print(f"single load MHA: {single_load_MHA_latency}")
+            print(f"single store MHA: {single_store_MHA_latency}")
+            print(f"bi dir MHA: {bi_dir_MHA_latency}")
+          
             tot_MHA_energy = single_load_MHA_energy + (num_batches-2)*bi_dir_MHA_energy + single_store_MHA_energy
             tot_MHA_latency = single_load_MHA_latency + (num_batches-2)*bi_dir_MHA_latency + single_store_MHA_latency
             tot_MHA_energy *= num_hidden_layers
             tot_MHA_latency *= num_hidden_layers
           
             single_store_energy, single_store_MLP_latency = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
-            single_load_tot_MLP_energy, single_load_MLP_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
+            single_load_MLP_energy, single_load_MLP_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
             nothing_MLP_energy, nothing_MLP_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
-            tot_MLP_energy = single_store_energy + (num_batches-2)*nothing_MLP_energy + single_load_tot_MLP_energy
+            print(f"single load MLP: {single_load_MLP_latency}")
+            print(f"single store MLP: {single_store_MLP_latency}")
+            print(f"no dir MLP: {nothing_MLP_latency}")
+            tot_MLP_energy = single_store_energy + (num_batches-2)*nothing_MLP_energy + single_load_MLP_energy
             tot_MLP_latency = single_store_MLP_latency + (num_batches-2)*nothing_MLP_latency + single_load_MLP_latency
             tot_MLP_energy *= (num_hidden_layers-1)
             tot_MLP_latency *= (num_hidden_layers-1)
