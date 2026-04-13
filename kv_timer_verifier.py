@@ -619,11 +619,10 @@ def get_layer_composition(json_filename):
             'Num of batches': all_file_var[3][4:], 
             'Offloading Percent': all_file_var[10], 
             'Recomp Len': all_file_var[14], 
-            'layer_type': "MHA", 
             'MHA Avg Latency (s)': avg_MHA_lat, 
             'MLP Avg Latency (s)': avg_MLP_lat,  
             'Input Avg Latency (s)': avg_input_lat,  
-            'Output Avg Latency (s)'}: avg_output_lat)
+            'Output Avg Latency (s)': avg_output_lat})
         
     return {"MHA":len(mha_latencies), "MLP":len(mlp_latencies), "input":len(input_latencies), "output":len(output_latencies)}
     
