@@ -687,7 +687,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         all_results = {}
 
     if testing: 
-        test_batch_size = 2
+        test_batch_size = 4
         test_offloading_per = 60
         test_recomp_len = 0
         # # single run
