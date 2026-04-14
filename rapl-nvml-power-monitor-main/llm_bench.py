@@ -651,7 +651,7 @@ class LLMPowerBench:
                     output_energy += cur_layer_energy
                     output_dur += cur_layer_dur
                     output_count += len(each_layer_batch_list)
-                elif: (each_layer_ind % 2) == 1:
+                elif (each_layer_ind % 2) == 1:
                     MHA_energy += cur_layer_energy
                     MHA_dur += cur_layer_dur
                     MHA_count += len(each_layer_batch_list)
