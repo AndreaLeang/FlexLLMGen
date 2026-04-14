@@ -159,8 +159,8 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
             # input: nothing*(num_batches -1) + load
             load_input_energy, load_input_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
             no_load_input_energy, no_load_input_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
-            print(f"load input: {load_input_latency}")
-            print(f"no load input: {no_load_input_latency}")
+            # print(f"load input: {load_input_latency}")
+            # print(f"no load input: {no_load_input_latency}")
             input_energy = (num_batches-1)*no_load_input_energy + load_input_energy 
             input_latency = (num_batches-1)*no_load_input_latency + load_input_latency 
     
@@ -186,9 +186,9 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
             single_load_MHA_energy, single_load_MHA_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
             single_store_MHA_energy, single_store_MHA_latency = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
             bi_dir_MHA_energy, bi_dir_MHA_latency = layer_prediction(model, bi_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
-            print(f"single load MHA: {single_load_MHA_latency}")
-            print(f"single store MHA: {single_store_MHA_latency}")
-            print(f"bi dir MHA: {bi_dir_MHA_latency}")
+            # print(f"single load MHA: {single_load_MHA_latency}")
+            # print(f"single store MHA: {single_store_MHA_latency}")
+            # print(f"bi dir MHA: {bi_dir_MHA_latency}")
           
             tot_MHA_energy = single_load_MHA_energy + (num_batches-2)*bi_dir_MHA_energy + single_store_MHA_energy
             tot_MHA_latency = single_load_MHA_latency + (num_batches-2)*bi_dir_MHA_latency + single_store_MHA_latency
@@ -198,9 +198,9 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
             single_store_energy, single_store_MLP_latency = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
             single_load_MLP_energy, single_load_MLP_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
             nothing_MLP_energy, nothing_MLP_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
-            print(f"single load MLP: {single_load_MLP_latency}")
-            print(f"single store MLP: {single_store_MLP_latency}")
-            print(f"no dir MLP: {nothing_MLP_latency}")
+            # print(f"single load MLP: {single_load_MLP_latency}")
+            # print(f"single store MLP: {single_store_MLP_latency}")
+            # print(f"no dir MLP: {nothing_MLP_latency}")
             tot_MLP_energy = single_store_energy + (num_batches-2)*nothing_MLP_energy + single_load_MLP_energy
             tot_MLP_latency = single_store_MLP_latency + (num_batches-2)*nothing_MLP_latency + single_load_MLP_latency
             tot_MLP_energy *= (num_hidden_layers-1)
@@ -222,10 +222,10 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         avg_latency_per_layer["MHA"] = (avg_latency_per_layer["MHA"][0]+tot_MHA_latency, avg_latency_per_layer["MHA"][1] + num_batches*num_hidden_layers)
         avg_latency_per_layer["MLP"] = (avg_latency_per_layer["MLP"][0]+tot_MLP_latency, avg_latency_per_layer["MLP"][1] + num_batches*num_hidden_layers)\
 
-        print(f"layer avg input latency: {input_latency/ num_batches}")
-        print(f"layer avg MHA latency: {tot_MHA_latency/ (num_batches*num_hidden_layers)}")
-        print(f"layer avg MLP latency: {tot_MLP_latency/ (num_batches*num_hidden_layers)}")
-        print(f"layer avg output latency: {output_latency / num_batches}")
+        # print(f"layer avg input latency: {input_latency/ num_batches}")
+        # print(f"layer avg MHA latency: {tot_MHA_latency/ (num_batches*num_hidden_layers)}")
+        # print(f"layer avg MLP latency: {tot_MLP_latency/ (num_batches*num_hidden_layers)}")
+        # print(f"layer avg output latency: {output_latency / num_batches}")
       
         # print(f"each total input latency: {input_latency}")
         # print(f"total forward pass MHA latency: {tot_MHA_latency}")
@@ -760,7 +760,7 @@ if __name__ == "__main__":
     parser.add_argument("--gpu-mem", type=int, default=40)
     parser.add_argument("--cpu-mem", type=int, default=200)
     parser.add_argument("--cpu-usage", "--per-cpu-mem", type=int, default = 100)
-    parser.add_argument("--gpu-usage", "--per-gpu-mem",type=int, default = 70)
+    parser.add_argument("--gpu-usage", "--per-gpu-mem",type=int, default = 75)
 
     parser.add_argument("--np", "--num-prompts", type=int)
     parser.add_argument("--test", "--testing", action="store_true")
