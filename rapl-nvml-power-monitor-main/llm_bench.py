@@ -611,17 +611,22 @@ class LLMPowerBench:
                   f"{p.throughput_tok_s:>7.1f} "
                   f"{p.avg_cpu_pkg_w:>7.1f}W {p.avg_cpu_dram_w:>7.1f}W "
                   f"{gpu0:>6.1f}W{skt_str}  {p.energy_per_token_j:>7.4f}")
-        input_avg_energy = 0.0
-        input_avg_dur = 0.0
+        
+        input_GPU_energy = 0.0
+        input_CPU_energy = 0.0
+        input_dur = 0.0
         input_count = 0
-        output_avg_energy = 0.0
+        output_GPU_energy = 0.0
+        output_CPU_energy = 0.0
         output_avg_dur = 0.0
         output_count = 0
-        MHA_avg_energy = 0.0
-        MHA_avg_dur = 0.0
+        MHA_GPU_energy = 0.0
+        MHA_CPU_energy = 0.0
+        MHA_dur = 0.0
         MHA_count = 0
-        MLP_avg_energy = 0.0
-        MLP_avg_dur = 0.0
+        MLP_GPU_energy = 0.0
+        MLP_CPU_energy = 0.0
+        MLP_dur = 0.0
         MLP_count = 0
         
         for each_gen_layer_list in r.layers:
@@ -641,30 +646,37 @@ class LLMPowerBench:
                           f"{p.throughput_tok_s:>7.1f} "
                           f"{p.avg_cpu_pkg_w:>7.1f}W {p.avg_cpu_dram_w:>7.1f}W "
                           f"{gpu0:>6.1f}W{skt_str}  {p.energy_per_token_j:>7.4f}")
-                    cur_layer_energy += p.avg_cpu_dram_w
+                    cur_layer_GPU_energy += p.avg_gpu_dram_w
+                    cur_layer_CPU_energy += p.avg_cpu_dram_w
                     cur_layer_dur += p.avg_duration_s
+                
                 if each_layer_ind == 0:
-                    input_energy += cur_layer_energy
+                    input_GPU_energy += cur_layer_GPU_energy
+                    input_CPU_energy += cur_layer_CPU_energy
                     input_dur += cur_layer_dur
                     input_count += len(each_layer_batch_list)
                 elif each_layer_ind == n_layers-1:
-                    output_energy += cur_layer_energy
+                    output_GPU_energy += cur_layer_GPU_energy
+                    output_CPU_energy += cur_layer_CPU_energy
                     output_dur += cur_layer_dur
                     output_count += len(each_layer_batch_list)
                 elif (each_layer_ind % 2) == 1:
-                    MHA_energy += cur_layer_energy
+                    MHA_GPU_energy += cur_layer_GPU_energy
+                    MHA_CPU_energy += cur_layer_CPU_energy
                     MHA_dur += cur_layer_dur
                     MHA_count += len(each_layer_batch_list)
                 else: 
-                    MLP_energy += cur_layer_energy
+                    MLP_GPU_energy += cur_layer_GPU_energy
+                    MLP_CPU_energy += cur_layer_CPU_energy
                     MLP_dur += cur_layer_dur
                     MLP_count += len(each_layer_batch_list)
         
         print(sep)
-        print(f"Avg input duration: {input_dur/input_count}, input energy: {input_energy/input_count}")
-        print(f"Avg output duration: {output_dur/output_count}, output energy: {output_energy/output_count}")
-        print(f"Avg MHA duration: {MHA_dur/MHA_count}, MHA energy: {MHA_energy/MHA_count}")
-        print(f"Avg MLP duration: {MLP_dur/MLP_count}, MLP energy: {MLP_energy/MLP_count}")
+        if input_count > 0: 
+            print(f"Avg input duration: {input_dur/input_count}, input GPU energy: {input_GPU_energy/input_count}, input CPU energy: {input_CPU_energy/input_count}")
+            print(f"Avg output duration: {output_dur/output_count}, output GPU energy: {output_GPU_energy/output_count}, output CPU energy: {output_CPU_energy/output_count}")
+            print(f"Avg MHA duration: {MHA_dur/MHA_count}, MHA GPU energy: {MHA_GPU_energy/MHA_count}, MHA CPU energy: {MHA_CPU_energy/MHA_count}")
+            print(f"Avg MLP duration: {MLP_dur/MLP_count}, MLP GPU energy: {MLP_GPU_energy/MLP_count}, MLP GPU energy: {MLP_CPU_energy/MLP_count}")
         print(sep)
 
     def save_json(self, r: InferenceResult, path: str):
