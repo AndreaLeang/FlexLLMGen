@@ -524,8 +524,8 @@ class LLMPowerBench:
                         self.model.update_attention_mask(i, k)
                     for j in range(num_layers):
                         for k in range(num_gpu_batches):
+                            print(f"gen_len: {i}, layer_num: {j}, batch num: {k}")
                             for each_iter in range(n_iters_layer):
-                              print(f"each_iter: {each_iter}, gen_len: {i}, layer_num: {j}, batch num: {k}")
                               repeating = each_iter!=(n_iters_layer-1)
                               lt0 = time.perf_counter()
                               li0 = len(mon.samples)
