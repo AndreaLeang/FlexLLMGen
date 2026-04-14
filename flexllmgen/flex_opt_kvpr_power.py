@@ -245,7 +245,8 @@ class OutputEmbed:
 
         h = self.compute.opt_output_embed(h, w_ln, b_ln, w_token, donate,
             self.task.do_sample, self.task.temperature)
-        hidden.val = h
+        if not repeating:    
+            hidden.val = h
 
 
 class SelfAttention:
