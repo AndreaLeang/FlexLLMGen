@@ -700,7 +700,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
             each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
             cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
             if save_results: 
-                cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
+                cur_strat = (test_batch_size, test_offloading_per, each_recomp_len)
                 all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
           
         
