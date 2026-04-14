@@ -690,10 +690,20 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         test_batch_size = 2
         test_offloading_per = 60
         test_recomp_len = 0
-        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, test_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
-        if save_results: 
-            cur_strat = (test_batch_size, test_offloading_per, test_recomp_len)
-            all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
+        # # single run
+        # cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, test_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
+        # if save_results: 
+        #     cur_strat = (test_batch_size, test_offloading_per, test_recomp_len)
+        #     all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
+      
+        for each_recomp_percent in range(0, 110, 10):
+            each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
+            cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
+            if save_results: 
+                cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
+                all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
+          
+        
         min_objective_val = cur_latency
         min_strategy = (test_batch_size, test_offloading_per, test_recomp_len, cur_energy, cur_latency)
     else: 
