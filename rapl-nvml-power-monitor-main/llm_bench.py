@@ -521,7 +521,7 @@ class LLMPowerBench:
                 # Generate
                 for i in range(self.model.execute_gen_len):
                     for k in range(num_gpu_batches):
-                        self.update_attention_mask(i, k)
+                        self.model.update_attention_mask(i, k)
                     for j in range(num_layers):
                         for k in range(num_gpu_batches):
                             for each_iter in range(n_iters_layer):
@@ -611,8 +611,30 @@ class LLMPowerBench:
                   f"{p.throughput_tok_s:>7.1f} "
                   f"{p.avg_cpu_pkg_w:>7.1f}W {p.avg_cpu_dram_w:>7.1f}W "
                   f"{gpu0:>6.1f}W{skt_str}  {p.energy_per_token_j:>7.4f}")
+        input_avg_energy = 0.0
+        input_avg_dur = 0.0
+        input_count = 0
+        output_avg_energy = 0.0
+        output_avg_dur = 0.0
+        output_count = 0
+        MHA_avg_energy = 0.0
+        MHA_avg_dur = 0.0
+        MHA_count = 0
+        MLP_avg_energy = 0.0
+        MLP_avg_dur = 0.0
+        MLP_count = 0
+        
+        for i in range(gen_len):
+              cur_gen = []
+              for j in range(num_layers):
+                  cur_layer = []
+                  for k in range(num_gpu_batches):
         for each_gen_layer_list in r.layers:
-            for each_layer_batch_list in each_gen_layer_list:
+            n_layers = len(each_gen_layer_list)
+            for each_layer_ind in range(n_layers):
+                each_layer_batch_list = each_gen_layer_list[each_layer_ind]
+                cur_layer_energy = 0.0
+                cur_layer_dur = 0.0
                 for p in each_layer_batch_list:
                     print(f"p: {p}")
                     gpu0    = p.avg_gpu_w[0] if p.avg_gpu_w else 0.0
@@ -624,6 +646,30 @@ class LLMPowerBench:
                           f"{p.throughput_tok_s:>7.1f} "
                           f"{p.avg_cpu_pkg_w:>7.1f}W {p.avg_cpu_dram_w:>7.1f}W "
                           f"{gpu0:>6.1f}W{skt_str}  {p.energy_per_token_j:>7.4f}")
+                    cur_layer_energy += p.avg_cpu_dram_w
+                    cur_layer_dur += p.avg_duration_s
+                if each_layer_ind == 0:
+                    input_energy += cur_layer_energy
+                    input_dur += cur_layer_dur
+                    input_count += len(each_layer_batch_list)
+                elif each_layer_ind == n_layers-1:
+                    output_energy += cur_layer_energy
+                    output_dur += cur_layer_dur
+                    output_count += len(each_layer_batch_list)
+                elif: (each_layer_ind % 2) == 1:
+                    MHA_energy += cur_layer_energy
+                    MHA_dur += cur_layer_dur
+                    MHA_count += len(each_layer_batch_list)
+                else: 
+                    MLP_energy += cur_layer_energy
+                    MLP_dur += cur_layer_dur
+                    MLP_count += len(each_layer_batch_list)
+        
+        print(sep)
+        print(f"Avg input duration: {input_dur/input_count}, input energy: {input_energy/input_count}")
+        print(f"Avg output duration: {output_dur/output_count}, output energy: {output_energy/output_count}")
+        print(f"Avg MHA duration: {MHA_dur/MHA_count}, MHA energy: {MHA_energy/MHA_count}")
+        print(f"Avg MLP duration: {MLP_dur/MLP_count}, MLP energy: {MLP_energy/MLP_count}")
         print(sep)
 
     def save_json(self, r: InferenceResult, path: str):
