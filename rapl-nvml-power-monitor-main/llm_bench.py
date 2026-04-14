@@ -624,11 +624,6 @@ class LLMPowerBench:
         MLP_avg_dur = 0.0
         MLP_count = 0
         
-        for i in range(gen_len):
-              cur_gen = []
-              for j in range(num_layers):
-                  cur_layer = []
-                  for k in range(num_gpu_batches):
         for each_gen_layer_list in r.layers:
             n_layers = len(each_gen_layer_list)
             for each_layer_ind in range(n_layers):
