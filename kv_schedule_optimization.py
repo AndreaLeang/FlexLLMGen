@@ -770,7 +770,7 @@ if __name__ == "__main__":
     parser.add_argument("--gpu-mem", type=int, default=40)
     parser.add_argument("--cpu-mem", type=int, default=200)
     parser.add_argument("--cpu-usage", "--per-cpu-mem", type=int, default = 100)
-    parser.add_argument("--gpu-usage", "--per-gpu-mem",type=int, default = 75)
+    parser.add_argument("--gpu-usage", "--per-gpu-mem",type=int, default = 65)
 
     parser.add_argument("--np", "--num-prompts", type=int)
     parser.add_argument("--test", "--testing", action="store_true")
