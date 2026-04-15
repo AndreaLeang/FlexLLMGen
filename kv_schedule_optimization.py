@@ -168,7 +168,6 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     
             # output: store + nothing*(num_batches -1) 
             no_store_output_energy, no_store_output_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
-            print(f"no store output: {no_store_output_latency}")
             default_output_energy = (num_batches-1)*no_store_output_energy
             default_output_latency = (num_batches-1)*no_store_output_latency
             if cur_gen_len == gen_len -1:
@@ -200,9 +199,11 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
             single_store_energy, single_store_MLP_latency = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
             single_load_MLP_energy, single_load_MLP_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
             nothing_MLP_energy, nothing_MLP_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+
             # print(f"single load MLP: {single_load_MLP_latency}")
             # print(f"single store MLP: {single_store_MLP_latency}")
             # print(f"no dir MLP: {nothing_MLP_latency}")
+          
             tot_MLP_energy = single_store_energy + (num_batches-2)*nothing_MLP_energy + single_load_MLP_energy
             tot_MLP_latency = single_store_MLP_latency + (num_batches-2)*nothing_MLP_latency + single_load_MLP_latency
             tot_MLP_energy *= (num_hidden_layers-1)
@@ -242,8 +243,8 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
         if cur_gen_len == 0:
             time_to_first_token = one_forward_latency
-        # print(f"total latency of this forward pass: {one_forward_latency}")
-        # print(f"total latency seen so far: {tot_latency}")
+        print(f"total energy  of this forward pass: {one_forward_energy}")
+        print(f"total energy seen so far: {tot_energy}")
 
     # get total energy and latency and time_to_first_token
     return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer
