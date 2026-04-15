@@ -63,6 +63,8 @@ class CostModelConfig:
     gmem: int = 40 * GB
     cmem: int = 200 * GB
 
+    gpu_freq: int = 1305
+
     
 
 def get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_prompts, seq_len, min_offloading=True):
@@ -270,7 +272,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         return layer_calc_energy, layer_calc_latency
     elif is_load_store == 2:
         # store only --> single directional
-        transfer_energy, transfer_lat = transfer_pred(get_bytes_to_store(batch_size), hardware_config)
+        transfer_energy, transfer_lat = transfer_pred(get_bytes_to_store(batch_size), hardware_config, gpu_estimator)
         return layer_calc_energy+transfer_energy, max(layer_calc_latency, transfer_lat)
     else:
         recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
@@ -278,17 +280,17 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional indicator
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
-        # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config))
-        recomp_transfer_energy, recomp_transfer_latency = transfer_pred(recomp_bytes, hardware_config)
+        # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config, gpu_estimator))
+        recomp_transfer_energy, recomp_transfer_latency = transfer_pred(recomp_bytes, hardware_config, gpu_estimator)
         # print(f"load and store first half: latency is max of pinned: {pinned_latency} and transfer: {recomp_transfer_latency}")
         first_half_latency = max(pinned_latency, recomp_transfer_latency)
         
-        k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config)
+        k_transfer_energy, k_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, gpu_estimator)
         if is_load_store == 1: #use is_load_store==1 as single directional
             v_transfer_energy = k_transfer_energy
             v_transfer_latency = k_transfer_latency
         else: 
-            v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, single_directional = False)
+            v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, gpu_estimator, single_directional = False)
         # print(f"load and store second half: latency is max of pinned + layer calc: {pinned_latency  + layer_calc_latency} and transfer: {k_transfer_latency + v_transfer_latency}")
         second_half_latency = max(pinned_latency + layer_calc_latency, k_transfer_latency + v_transfer_latency)
         tot_energy = pinned_energy + recomp_transfer_energy + layer_calc_energy + k_transfer_energy + v_transfer_energy
@@ -297,16 +299,16 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
 
 
 def pinned_pred(bytes, hardware_config):
-    #TODO: energy
     if bytes == 0:
         return 0, 0
     latency_us = max(0, 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7)
     latency = latency_us / 1000000.0
     print(f"pinned: bytes (B): {bytes}, latency (s): {latency}")
+    # Pageable to Pinned does not contribute to GPU energy
     return 0, latency
 
 
-def transfer_pred(bytes, hardware_config, single_directional=True):
+def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True):
     #TODO: energy
     if bytes == 0:
         return 0,0
@@ -318,8 +320,8 @@ def transfer_pred(bytes, hardware_config, single_directional=True):
     bandwidth = max(min(bandwidth, 14.0), 0)
     latency = max(bytes/bandwidth, 0)
     print(f"transfer: single dir: {single_directional}, bytes (GB): {bytes}, bandwidth: {bandwidth}, latency: {latency}")
-    
-    return 0, latency
+    gpu_energy = gpu_estimator.dvfs_idle_power * latency
+    return gpu_energy, latency
 
 def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len, gpu_estimator, hardware_config):
     # estimator: op
@@ -374,11 +376,10 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
             all_query_types.append(copy_2_query_type)
 
     #TODO: verify target frequency
-    target_freq = 1305
     tot_lat = 0
     tot_energy = 0
     for each_ind in range(len(all_queries)):
-        latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
+        latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=hardware_config.gpu_freq, lookup_target='all')
         # print(f"recomp gpu op: query: {all_queries[each_ind]}, latency: {latency}")
         tot_lat += latency
         tot_energy += energy
@@ -655,11 +656,10 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         return 0, 0
   
     #TODO: verify target frequency
-    target_freq = 1305
     tot_lat = 0
     tot_energy = 0
     for each_ind in range(len(all_queries)):
-        latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=target_freq, lookup_target='all')
+        latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=hardware_config.gpu_freq, lookup_target='all')
         tot_lat += latency
         tot_energy += energy
     tot_lat /= 1000.0 # ms --> s
@@ -771,6 +771,7 @@ if __name__ == "__main__":
     parser.add_argument("--cpu-mem", type=int, default=200)
     parser.add_argument("--cpu-usage", "--per-cpu-mem", type=int, default = 100)
     parser.add_argument("--gpu-usage", "--per-gpu-mem",type=int, default = 65)
+    parser.add_argument("--gpu-freq", "--gpu-frequency",type=int, default = 1305)
 
     parser.add_argument("--np", "--num-prompts", type=int)
     parser.add_argument("--test", "--testing", action="store_true")
@@ -794,6 +795,7 @@ if __name__ == "__main__":
 
     config.cmem = alpha_c * args.cpu_mem * GB
     config.gmem = alpha_g * args.gpu_mem * GB
+    config.gpu_freq = args.gpu_freq
     
 
     #TODO: specify hardware config
