@@ -688,8 +688,8 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         all_results = {}
 
     if testing: 
-        test_batch_size = 8
-        test_offloading_per = 90
+        test_batch_size = 4
+        test_offloading_per = 60
         test_recomp_len = 0
         # # single run
         # cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, test_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
