@@ -324,4 +324,5 @@ def get_optimal_split_point(execute_gen_len, gpu_batch_size, input_dim):
         if t_total < t_min:
             t_min = t_total
             optimal_split_point = recompute_len
+    print(f"single layer time: {t_min}")
     return optimal_split_point
