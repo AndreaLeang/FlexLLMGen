@@ -761,6 +761,55 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
     print(f'best policy: batch_size = {min_strategy[0]}, offloading_percent = {min_strategy[1]}, recomp_len = {min_strategy[2]}, energy = {min_strategy[3]}, latency = {min_strategy[4]}')
     return min_objective_val, min_strategy
 
+def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, batch_size, offloading_per, recomp_len, gpu_estimator, var_to_min="latency"):
+    min_objective_val = float('inf')
+    min_strategy = None
+
+    if save_results: 
+        all_results = {}
+
+    # single run
+    cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // test_batch_size, gpu_estimator)
+    if save_results: 
+        cur_strat = (batch_size, offloading_per, recomp_len)
+        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
+  
+    min_objective_val = cur_latency
+    min_strategy = (batch_size, offloading_per, recomp_len, cur_energy, cur_latency)
+    
+    if save_results:
+        csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
+        print(csv_filename)
+        fieldnames = ["Batch Size", "Offloading Percent to CPU", "Recompute Length", "Energy (J)", "Latency (s)", "Time to First Token (s)", "Avg Input Layer Energy (J)", "Avg Input Layer Latency (s)", "Avg Output Layer Energy (J)", "Avg Output Layer Latency (s)", "Avg MHA Layer Energy (J)", "Avg MHA Layer Latency (s)", "Avg MLP Layer Energy (J)", "Avg MLP Layer Latency (s)"]
+        write_header = not os.path.exists(csv_filename)
+      
+        with open(csv_filename, 'a', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            if write_header:
+                writer.writeheader()
+            print(f"# of results: {len(all_results)}")
+            for each_strat in all_results:
+              cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = all_results[each_strat]
+              writer.writerow({'Batch Size': each_strat[0], 
+                      'Offloading Percent to CPU': each_strat[1],
+                      'Recompute Length': each_strat[2], 
+                      'Energy (J)': cur_energy, 
+                      'Latency (s)': cur_latency, 
+                      'Time to First Token (s)': cur_TTFT,
+                      'Avg Input Layer Energy (J)': avg_energy_per_layer["input"][0] / avg_energy_per_layer["input"][1], 
+                      'Avg Input Layer Latency (s)': avg_latency_per_layer["input"][0] / avg_latency_per_layer["input"][1], 
+                      'Avg Output Layer Energy (J)': avg_energy_per_layer["output"][0] / avg_energy_per_layer["output"][1], 
+                      'Avg Output Layer Latency (s)': avg_latency_per_layer["output"][0] / avg_latency_per_layer["output"][1], 
+                      'Avg MHA Layer Energy (J)': avg_energy_per_layer["MHA"][0] / avg_energy_per_layer["MHA"][1], 
+                      'Avg MHA Layer Latency (s)': avg_latency_per_layer["MHA"][0] / avg_latency_per_layer["MHA"][1],
+                      'Avg MLP Layer Energy (J)': avg_energy_per_layer["MLP"][0] / avg_energy_per_layer["MLP"][1], 
+                      'Avg MLP Layer Latency (s)': avg_latency_per_layer["MLP"][0] / avg_latency_per_layer["MLP"][1],
+                      })
+
+    # return best policy and optimal latency, energy, etc.
+    print(f'best policy: batch_size = {min_strategy[0]}, offloading_percent = {min_strategy[1]}, recomp_len = {min_strategy[2]}, energy = {min_strategy[3]}, latency = {min_strategy[4]}')
+    return min_objective_val, min_strategy
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
@@ -773,6 +822,11 @@ if __name__ == "__main__":
     parser.add_argument("--cpu-usage", "--per-cpu-mem", type=int, default = 100)
     parser.add_argument("--gpu-usage", "--per-gpu-mem",type=int, default = 65)
     parser.add_argument("--gpu-freq", "--gpu-frequency",type=int, default = 1305)
+
+    parser.add_argument("--s", "--specific-est", action="store_true")
+    parser.add_argument("--gbs", "--batch-size", type=int, default = 1)
+    parser.add_argument("--off-per", "--offloading-percent", type=int, default = 0)
+    parser.add_argument("--recomp-len", type=int, default = 0)
 
     parser.add_argument("--np", "--num-prompts", type=int)
     parser.add_argument("--test", "--testing", action="store_true")
@@ -807,5 +861,8 @@ if __name__ == "__main__":
                         dvfs_supply_voltage_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
                         dvfs_idle_power_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
                         lut_folder_abs_path="/home/akleang/akleang/energaizer-ispass26-artifact/database/data")
-    disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.test, gpu_estimator)
+    if args.s:
+        single_strat_pred(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.gbs, args.off_per, args.recomp_len, gpu_estimator)
+    else: 
+        disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.test, gpu_estimator)
 
