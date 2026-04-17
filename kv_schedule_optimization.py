@@ -114,6 +114,50 @@ def get_batch_sizes(num_of_prompts):
         cur_num_batches //= 2
     return possible_batch_sizes
 
+def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator):
+
+    tot_energy = 0
+    tot_latency = 0
+    time_to_first_token = 0
+    avg_energy_per_layer = {"input": (0.0, 0), "output": (0.0, 0), "MHA": (0.0, 0), "MLP": (0.0, 0)} # (tot, num of occurances)
+    avg_latency_per_layer = {"input": (0.0, 0), "output": (0.0, 0), "MHA": (0.0, 0), "MLP": (0.0, 0)}
+    
+    num_hidden_layers = model.num_hidden_layers
+    
+    # First Token Prediction
+    if num_batches == 1: 
+        fir_input_energy, fir_input_latency, fir_output_energy, fir_output_latency, fir_tot_MHA_energy, fir_tot_MHA_latency, fir_tot_MLP_energy, fir_tot_MLP_latency = single_batch_forward_pass(model, num_of_prompts, prompt_len, 0, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator)
+    else:
+        fir_input_energy, fir_input_latency, fir_output_energy, fir_output_latency, fir_tot_MHA_energy, fir_tot_MHA_latency, fir_tot_MLP_energy, fir_tot_MLP_latency = multi_batch_forward_pass(model, num_of_prompts, prompt_len, 0, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator)
+    first_token_energy = fir_input_energy + fir_tot_MHA_energy + fir_tot_MLP_energy + fir_output_energy
+    first_token_latency = fir_input_latency + fir_tot_MHA_latency + fir_tot_MLP_latency + fir_output_latency
+
+    # rest of Tokens Prediction --> simplified to (gen_len - 1)*forward_pass_latency
+    if num_batches == 1: 
+        input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency = single_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator)
+    else:
+        input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency = multi_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator)
+    other_token_energy = (gen_len - 1) * (input_energy + tot_MHA_energy + tot_MLP_energy + output_energy)
+    other_token_latency = (gen_len - 1) * (input_energy + tot_MHA_energy + tot_MLP_energy + output_energy)
+
+    tot_energy = first_token_energy + other_token_energy
+    tot_latency = first_token_latency + other_token_latency
+    time_to_first_token = first_token_latency
+  
+    avg_energy_per_layer["input"] = (fir_input_energy + (gen_len - 1) *input_energy, gen_len*num_batches)
+    avg_energy_per_layer["output"] = (fir_output_energy + (gen_len - 1) *output_energy, gen_len*num_batches)
+    avg_energy_per_layer["MHA"] = (fir_tot_MHA_energy+(gen_len - 1) *tot_MHA_energy, gen_len*num_batches*num_hidden_layers)
+    avg_energy_per_layer["MLP"] = (fir_tot_MLP_energy+(gen_len - 1) *tot_MLP_energy, gen_len*num_batches*num_hidden_layers)
+
+    avg_latency_per_layer["input"] = (fir_input_latency+(gen_len - 1) *input_latency,gen_len*num_batches)
+    avg_latency_per_layer["output"] = (fir_output_latency+(gen_len - 1) *output_latency, gen_len*num_batches)
+    avg_latency_per_layer["MHA"] = (fir_tot_MHA_latency + (gen_len - 1) *tot_MHA_latency, gen_len*num_batches*num_hidden_layers)
+    avg_latency_per_layer["MLP"] = (fir_tot_MLP_latency+(gen_len - 1) *tot_MLP_latency, gen_len*num_batches*num_hidden_layers)
+    
+    # get total energy and latency and time_to_first_token
+    return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer
+
+
 def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator):
     #offloading percent is amount offloaded to the cpu
 
@@ -131,87 +175,9 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     for cur_gen_len in range(gen_len):
         # input, output, MHA and MLP
         if num_batches == 1:
-            #input
-            # input: nothing*(num_batches -1) + load
-            input_energy, input_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
-
-            #output
-            if cur_gen_len == gen_len-1:
-                output_energy, output_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
-            else: 
-                output_energy, output_latency = layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
-          
-            # MHA: compute, MLP: load + store unless last layer. then just store
-            tot_MHA_energy, tot_MHA_latency =layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
-            tot_MHA_energy *= num_hidden_layers
-            tot_MHA_latency *= num_hidden_layers
-          
-            will_load = 3
-            if cur_gen_len == gen_len -1:
-                will_load = 1 # no storing for last pass
-            tot_MLP_energy, tot_MLP_latency = layer_prediction(model, will_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
-            tot_MLP_energy *= (num_hidden_layers-1)
-            tot_MLP_latency *= (num_hidden_layers-1)
-            
-            last_MLP_energy, last_MLP_latency = layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
-            tot_MLP_energy += last_MLP_energy
-            tot_MLP_latency += last_MLP_latency
+            input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency = single_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator)
         else:
-            #input
-            # input: nothing*(num_batches -1) + load
-            load_input_energy, load_input_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
-            no_load_input_energy, no_load_input_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
-            # print(f"load input: {load_input_latency}")
-            # print(f"no load input: {no_load_input_latency}")
-            input_energy = (num_batches-1)*no_load_input_energy + load_input_energy 
-            input_latency = (num_batches-1)*no_load_input_latency + load_input_latency 
-    
-            # output: store + nothing*(num_batches -1) 
-            no_store_output_energy, no_store_output_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
-            default_output_energy = (num_batches-1)*no_store_output_energy
-            default_output_latency = (num_batches-1)*no_store_output_latency
-            if cur_gen_len == gen_len -1:
-                output_energy = default_output_energy + no_store_output_energy
-                output_latency = default_output_latency + no_store_output_latency
-            else: 
-                store_output_energy, store_output_latency =  layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
-                output_energy = default_output_energy + store_output_energy
-                output_latency = default_output_latency + store_output_latency
-          
-            # MHA: load, load_store*(num_batches-2), store   MLP: store, nothing*(num_batches-2), load
-            will_store = 2
-            bi_load = 3
-            if cur_gen_len == gen_len -1:
-                will_store = 0 # no storing for last forward pass
-                bi_load = 1
-            single_load_MHA_energy, single_load_MHA_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
-            single_store_MHA_energy, single_store_MHA_latency = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
-            bi_dir_MHA_energy, bi_dir_MHA_latency = layer_prediction(model, bi_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
-            # print(f"single load MHA: {single_load_MHA_latency}")
-            # print(f"single store MHA: {single_store_MHA_latency}")
-            # print(f"bi dir MHA: {bi_dir_MHA_latency}")
-          
-            tot_MHA_energy = single_load_MHA_energy + (num_batches-2)*bi_dir_MHA_energy + single_store_MHA_energy
-            tot_MHA_latency = single_load_MHA_latency + (num_batches-2)*bi_dir_MHA_latency + single_store_MHA_latency
-            tot_MHA_energy *= num_hidden_layers
-            tot_MHA_latency *= num_hidden_layers
-          
-            single_store_energy, single_store_MLP_latency = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
-            single_load_MLP_energy, single_load_MLP_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
-            nothing_MLP_energy, nothing_MLP_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
-
-            # print(f"single load MLP: {single_load_MLP_latency}")
-            # print(f"single store MLP: {single_store_MLP_latency}")
-            # print(f"no dir MLP: {nothing_MLP_latency}")
-          
-            tot_MLP_energy = single_store_energy + (num_batches-2)*nothing_MLP_energy + single_load_MLP_energy
-            tot_MLP_latency = single_store_MLP_latency + (num_batches-2)*nothing_MLP_latency + single_load_MLP_latency
-            tot_MLP_energy *= (num_hidden_layers-1)
-            tot_MLP_latency *= (num_hidden_layers-1)
-
-            # Last MLP layer: pattern changes (no load in end)
-            tot_MLP_energy += single_store_energy + (num_batches-1)*nothing_MLP_energy
-            tot_MLP_latency += single_store_MLP_latency + (num_batches-1)*nothing_MLP_latency
+            input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency = multi_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator)
       
         middle_layer_latency = tot_MHA_latency + tot_MLP_latency
         middle_layer_energy = tot_MHA_energy + tot_MLP_energy
@@ -223,7 +189,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         avg_latency_per_layer["input"] = (avg_latency_per_layer["input"][0]+input_latency, avg_latency_per_layer["input"][1] + num_batches)
         avg_latency_per_layer["output"] = (avg_latency_per_layer["output"][0]+output_latency, avg_latency_per_layer["output"][1] + num_batches)
         avg_latency_per_layer["MHA"] = (avg_latency_per_layer["MHA"][0]+tot_MHA_latency, avg_latency_per_layer["MHA"][1] + num_batches*num_hidden_layers)
-        avg_latency_per_layer["MLP"] = (avg_latency_per_layer["MLP"][0]+tot_MLP_latency, avg_latency_per_layer["MLP"][1] + num_batches*num_hidden_layers)\
+        avg_latency_per_layer["MLP"] = (avg_latency_per_layer["MLP"][0]+tot_MLP_latency, avg_latency_per_layer["MLP"][1] + num_batches*num_hidden_layers)
 
         # print(f"layer avg input latency: {input_latency/ num_batches}")
         # print(f"layer avg MHA latency: {tot_MHA_latency/ (num_batches*num_hidden_layers)}")
@@ -248,6 +214,95 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
     # get total energy and latency and time_to_first_token
     return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer
+
+
+def single_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator):
+    # input: nothing*(num_batches -1) + load
+    input_energy, input_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
+
+    #output
+    if cur_gen_len == gen_len-1:
+        output_energy, output_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
+    else: 
+        output_energy, output_latency = layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
+  
+    # MHA: compute, MLP: load + store unless last layer. then just store
+    tot_MHA_energy, tot_MHA_latency =layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
+    tot_MHA_energy *= num_hidden_layers
+    tot_MHA_latency *= num_hidden_layers
+  
+    will_load = 3
+    if cur_gen_len == gen_len -1:
+        will_load = 1 # no storing for last pass
+    tot_MLP_energy, tot_MLP_latency = layer_prediction(model, will_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+    tot_MLP_energy *= (num_hidden_layers-1)
+    tot_MLP_latency *= (num_hidden_layers-1)
+    
+    last_MLP_energy, last_MLP_latency = layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+    tot_MLP_energy += last_MLP_energy
+    tot_MLP_latency += last_MLP_latency
+  
+    return input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency 
+
+def multi_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator):
+    # input: nothing*(num_batches -1) + load
+    load_input_energy, load_input_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
+    no_load_input_energy, no_load_input_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
+    # print(f"load input: {load_input_latency}")
+    # print(f"no load input: {no_load_input_latency}")
+    input_energy = (num_batches-1)*no_load_input_energy + load_input_energy 
+    input_latency = (num_batches-1)*no_load_input_latency + load_input_latency 
+
+    # output: store + nothing*(num_batches -1) 
+    no_store_output_energy, no_store_output_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
+    default_output_energy = (num_batches-1)*no_store_output_energy
+    default_output_latency = (num_batches-1)*no_store_output_latency
+    if cur_gen_len == gen_len -1:
+        output_energy = default_output_energy + no_store_output_energy
+        output_latency = default_output_latency + no_store_output_latency
+    else: 
+        store_output_energy, store_output_latency =  layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
+        output_energy = default_output_energy + store_output_energy
+        output_latency = default_output_latency + store_output_latency
+  
+    # MHA: load, load_store*(num_batches-2), store   MLP: store, nothing*(num_batches-2), load
+    will_store = 2
+    bi_load = 3
+    if cur_gen_len == gen_len -1:
+        will_store = 0 # no storing for last forward pass
+        bi_load = 1
+    single_load_MHA_energy, single_load_MHA_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
+    single_store_MHA_energy, single_store_MHA_latency = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
+    bi_dir_MHA_energy, bi_dir_MHA_latency = layer_prediction(model, bi_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
+    # print(f"single load MHA: {single_load_MHA_latency}")
+    # print(f"single store MHA: {single_store_MHA_latency}")
+    # print(f"bi dir MHA: {bi_dir_MHA_latency}")
+  
+    tot_MHA_energy = single_load_MHA_energy + (num_batches-2)*bi_dir_MHA_energy + single_store_MHA_energy
+    tot_MHA_latency = single_load_MHA_latency + (num_batches-2)*bi_dir_MHA_latency + single_store_MHA_latency
+    tot_MHA_energy *= num_hidden_layers
+    tot_MHA_latency *= num_hidden_layers
+  
+    single_store_energy, single_store_MLP_latency = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
+    single_load_MLP_energy, single_load_MLP_latency = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
+    nothing_MLP_energy, nothing_MLP_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+
+    # print(f"single load MLP: {single_load_MLP_latency}")
+    # print(f"single store MLP: {single_store_MLP_latency}")
+    # print(f"no dir MLP: {nothing_MLP_latency}")
+  
+    tot_MLP_energy = single_store_energy + (num_batches-2)*nothing_MLP_energy + single_load_MLP_energy
+    tot_MLP_latency = single_store_MLP_latency + (num_batches-2)*nothing_MLP_latency + single_load_MLP_latency
+    tot_MLP_energy *= (num_hidden_layers-1)
+    tot_MLP_latency *= (num_hidden_layers-1)
+
+    # Last MLP layer: pattern changes (no load in end)
+    tot_MLP_energy += single_store_energy + (num_batches-1)*nothing_MLP_energy
+    tot_MLP_latency += single_store_MLP_latency + (num_batches-1)*nothing_MLP_latency
+
+    return input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency 
+
+
 
 def get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len):
     recomp_load_bytes = recomp_len * 8192 * batch_size # 8192 bytes/token
@@ -668,7 +723,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     return tot_energy, tot_lat
 
 
-def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, testing, gpu_estimator, var_to_min="latency"):
+def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, testing, fast, gpu_estimator, var_to_min="latency"):
     # break model into layers
   
     ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
@@ -688,45 +743,37 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         all_results = {}
 
     if testing: 
+        
         test_batch_size = 4
         test_offloading_per = 60
         test_recomp_len = 0
-        # # single run
-        # cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, test_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
-        # if save_results: 
-        #     cur_strat = (test_batch_size, test_offloading_per, test_recomp_len)
-        #     all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
-      
-        for each_recomp_percent in range(0, 110, 10):
-            each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
-            cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, test_offloading_per, test_batch_size, num_of_prompts // test_batch_size, gpu_estimator)
-            if save_results: 
-                cur_strat = (test_batch_size, test_offloading_per, each_recomp_len)
-                all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
-          
-        
-        min_objective_val = cur_latency
-        min_strategy = (test_batch_size, test_offloading_per, test_recomp_len, cur_energy, cur_latency)
-    else: 
-        for each_batch_size in batch_sizes:
-            for each_feasible_offloading in all_feasible_strategies_dict[each_batch_size]:
-                for each_recomp_percent in range(0, 110, 10):
-                    each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
-                    print(" ")
-                    print(f'cur strat: {each_batch_size}, {each_feasible_offloading}, {each_recomp_len}')
-                    #Model Prediction 
+
+        batch_sizes = [test_batch_size]
+        all_feasible_strategies_dict = {test_batch_size: test_offloading_per}
+
+    # start searching 
+    for each_batch_size in batch_sizes:
+        for each_feasible_offloading in all_feasible_strategies_dict[each_batch_size]:
+            for each_recomp_percent in range(0, 110, 10):
+                each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
+                print(" ")
+                print(f'cur strat: {each_batch_size}, {each_feasible_offloading}, {each_recomp_len}')
+                #Model Prediction 
+                if fast:
+                    cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
+                else: 
                     cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
-                    if save_results: 
-                        cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
-                        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
-                  
-                    cur_objective_val = cur_latency
-                    if var_to_min == "energy":
-                        cur_objective_val = cur_energy
-                    # compare to optimal policy seen so far
-                    if cur_objective_val < min_objective_val:
-                        min_objective_val = cur_objective_val
-                        min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency)
+                if save_results: 
+                    cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
+                    all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
+              
+                cur_objective_val = cur_latency
+                if var_to_min == "energy":
+                    cur_objective_val = cur_energy
+                # compare to optimal policy seen so far
+                if cur_objective_val < min_objective_val:
+                    min_objective_val = cur_objective_val
+                    min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency)
 
     if save_results:
         csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
@@ -761,7 +808,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
     print(f'best policy: batch_size = {min_strategy[0]}, offloading_percent = {min_strategy[1]}, recomp_len = {min_strategy[2]}, energy = {min_strategy[3]}, latency = {min_strategy[4]}')
     return min_objective_val, min_strategy
 
-def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, batch_size, offloading_per, recomp_len, gpu_estimator, var_to_min="latency"):
+def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, batch_size, offloading_per, recomp_len, fast, gpu_estimator, var_to_min="latency"):
     min_objective_val = float('inf')
     min_strategy = None
 
@@ -769,7 +816,10 @@ def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, ha
         all_results = {}
 
     # single run
-    cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator)
+    if fast: 
+        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator)
+    else:
+        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator)
     if save_results: 
         cur_strat = (batch_size, offloading_per, recomp_len)
         all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
@@ -830,6 +880,7 @@ if __name__ == "__main__":
 
     parser.add_argument("--np", "--num-prompts", type=int)
     parser.add_argument("--test", "--testing", action="store_true")
+    parser.add_argument("--fast", action="store_true")
     parser.add_argument("--save", "--save-all-strats", action="store_true")
 
 
@@ -862,7 +913,7 @@ if __name__ == "__main__":
                         dvfs_idle_power_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
                         lut_folder_abs_path="/home/akleang/akleang/energaizer-ispass26-artifact/database/data")
     if args.s:
-        single_strat_pred(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.gbs, args.off_per, args.recomp_len, gpu_estimator)
+        single_strat_pred(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.gbs, args.off_per, args.recomp_len, args.fast, gpu_estimator)
     else: 
-        disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.test, gpu_estimator)
+        disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.test, args.fast, gpu_estimator)
 
