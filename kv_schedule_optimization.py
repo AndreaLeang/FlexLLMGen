@@ -138,7 +138,7 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     else:
         input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency = multi_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
     other_token_energy = (gen_len - 1) * (input_energy + tot_MHA_energy + tot_MLP_energy + output_energy)
-    other_token_latency = (gen_len - 1) * (input_energy + tot_MHA_energy + tot_MLP_energy + output_energy)
+    other_token_latency = (gen_len - 1) * (input_latency + tot_MHA_latency + tot_MLP_latency + output_latency)
 
     tot_energy = first_token_energy + other_token_energy
     tot_latency = first_token_latency + other_token_latency
@@ -897,7 +897,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                 if fast:
                     cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
                 else: 
-                    cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = working_strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
+                    cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
                 if save_results: 
                     cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
                     all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
@@ -954,7 +954,7 @@ def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, ha
     if fast: 
         cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator)
     else:
-        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = working_strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator)
+        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator)
     if save_results: 
         cur_strat = (batch_size, offloading_per, recomp_len)
         all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer)
