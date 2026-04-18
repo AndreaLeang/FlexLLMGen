@@ -508,7 +508,7 @@ def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True
         bandwidth = 1.415 * math.log10(bytes) + 13.38
     else: 
         bandwidth = 3.626 * math.log10(bytes) + 26.13 
-    bandwidth = max(min(bandwidth, 15.0), 0)
+    bandwidth = max(min(bandwidth, 14.5), 0)
     latency = max(bytes/bandwidth, 0)
     print(f"transfer: single dir: {single_directional}, bytes (GB): {bytes}, bandwidth: {bandwidth}, latency: {latency}")
     gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency 
