@@ -1564,6 +1564,7 @@ def run_flexllmgen(args):
     cpu = TorchDevice("cpu")
     disk = TorchDisk(args.offload_dir)
     env = ExecutionEnv(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]))
+    print(f"{torch.cuda.get_device_properties(gpu).asyncEngineCount}")
 
     use_optimal = args.check_optimal
     if use_optimal:
