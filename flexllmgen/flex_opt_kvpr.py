@@ -822,6 +822,7 @@ class OptLM:
         self.load_cache_stream = torch.cuda.Stream()
         self.store_cache_stream = torch.cuda.Stream()
         self.load_hidden_compute_stream = torch.cuda.Stream()
+        print(f"{torch.cuda.get_device_properties(self.env.gpu)}")
 
         # Intermediate tensors
         # The following buffers store values used
@@ -1564,7 +1565,6 @@ def run_flexllmgen(args):
     cpu = TorchDevice("cpu")
     disk = TorchDisk(args.offload_dir)
     env = ExecutionEnv(gpu=gpu, cpu=cpu, disk=disk, mixed=TorchMixedDevice([gpu, cpu, disk]))
-    print(f"{torch.cuda.get_device_properties(gpu)}")
 
     use_optimal = args.check_optimal
     if use_optimal:
