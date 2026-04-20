@@ -470,7 +470,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         print(f"recomp_bytes: {recomp_bytes}, kv_load_bytes: {kv_load_bytes}")
         
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional indicator
-        pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config)
+        pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config, gpu_estimator)
         # first_half_latency = max(pinned_latency, recomp_prep_pred(prompt_len, recomp_len, hardware_config)+transfer_pred(recomp_bytes, hardware_config, gpu_estimator))
         recomp_transfer_energy, recomp_transfer_latency = transfer_pred(recomp_bytes, hardware_config, gpu_estimator)
         # print(f"load and store first half: latency is max of pinned: {pinned_latency} and transfer: {recomp_transfer_latency}")
@@ -489,14 +489,15 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         return tot_energy, first_half_latency + second_half_latency
 
 
-def pinned_pred(bytes, hardware_config):
+def pinned_pred(bytes, hardware_config, gpu_estimator):
     if bytes == 0:
         return 0, 0
     latency_us = max(0, 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7)
     latency = latency_us / 1000000.0
     print(f"pinned: bytes (B): {bytes}, latency (s): {latency}")
-    # Pageable to Pinned does not contribute to GPU energy
-    return 0, latency
+    # Pageable to Pinned does not contribute to GPU energy --> idle 
+    gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency 
+    return gpu_energy, latency
 
 
 def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True):
@@ -886,8 +887,8 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         batch_sizes = [1, 2, 4, 8]
         all_feasible_strategies_dict = {1: [10], 2:[60], 4:[60], 8:[90]}
 
-        batch_sizes = [1, 2]
-        all_feasible_strategies_dict = {1: [10], 2:[60]}
+        # batch_sizes = [1, 2]
+        # all_feasible_strategies_dict = {1: [10], 2:[60]}
 
         # batch_sizes = [4]
         # all_feasible_strategies_dict = {4:[60]}
