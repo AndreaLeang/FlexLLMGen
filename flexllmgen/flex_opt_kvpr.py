@@ -1552,6 +1552,8 @@ def run_flexllmgen(args):
     if args.model == "facebook/galactica-30b":
         tokenizer = AutoTokenizer.from_pretrained("facebook/galactica-30b", padding_side="left")
     else:
+        #remove spaces
+        args.model = args.model.replace(" ", "")
         tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
         # tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", padding_side="left")
     num_prompts = args.num_gpu_batches * args.gpu_batch_size
