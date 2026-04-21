@@ -1550,10 +1550,10 @@ def get_test_inputs(prompt_len, num_prompts, tokenizer):
 def run_flexllmgen(args):
     print(f"<run_flexllmgen>: args.model: {args.model}")
     if args.model == "facebook/galactica-30b":
-        tokenizer = GPT2Tokenizer.from_pretrained("facebook/galactica-30b", padding_side="left")
+        tokenizer = AutoTokenizer.from_pretrained("facebook/galactica-30b", padding_side="left")
     else:
         #remove spaces
-        args.model = args.model.replace(" ", "")
+        # args.model = args.model.replace(" ", "")
         # tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
         tokenizer = AutoTokenizer.from_pretrained("facebook/opt-6.7b", padding_side="left")
     num_prompts = args.num_gpu_batches * args.gpu_batch_size
