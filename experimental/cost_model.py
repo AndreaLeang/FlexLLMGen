@@ -61,9 +61,9 @@ class CostModelConfig:
 
     # hardware constants
     # default value aligned on google cloud T4
-    ctog_bdw: float = 12.89 * GB
-    gtoc_bdw_cache: float = 0.97 * GB
-    gtoc_bdw_hidden: float = 4.82 * GB
+    ctog_bdw: float = 16.0 * GB
+    gtoc_bdw_cache: float = 16.0 * GB
+    gtoc_bdw_hidden: float = 16.0 * GB
 
     dtoc_bdw: float = 0.473 * GB
     ctod_bdw_cache_p: float = 0.746 * GB
