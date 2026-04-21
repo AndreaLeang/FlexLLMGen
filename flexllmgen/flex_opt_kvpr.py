@@ -16,7 +16,7 @@ import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, GPT2Tokenizer
 
 
 from flexllmgen.compression import CompressionConfig, Policy
@@ -1550,11 +1550,11 @@ def get_test_inputs(prompt_len, num_prompts, tokenizer):
 def run_flexllmgen(args):
     print(f"<run_flexllmgen>: args.model: {args.model}")
     if args.model == "facebook/galactica-30b":
-        tokenizer = AutoTokenizer.from_pretrained("facebook/galactica-30b", padding_side="left")
+        tokenizer = GPT2Tokenizer.from_pretrained("facebook/galactica-30b", padding_side="left")
     else:
         #remove spaces
         args.model = args.model.replace(" ", "")
-        tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
+        tokenizer = GPT2Tokenizer.from_pretrained(args.model, padding_side="left")
         # tokenizer = AutoTokenizer.from_pretrained("facebook/opt-30b", padding_side="left")
     num_prompts = args.num_gpu_batches * args.gpu_batch_size
     prompt_len, gen_len, cut_gen_len = args.prompt_len, args.gen_len, args.cut_gen_len
