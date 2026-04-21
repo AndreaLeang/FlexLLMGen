@@ -313,7 +313,7 @@ def read_benchmark_log(filename):
 def get_optimal_split_point(execute_gen_len, gpu_batch_size, input_dim):
     t_min, optimal_split_point = float('inf'), -1
     step = 1
-    v_com = 32 * 1e9
+    # v_com = 32 * 1e9
     v_com = 16 * 1e9
     v_gpu = 312 * 1e12
     for recompute_len in range(0, execute_gen_len + 1, step):
