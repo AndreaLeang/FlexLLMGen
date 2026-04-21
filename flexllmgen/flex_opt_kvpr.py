@@ -822,7 +822,6 @@ class OptLM:
         self.load_cache_stream = torch.cuda.Stream()
         self.store_cache_stream = torch.cuda.Stream()
         self.load_hidden_compute_stream = torch.cuda.Stream()
-        print(f"{torch.cuda.get_device_properties(self.env.gpu)}")
 
         # Intermediate tensors
         # The following buffers store values used
@@ -1554,8 +1553,8 @@ def run_flexllmgen(args):
     else:
         #remove spaces
         # args.model = args.model.replace(" ", "")
-        # tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
-        tokenizer = AutoTokenizer.from_pretrained("facebook/opt-6.7b", padding_side="left")
+        tokenizer = AutoTokenizer.from_pretrained(args.model, padding_side="left")
+        # tokenizer = AutoTokenizer.from_pretrained("facebook/opt-6.7b", padding_side="left")
     num_prompts = args.num_gpu_batches * args.gpu_batch_size
     prompt_len, gen_len, cut_gen_len = args.prompt_len, args.gen_len, args.cut_gen_len
 
