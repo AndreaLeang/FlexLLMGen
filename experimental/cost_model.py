@@ -70,10 +70,10 @@ class CostModelConfig:
     ctod_bdw_hidden_p: float = 2.015 * GB
     ctod_bdw_g: float = 2.015 * GB
 
-    mm_flops_p: float = 21.24 * T
-    mm_flops_g: float = 4.3 * T
-    bmm_flops_p: float = 9.97 * T
-    bmm_flops_g: float = 0.079 * T
+    mm_flops_p: float = 312.0 * T #peak mm for A100
+    mm_flops_g: float = 312.0 * T
+    bmm_flops_p: float = 312.0 * T
+    bmm_flops_g: float = 312.0 * T
     cpu_flops: float = 0.0123 * T
 
     c1: float = 0.0168
