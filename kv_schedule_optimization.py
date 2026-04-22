@@ -170,6 +170,8 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     tot_energy = 0
     tot_latency = 0
     time_to_first_token = 0
+    tot_transfer_energy = 0.0
+    tot_active_energy = 0.0
     avg_energy_per_layer = {"input": (0.0, 0), "output": (0.0, 0), "MHA": (0.0, 0), "MLP": (0.0, 0)} # (tot, num of occurances)
     avg_latency_per_layer = {"input": (0.0, 0), "output": (0.0, 0), "MHA": (0.0, 0), "MLP": (0.0, 0)}
     
@@ -231,6 +233,8 @@ def working_strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hard
     tot_energy = 0
     tot_latency = 0
     time_to_first_token = 0
+    tot_transfer_energy = 0.0
+    tot_active_energy = 0.0
     avg_energy_per_layer = {"input": (0.0, 0), "output": (0.0, 0), "MHA": (0.0, 0), "MLP": (0.0, 0)} # (tot, num of occurances)
     avg_latency_per_layer = {"input": (0.0, 0), "output": (0.0, 0), "MHA": (0.0, 0), "MLP": (0.0, 0)}
     
@@ -358,7 +362,9 @@ def working_strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hard
         print(f"total energy seen so far: {tot_energy}")
 
     # get total energy and latency and time_to_first_token
-    return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer
+    percent_energy_offloading = tot_transfer_energy / tot_energy *100
+    percent_energy_active = tot_active_energy / tot_energy * 100
+    return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer, percent_energy_offloading, percent_energy_active
 
 
 def single_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, last_token=False):
