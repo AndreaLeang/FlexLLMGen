@@ -216,6 +216,9 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         tot_energy  += one_forward_energy
         tot_transfer_energy += cur_transfer_energy
         tot_active_energy += cur_active_energy
+        print(f"cur pass transfer energy: {cur_transfer_energy}, tot_transfer_energy: {tot_transfer_energy}")
+        print(f"cur pass active energy: {tot_active_energy}, tot_transfer_energy: {cur_active_energy}")
+        print(f"cur pass tot energy: {one_forward_energy}, tot seen energy: {tot_energy}")
 
         if cur_gen_len == 0:
             time_to_first_token = one_forward_latency
@@ -559,8 +562,9 @@ def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True
         bandwidth = 3.626 * math.log10(bytes) + 26.13 
     bandwidth = max(min(bandwidth, 15.0), 0)
     latency = max(bytes/bandwidth, 0)
-    print(f"transfer: single dir: {single_directional}, bytes (GB): {bytes}, bandwidth: {bandwidth}, latency: {latency}")
+    
     gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency
+    print(f"transfer: single dir: {single_directional}, bytes (GB): {bytes}, bandwidth: {bandwidth}, energy: {energy}")
     return gpu_energy, latency
 
 def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len, gpu_estimator, hardware_config):
@@ -624,7 +628,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         tot_lat += latency
         tot_energy += energy
     tot_lat /= 1000.0 # ms --> s
-    print(f"recomp layer calc: latency: {tot_lat}")
+    print(f"recomp layer calc: energy: {tot_energy}")
     return tot_energy, tot_lat
 
 def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type="MHA"):
