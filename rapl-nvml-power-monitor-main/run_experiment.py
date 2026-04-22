@@ -104,7 +104,7 @@ def main():
     parser.add_argument("--block-size", type=int, default=1)
     parser.add_argument("--num-blocks", type=int, default=1)
     parser.add_argument("--off-per", type=int, default=0)
-    parser.add_argument("--recomp-per", type=int, default=0)
+    parser.add_argument("--recomp-len", type=int, default=0)
 
     parser.add_argument("--layer-focus", action="store_true")
 
@@ -124,7 +124,7 @@ def main():
         num_of_blocks= args.num_blocks,
         prompt_len=args.prompt_len,
         gen_len=args.gen_len,
-        recomp_percent=args.recomp_per,
+        recomp_len=args.recomp_len,
         offload_percent=args.off_per,
     ).load()
 
