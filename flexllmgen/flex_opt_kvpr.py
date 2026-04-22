@@ -1607,7 +1607,7 @@ def run_flexllmgen(args):
     cache_size = opt_config.cache_bytes(num_prompts, prompt_len + gen_len)
     hidden_size = opt_config.hidden_bytes(num_prompts, prompt_len + gen_len)
     print(f"model size: {opt_config.model_bytes()/GB:.3f} GB, "
-          f"cache size: {cache_size/GB:.3f} GB, "
+          f"cache size: {cache_size/GB:.3f} GB, Cache on GPU: {(2 * args.num_gpu_batches*(int(args.gpu_batch_size*opt_config.n_head * policy.cache_gpu_percent / 100) // opt_config.n_head) * (prompt_len + gen_len) * opt_config.num_hidden_layers * opt_config.input_dim * 2) / GB:.3f} GB"
           f"hidden size (prefill): {hidden_size/GB:.3f} GB")
     
     # if the capacity is over the gpu mem, do not run
