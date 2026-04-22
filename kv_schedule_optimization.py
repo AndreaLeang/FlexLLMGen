@@ -1031,7 +1031,7 @@ def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, ha
                 writer.writeheader()
             print(f"# of results: {len(all_results)}")
             for each_strat in all_results:
-              cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layerper_transfer_energy, per_active_energy = all_results[each_strat]
+              cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy = all_results[each_strat]
               writer.writerow({'Batch Size': each_strat[0], 
                       'Offloading Percent to CPU': each_strat[1],
                       'Recompute Length': each_strat[2], 
