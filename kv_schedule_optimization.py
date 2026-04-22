@@ -135,17 +135,19 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
 
     # rest of Tokens Prediction --> simplified to (gen_len - 1)*forward_pass_latency
     if num_batches == 1: 
-        input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, tot_transfer_energy, tot_active_energy = single_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
+        input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy = single_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
     else:
-        input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, tot_transfer_energy, tot_active_energy  = multi_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
+        input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy  = multi_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
     other_token_energy = (gen_len - 1) * (input_energy + tot_MHA_energy + tot_MLP_energy + output_energy)
     other_token_latency = (gen_len - 1) * (input_latency + tot_MHA_latency + tot_MLP_latency + output_latency)
+    other_token_transfer_energy = (gen_len - 1) * cur_transfer_energy
+    other_token_active_energy = (gen_len - 1) * cur_active_energy
 
     tot_energy = first_token_energy + other_token_energy
     tot_latency = first_token_latency + other_token_latency
     time_to_first_token = first_token_latency
-    tot_transfer_energy += fir_tot_transfer_energy
-    tot_active_energy += fir_tot_active_energy
+    tot_transfer_energy = fir_tot_transfer_energy + other_token_transfer_energy
+    tot_active_energy = fir_tot_active_energy + other_token_active_energy
   
     avg_energy_per_layer["input"] = (fir_input_energy + (gen_len - 1) *input_energy, gen_len*num_batches)
     avg_energy_per_layer["output"] = (fir_output_energy + (gen_len - 1) *output_energy, gen_len*num_batches)
@@ -216,9 +218,10 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         tot_energy  += one_forward_energy
         tot_transfer_energy += cur_transfer_energy
         tot_active_energy += cur_active_energy
-        print(f"cur pass transfer energy: {cur_transfer_energy}, tot_transfer_energy: {tot_transfer_energy}")
-        print(f"cur pass active energy: {tot_active_energy}, tot_transfer_energy: {cur_active_energy}")
-        print(f"cur pass tot energy: {one_forward_energy}, tot seen energy: {tot_energy}")
+      
+        # print(f"cur pass transfer energy: {cur_transfer_energy}, tot_transfer_energy: {tot_transfer_energy}")
+        # print(f"cur pass active energy: {tot_active_energy}, tot_transfer_energy: {cur_active_energy}")
+        # print(f"cur pass tot energy: {one_forward_energy}, tot seen energy: {tot_energy}")
 
         if cur_gen_len == 0:
             time_to_first_token = one_forward_latency
