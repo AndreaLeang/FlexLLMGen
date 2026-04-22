@@ -159,7 +159,6 @@ class LLMPowerBench:
         num_of_blocks:       int                 = 1,
         prompt_len:          int                 = 2048,
         gen_len:             int                 = 16,
-        recomp_percent:      int                 = 0,
         recomp_len:          int                 = 0,
         offload_percent:     int                 = 0,
         dtype:               torch.dtype         = torch.float16,
@@ -173,7 +172,7 @@ class LLMPowerBench:
         self.num_prompts     = block_size * num_of_blocks
         self.prompt_len      = prompt_len
         self.gen_len         = gen_len
-        self.recomp_percent  = recomp_percent
+        self.recomp_len      = recomp_len
         self.offload_percent = offload_percent
         self.dtype          = dtype
         self.tokenizer      = None
@@ -205,7 +204,6 @@ class LLMPowerBench:
                                         group_dim=2, symmetric=False))
 
         self.opt_config = get_opt_config(self.model_id)
-        self.recomp_len = (self.recomp_percent * self.prompt_len) // 100
         
         self.model      = OptLM(self.opt_config, self.env, "~/opt_weights", self.policy, self.recomp_len, False)
         return self
