@@ -435,7 +435,7 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
         bi_load = 1
     single_load_MHA_energy, single_load_MHA_latency, single_load_MHA_transfer_energy, single_load_MHA_active_energy = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
     single_store_MHA_energy, single_store_MHA_latency, single_store_MHA_transfer_energy, single_store_MHA_active_energy = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
-    bi_dir_MHA_energy, bi_dir_MHA_latency, bi_die_MHA_transfer_energy, bi_dir_MHA_active_energy = layer_prediction(model, bi_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
+    bi_dir_MHA_energy, bi_dir_MHA_latency, bi_dir_MHA_transfer_energy, bi_dir_MHA_active_energy = layer_prediction(model, bi_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
     # print(f"single load MHA: {single_load_MHA_latency}")
     # print(f"single store MHA: {single_store_MHA_latency}")
     # print(f"bi dir MHA: {bi_dir_MHA_latency}")
