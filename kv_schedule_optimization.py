@@ -142,6 +142,7 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     other_token_latency = (gen_len - 1) * (input_latency + tot_MHA_latency + tot_MLP_latency + output_latency)
     other_token_transfer_energy = (gen_len - 1) * cur_transfer_energy
     other_token_active_energy = (gen_len - 1) * cur_active_energy
+    other_token_transfer_latency = (gen_len - 1) * cur_transfer_latency
 
     tot_energy = first_token_energy + other_token_energy
     tot_latency = first_token_latency + other_token_latency
