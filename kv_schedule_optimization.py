@@ -429,7 +429,7 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     input_transfer_latency = (num_batches-1)*load_input_transfer_latency + no_load_input_transfer_latency
 
     # output: store + nothing*(num_batches -1) 
-    no_store_output_energy, no_store_output_latency, no_store_output_transfer_energy, no_store_output_active_energy, no_store_transfer_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
+    no_store_output_energy, no_store_output_latency, no_store_output_transfer_energy, no_store_output_active_energy, no_store_output_transfer_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
     default_output_energy = (num_batches-1)*no_store_output_energy
     default_output_latency = (num_batches-1)*no_store_output_latency
     default_output_transfer_energy = (num_batches-1)*no_store_output_transfer_energy
