@@ -535,9 +535,9 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         return layer_calc_energy, layer_calc_latency, energy_transfer, energy_active, latency_transfer
     elif is_load_store == 2:
         # store only --> single directional
-        transfer_energy, transfer_lat = transfer_pred(get_bytes_to_store(batch_size), hardware_config, gpu_estimator)
+        transfer_energy, transfer_latency = transfer_pred(get_bytes_to_store(batch_size), hardware_config, gpu_estimator)
         
-        return layer_calc_energy+transfer_energy, max(layer_calc_latency, transfer_lat), transfer_energy, layer_calc_energy, transfer_latency
+        return layer_calc_energy+transfer_energy, max(layer_calc_latency, transfer_latency), transfer_energy, layer_calc_energy, transfer_latency
     else:
         recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
         print(f"recomp_bytes: {recomp_bytes}, kv_load_bytes: {kv_load_bytes}")
