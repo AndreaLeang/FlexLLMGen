@@ -993,7 +993,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                 # compare to optimal policy seen so far
                 if cur_objective_val < min_objective_val:
                     min_objective_val = cur_objective_val
-                    min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy)
+                    min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency)
 
     if save_results:
         csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
