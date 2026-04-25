@@ -273,22 +273,23 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     break
                 elif store_end < load_start:
                     break
-            for each_re_load_interval in re_load_intervals:
-                load_start = each_re_load_interval[0]
-                load_end = each_re_load_interval[1]
-                load_id = each_re_load_interval[2]
-                if store_start >= load_start and store_end < load_end:
-                    # found pair of bi directional
-                    if load_id not in bi_re_load:
-                        bi_re_load_events[bi_dir_re_load_ind] = (load_id, all_re_load[load_id][0], all_re_load[load_id][1])
-                        bi_dir_re_load_ind += 1
-                        bi_re_load[load_id] = True
-                    bi_dir_storing_events[bi_dir_store_ind] = (store_id, storing_events[store_id][0], storing_events[store_id][1])
-                    bi_dir_store_ind += 1
-                    found_pair = True
-                    break
-                elif store_end < load_start:
-                    break
+            if re_dist:
+                for each_re_load_interval in re_load_intervals:
+                    load_start = each_re_load_interval[0]
+                    load_end = each_re_load_interval[1]
+                    load_id = each_re_load_interval[2]
+                    if store_start >= load_start and store_end < load_end:
+                        # found pair of bi directional
+                        if load_id not in bi_re_load:
+                            bi_re_load_events[bi_dir_re_load_ind] = (load_id, all_re_load[load_id][0], all_re_load[load_id][1])
+                            bi_dir_re_load_ind += 1
+                            bi_re_load[load_id] = True
+                        bi_dir_storing_events[bi_dir_store_ind] = (store_id, storing_events[store_id][0], storing_events[store_id][1])
+                        bi_dir_store_ind += 1
+                        found_pair = True
+                        break
+                    elif store_end < load_start:
+                        break
             if not found_pair: 
                 # add to 1 direction
                 one_dir_storing_events[one_dir_store_ind] = (store_id, storing_events[store_id][0], storing_events[store_id][1])
@@ -299,12 +300,14 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             if load_id not in bi_load:
                 one_dir_loading_events[one_dir_load_ind] = (load_id, loading_events[load_id][0], loading_events[load_id][1])
                 one_dir_load_ind += 1
+                
         # one direction re load
-        for each_re_load_interval in re_load_intervals:
-            load_id = each_re_load_interval[2]
-            if load_id not in bi_re_load:
-                one_re_load_events[one_dir_re_load_ind] = (load_id, all_re_load[load_id][0], all_re_load[load_id][1])
-                one_dir_re_load_ind += 1
+        if re_dist:
+            for each_re_load_interval in re_load_intervals:
+                load_id = each_re_load_interval[2]
+                if load_id not in bi_re_load:
+                    one_re_load_events[one_dir_re_load_ind] = (load_id, all_re_load[load_id][0], all_re_load[load_id][1])
+                    one_dir_re_load_ind += 1
                     
         
     cur_filename = json_filename[:-5] 
