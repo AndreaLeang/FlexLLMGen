@@ -584,8 +584,11 @@ def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True
     bytes = bytes / 1000000000.0 # bytes --> GB
     if single_directional:
         bandwidth = 1.415 * math.log10(bytes) + 13.38
+        bandwidth = 12.04 - 5.561*math.exp(-259.6*bytes) 
     else: 
         bandwidth = 3.626 * math.log10(bytes) + 26.13 
+        bandwidth = 11.58 - 6.802*math.exp(-249.4*bytes)
+      
     bandwidth = max(min(bandwidth, 15.0), 0)
     latency = max(bytes/bandwidth, 0)
     
