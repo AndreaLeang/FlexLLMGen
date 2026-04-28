@@ -385,7 +385,6 @@ class TorchDevice:
         v = v.permute(0, 2, 1, 3).reshape(b * n_head, s, head_dim)
 
         # shape: (b * n_head, s, s)
-        print(f"shape: ({b} * {n_head}, {s}, {s})")
         attn_weights = torch.bmm(q, k)
 
         # shape: (b, 1, s, s)
@@ -395,6 +394,8 @@ class TorchDevice:
 
         # shape: (b, n_head, s, s)
         attn_weights = attn_weights.view(b, n_head, s, s)
+        print(f"attn_weights shape: {attn_weights.shape}")
+        print(f"mask shape: {mask.shape}")
         attn_weights = torch.where(mask, attn_weights, -1e4)
         attn_weights = attn_weights.view(b * n_head, s, s)
         attn_weights = F.softmax(attn_weights, dim=2)
