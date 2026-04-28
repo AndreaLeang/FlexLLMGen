@@ -385,6 +385,7 @@ class TorchDevice:
         v = v.permute(0, 2, 1, 3).reshape(b * n_head, s, head_dim)
 
         # shape: (b * n_head, s, s)
+        print(f"shape: ({b} * {n_head}, {s}, {s})")
         attn_weights = torch.bmm(q, k)
 
         # shape: (b, 1, s, s)
