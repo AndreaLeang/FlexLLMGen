@@ -384,7 +384,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
     # Return: Tot Energy, Tot Latency, Energy for Data Transfer, Energy for Active GPU , Latency for Data Transfer
     #layer type determines the actual recomputation time + compute layer time
     # print(f"layer info: layer_type: {layer_type}, gen_len: {gen_len}, load or store: {is_load_store}, recomp_len: {recomp_len}")
-    layer_calc_energy, layer_calc_latency, fir_token_after_KV_energy, fir_token_after_KV_latency = layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type)
+    layer_calc_energy, layer_calc_latency, fir_token_after_KV_energy, fir_token_after_KV_latency = layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type, first_token)
     if first_token:
         store_KV_energy = 0.0
         store_KV_latency = 0.0
