@@ -830,7 +830,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         head_dim = hidden_size // num_head
       
         layer_norm_query = {'batch': batch_size,
-                             'dim': 1*hidden_size, 
+                             'dim': prev_not_seen*hidden_size, 
                              'prec': 'bf16'}
         layer_norm_query_type = ('layernorm')
         all_queries.append(layer_norm_query)
@@ -838,7 +838,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
       
         linear_query = {
         	'batch': batch_size,
-        	'dimM' : 1,
+        	'dimM' : prev_not_seen,
         	'dimN' : hidden_size,
         	'dimK' : hidden_size,
         	'precM': 'bf16',
@@ -852,7 +852,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
       
         # 3x REshape: (batch_size, n_head, 1, head_dim) → (b*n_head, 1, head_dim) 
         reshape_query = {
-            'dim': batch_size*num_head*1*head_dim,
+            'dim': batch_size*num_head*prev_not_seen*head_dim,
             'op': 'unspecified_tensor',
             'prec': 'bf16',
         }
@@ -863,7 +863,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
           
         bmm_query = {
         	'batch': batch_size*num_head,
-        	'dimM' : 1,
+        	'dimM' : prev_not_seen,
         	'dimN' : head_dim,
         	'dimK' : cur_seq_len,
         	'precM': 'bf16',
@@ -893,7 +893,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         
         bmm_query = {
         	'batch': batch_size*num_head,
-        	'dimM' : 1,
+        	'dimM' : prev_not_seen,
         	'dimN' : cur_seq_len,
         	'dimK' : head_dim,
         	'precM': 'bf16',
@@ -906,7 +906,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         
         linear_query = {
         	'batch': batch_size,
-        	'dimM' : 1,
+        	'dimM' : prev_not_seen,
         	'dimN' : hidden_size,
         	'dimK' : hidden_size,
         	'precM': 'bf16',
@@ -917,9 +917,9 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         all_queries.append(linear_query)
         all_query_types.append(linear_query_type)
           
-        # [batch_size, 1, opt_config.hidden_size] + [batch_size, 1, opt_config.hidden_size]
+        # [batch_size, prev_not_seen, opt_config.hidden_size] + [batch_size, prev_not_seen, opt_config.hidden_size]
         add_query = {
-            'dim': batch_size*1*hidden_size,
+            'dim': batch_size*prev_not_seen*hidden_size,
             'op': 'pointwise_add',
             'prec': 'bf16',
         }
