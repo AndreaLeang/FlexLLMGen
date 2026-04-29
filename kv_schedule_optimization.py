@@ -705,7 +705,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         head_dim = hidden_size // num_head
       
         layer_norm_query = {'batch': batch_size,
-                             'dim': prev_not_seen*hidden_size, 
+                             'dim': hidden_size, 
                              'prec': 'bf16'}
         layer_norm_query_type = ('layernorm')
         all_queries.append(layer_norm_query)
