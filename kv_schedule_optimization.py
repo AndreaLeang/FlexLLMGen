@@ -219,7 +219,7 @@ def first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     MHA_transfer_energy *= num_hidden_layers
     MHA_active_energy *= num_hidden_layers
 
-    tot_MLP_energy, tot_MLP_latency, MLP_transfer_energy, MLP_active_energy, MLP_transfer_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+    tot_MLP_energy, tot_MLP_latency, MLP_transfer_energy, MLP_active_energy, MLP_transfer_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP", True)
     print(f"Single MLP latency: {tot_MLP_latency}")
     tot_MLP_energy *= num_hidden_layers
     tot_MLP_latency *= num_hidden_layers
@@ -393,6 +393,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
             store_KV_energy, store_KV_latency = transfer_pred(kv_bytes_to_store, hardware_config, gpu_estimator) # using HtoD est. for this DtoH
         tot_energy = layer_calc_energy+store_KV_energy
         tot_latency = (layer_calc_latency-fir_token_after_KV_latency) + max(fir_token_after_KV_latency, store_KV_latency)
+        print(f"first token: layer: {layer_type}, layer calc lat: {layer_calc_latency}, store lat: {store_KV_latency}, tot layer lat: {tot_latency}")
         return tot_energy, tot_latency, store_KV_energy, layer_calc_energy, store_KV_latency
 
 
