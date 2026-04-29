@@ -225,13 +225,11 @@ def first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     MLP_transfer_energy *= num_hidden_layers
     MLP_active_energy *= num_hidden_layers
 
-    tot_energy = num_batches*(input_energy + tot_MHA_energy + tot_MLP_energy + output_energy)
-    tot_latency = num_batches*(input_latency + tot_MHA_latency + tot_MLP_latency + output_latency)
-    transfer_energy = num_batches*MHA_transfer_energy
-    active_energy = num_batches*(input_active_energy + MHA_active_energy + MLP_active_energy + output_active_energy)
-    transfer_latency = num_batches*MHA_transfer_latency
-
-    return tot_energy, tot_latency, transfer_energy, active_energy, transfer_latency
+    total_transfer_energy = num_batches*(input_transfer_energy + MHA_transfer_energy + MLP_transfer_energy + output_transfer_energy)
+    total_active_energy = num_batches*(input_active_energy + MHA_active_energy + MLP_active_energy + output_active_energy)
+    total_transfer_latency = num_batches*(input_transfer_latency + MHA_transfer_latency + MLP_transfer_latency + output_transfer_latency) 
+  
+    return num_batches*input_energy, num_batches*input_latency, num_batches*output_energy, num_batches*output_latency, num_batches*tot_MHA_energy, num_batches*tot_MHA_latency, num_batches*tot_MLP_energy, num_batches*tot_MLP_latency, total_transfer_energy, total_active_energy, total_transfer_latency
 
 
 def single_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, last_token=False):
