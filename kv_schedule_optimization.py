@@ -131,6 +131,8 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
         fir_input_energy, fir_input_latency, fir_output_energy, fir_output_latency, fir_tot_MHA_energy, fir_tot_MHA_latency, fir_tot_MLP_energy, fir_tot_MLP_latency, fir_tot_transfer_energy, fir_tot_active_energy, fir_tot_transfer_latency = multi_batch_forward_pass(model, num_of_prompts, prompt_len, 0, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
     first_token_energy = fir_input_energy + fir_tot_MHA_energy + fir_tot_MLP_energy + fir_output_energy
     first_token_latency = fir_input_latency + fir_tot_MHA_latency + fir_tot_MLP_latency + fir_output_latency
+    print(f"first token MHA: {fir_tot_MHA_latency / 32}")
+    print(f"first token MLP: {fir_tot_MLP_latency / 32}")
     
 
     # rest of Tokens Prediction --> simplified to (gen_len - 1)*forward_pass_latency
