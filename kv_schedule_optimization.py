@@ -94,8 +94,7 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     
     first_token_energy = fir_input_energy + fir_tot_MHA_energy + fir_tot_MLP_energy + fir_output_energy
     first_token_latency = fir_input_latency + fir_tot_MHA_latency + fir_tot_MLP_latency + fir_output_latency
-    print(f"first token MHA: {fir_tot_MHA_latency / 32}")
-    print(f"first token MLP: {fir_tot_MLP_latency / 32}")
+
     
 
     # rest of Tokens Prediction --> simplified to (gen_len - 1)*forward_pass_latency
@@ -214,16 +213,19 @@ def first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
   
     # MHA: compute, MLP: load + store unless last layer. then just store
     tot_MHA_energy, tot_MHA_latency, MHA_transfer_energy, MHA_active_energy, MHA_transfer_latency  =layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA", True)
+    print(f"Single MHA latency: {tot_MHA_latency}")
     tot_MHA_energy *= num_hidden_layers
     tot_MHA_latency *= num_hidden_layers
     MHA_transfer_energy *= num_hidden_layers
     MHA_active_energy *= num_hidden_layers
 
     tot_MLP_energy, tot_MLP_latency, MLP_transfer_energy, MLP_active_energy, MLP_transfer_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+    print(f"Single MLP latency: {tot_MLP_latency}")
     tot_MLP_energy *= num_hidden_layers
     tot_MLP_latency *= num_hidden_layers
     MLP_transfer_energy *= num_hidden_layers
     MLP_active_energy *= num_hidden_layers
+
 
     total_transfer_energy = num_batches*(input_transfer_energy + MHA_transfer_energy + MLP_transfer_energy + output_transfer_energy)
     total_active_energy = num_batches*(input_active_energy + MHA_active_energy + MLP_active_energy + output_active_energy)
@@ -412,7 +414,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         return layer_calc_energy+transfer_energy, max(layer_calc_latency, transfer_latency), transfer_energy, layer_calc_energy, transfer_latency
     else:
         recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
-        print(f"recomp_bytes: {recomp_bytes}, kv_load_bytes: {kv_load_bytes}")
+        # print(f"recomp_bytes: {recomp_bytes}, kv_load_bytes: {kv_load_bytes}")
         
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional indicator
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config, gpu_estimator)
