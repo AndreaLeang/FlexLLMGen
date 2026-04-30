@@ -213,14 +213,14 @@ def first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
   
     # MHA: compute, MLP: load + store unless last layer. then just store
     tot_MHA_energy, tot_MHA_latency, MHA_transfer_energy, MHA_active_energy, MHA_transfer_latency  =layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA", True)
-    print(f"Single MHA latency: {tot_MHA_latency}")
+    # print(f"Single MHA latency: {tot_MHA_latency}")
     tot_MHA_energy *= num_hidden_layers
     tot_MHA_latency *= num_hidden_layers
     MHA_transfer_energy *= num_hidden_layers
     MHA_active_energy *= num_hidden_layers
 
     tot_MLP_energy, tot_MLP_latency, MLP_transfer_energy, MLP_active_energy, MLP_transfer_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP", True)
-    print(f"Single MLP latency: {tot_MLP_latency}")
+    # print(f"Single MLP latency: {tot_MLP_latency}")
     tot_MLP_energy *= num_hidden_layers
     tot_MLP_latency *= num_hidden_layers
     MLP_transfer_energy *= num_hidden_layers
@@ -393,7 +393,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
             store_KV_energy, store_KV_latency = transfer_pred(kv_bytes_to_store, hardware_config, gpu_estimator) # using HtoD est. for this DtoH
         tot_energy = layer_calc_energy+store_KV_energy
         tot_latency = (layer_calc_latency-fir_token_after_KV_latency) + max(fir_token_after_KV_latency, store_KV_latency)
-        print(f"first token: layer: {layer_type}, layer calc lat: {layer_calc_latency}, store lat: {store_KV_latency}, tot layer lat: {tot_latency}")
+        # print(f"first token: layer: {layer_type}, layer calc lat: {layer_calc_latency}, store lat: {store_KV_latency}, tot layer lat: {tot_latency}")
         return tot_energy, tot_latency, store_KV_energy, layer_calc_energy, store_KV_latency
 
 
@@ -811,8 +811,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
     fir_token_after_KV_latency = 0
     fir_token_after_KV_energy = 0
     
-    if first_token and (layer_type == "MHA" or layer_type == "MLP"):
-        print(f"layer calc: layer type: {layer_type}")
+    # if first_token and (layer_type == "MHA" or layer_type == "MLP"):
+    #     print(f"layer calc: layer type: {layer_type}")
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=hardware_config.gpu_freq, lookup_target='all')
         if layer_type == "MHA" and each_ind == 8:
@@ -823,8 +823,8 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         if layer_type == "MHA" and first_token and each_ind > 2:
             fir_token_after_KV_latency += latency
             fir_token_after_KV_energy += energy
-        if first_token and (layer_type == "MHA" or layer_type == "MLP"):
-            print(f"operation ind: {each_ind}, latency: {latency}")
+        # if first_token and (layer_type == "MHA" or layer_type == "MLP"):
+        #     print(f"operation ind: {each_ind}, latency: {latency}")
     tot_lat /= 1000.0 # ms --> s
     fir_token_after_KV_latency /= 1000.0
     # print(f"layer_calc: type: {layer_type}, energy (J): {tot_energy}, latency (s) : {tot_lat}")
