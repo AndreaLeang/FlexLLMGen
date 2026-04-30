@@ -213,14 +213,14 @@ def first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
   
     # MHA: compute, MLP: load + store unless last layer. then just store
     tot_MHA_energy, tot_MHA_latency, MHA_transfer_energy, MHA_active_energy, MHA_transfer_latency  =layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA", True)
-    print(f"Single MHA latency: {tot_MHA_latency}")
+    # print(f"Single MHA latency: {tot_MHA_latency}")
     tot_MHA_energy *= num_hidden_layers
     tot_MHA_latency *= num_hidden_layers
     MHA_transfer_energy *= num_hidden_layers
     MHA_active_energy *= num_hidden_layers
 
     tot_MLP_energy, tot_MLP_latency, MLP_transfer_energy, MLP_active_energy, MLP_transfer_latency = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP", True)
-    print(f"Single MLP latency: {tot_MLP_latency}")
+    # print(f"Single MLP latency: {tot_MLP_latency}")
     tot_MLP_energy *= num_hidden_layers
     tot_MLP_latency *= num_hidden_layers
     MLP_transfer_energy *= num_hidden_layers
