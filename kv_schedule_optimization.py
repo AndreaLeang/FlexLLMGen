@@ -751,7 +751,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
 
         # torch.where() → elementwise [batch_size, 1, 1, cur_seq_len] skim over [batch_size, num_head, 1, cur_seq_len]
         where_query = {
-            'dim': batch_size*prev_not_seen*cur_seq_len*num_head,
+            'dim': batch_size*prev_not_seen*cur_seq_len,
             'op': 'unspecified_tensor',
             'prec': 'bf16',
         }
@@ -759,7 +759,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         all_queries.append(where_query)
         all_query_types.append(where_query_type)
       
-        softmax_query = {'batch': batch_size*prev_not_seen,
+        softmax_query = {'batch': batch_size*num_head*prev_not_seen,
                          'dim': cur_seq_len, 
                          'prec': 'bf16'}
         softmax_query_type = ('softmax')
@@ -815,6 +815,9 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         print(f"layer calc: layer type: {layer_type}")
     for each_ind in range(len(all_queries)):
         latency, _, energy = gpu_estimator.lookup(all_queries[each_ind], all_query_types[each_ind], target_freq=hardware_config.gpu_freq, lookup_target='all')
+        if layer_type == "MHA" and each_ind == 8:
+            latency *= num_head
+            energy *= num_head
         tot_lat += latency
         tot_energy += energy
         if layer_type == "MHA" and first_token and each_ind > 2:
