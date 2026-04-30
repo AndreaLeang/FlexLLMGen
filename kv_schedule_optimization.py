@@ -751,7 +751,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
 
         # torch.where() → elementwise [batch_size, 1, 1, cur_seq_len] skim over [batch_size, num_head, 1, cur_seq_len]
         where_query = {
-            'dim': batch_size*prev_not_seen*cur_seq_len*num_head,
+            'dim': batch_size*prev_not_seen*cur_seq_len,
             'op': 'unspecified_tensor',
             'prec': 'bf16',
         }
