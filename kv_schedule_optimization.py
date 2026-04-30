@@ -372,7 +372,7 @@ def get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp
         kv_load_bytes = (prompt_len + gen_len-recomp_len) * 8192 * (batch_size-((batch_size*(100-offload_percent))//100)) 
     return recomp_load_bytes, kv_load_bytes
 
-def get_bytes_to_store(batch_size, prompt_len=0, recomp_len=0 first_token=False):
+def get_bytes_to_store(batch_size, prompt_len=0, recomp_len=0, first_token=False):
     if first_token:
         kv_store_bytes = batch_size * (prompt_len-recomp_len) * 8192 # prompt_len tokens per batch
     else:
