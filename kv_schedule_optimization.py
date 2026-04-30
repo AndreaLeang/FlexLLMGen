@@ -751,7 +751,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
 
         # torch.where() → elementwise [batch_size, 1, 1, cur_seq_len] skim over [batch_size, num_head, 1, cur_seq_len]
         where_query = {
-            'dim': batch_size*prev_not_seen*cur_seq_len,
+            'dim': batch_size*prev_not_seen*cur_seq_len*num_head,
             'op': 'unspecified_tensor',
             'prec': 'bf16',
         }
@@ -759,7 +759,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         all_queries.append(where_query)
         all_query_types.append(where_query_type)
       
-        softmax_query = {'batch': batch_size*num_head*prev_not_seen,
+        softmax_query = {'batch': batch_size*prev_not_seen,
                          'dim': cur_seq_len, 
                          'prec': 'bf16'}
         softmax_query_type = ('softmax')
