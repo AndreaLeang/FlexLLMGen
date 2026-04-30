@@ -372,9 +372,9 @@ def get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp
         kv_load_bytes = (prompt_len + gen_len-recomp_len) * 8192 * (batch_size-((batch_size*(100-offload_percent))//100)) 
     return recomp_load_bytes, kv_load_bytes
 
-def get_bytes_to_store(batch_size, prompt_len=0, first_token=False):
+def get_bytes_to_store(batch_size, prompt_len=0, recomp_len=0 first_token=False):
     if first_token:
-        kv_store_bytes = batch_size * prompt_len * 8192 # prompt_len tokens per batch
+        kv_store_bytes = batch_size * (prompt_len-recomp_len) * 8192 # prompt_len tokens per batch
     else:
         kv_store_bytes = batch_size * 8192 # 1 token per batch
     return kv_store_bytes
@@ -389,7 +389,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         store_KV_energy = 0.0
         store_KV_latency = 0.0
         if layer_type == "MHA" :
-            kv_bytes_to_store = get_bytes_to_store(batch_size, prompt_len, first_token=first_token)
+            kv_bytes_to_store = get_bytes_to_store(batch_size, prompt_len, recomp_len, first_token=first_token)
             store_KV_energy, store_KV_latency = transfer_pred(kv_bytes_to_store, hardware_config, gpu_estimator) # using HtoD est. for this DtoH
         tot_energy = layer_calc_energy+store_KV_energy
         tot_latency = (layer_calc_latency-fir_token_after_KV_latency) + max(fir_token_after_KV_latency, store_KV_latency)
