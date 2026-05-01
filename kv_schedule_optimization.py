@@ -877,27 +877,28 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
 
     # start searching 
     for each_batch_size in batch_sizes:
-        for each_feasible_offloading in all_feasible_strategies_dict[each_batch_size]:
-            for each_recomp_percent in range(0, 110, 10):
-                each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
-                print(" ")
-                print(f'cur strat: {each_batch_size}, {each_feasible_offloading}, {each_recomp_len}')
-                #Model Prediction 
-                if fast:
-                    cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
-                else: 
-                    cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
-                if save_results: 
-                    cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
-                    all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency)
-              
-                cur_objective_val = cur_latency
-                if var_to_min == "energy":
-                    cur_objective_val = cur_energy
-                # compare to optimal policy seen so far
-                if cur_objective_val < min_objective_val:
-                    min_objective_val = cur_objective_val
-                    min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency)
+        if each_batch_size in all_feasible_strategies_dict:
+            for each_feasible_offloading in all_feasible_strategies_dict[each_batch_size]:
+                for each_recomp_percent in range(0, 110, 10):
+                    each_recomp_len = prompt_len * each_recomp_percent // 100 # recomp is only for prompt len
+                    print(" ")
+                    print(f'cur strat: {each_batch_size}, {each_feasible_offloading}, {each_recomp_len}')
+                    #Model Prediction 
+                    if fast:
+                        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
+                    else: 
+                        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
+                    if save_results: 
+                        cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
+                        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency)
+                  
+                    cur_objective_val = cur_latency
+                    if var_to_min == "energy":
+                        cur_objective_val = cur_energy
+                    # compare to optimal policy seen so far
+                    if cur_objective_val < min_objective_val:
+                        min_objective_val = cur_objective_val
+                        min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency)
 
     if save_results:
         csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
