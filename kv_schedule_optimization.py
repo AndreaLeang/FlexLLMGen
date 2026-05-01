@@ -44,6 +44,7 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_p
     total_available_gpu = hardware_config.gmem # Bytes
     total_weight_bytes = opt_config.model_bytes() # Bytes
     num_heads = opt_config.n_head
+    hidden_size = opt_config.hidden_size
 
     batch_size_to_distinct_offloadings = {
         1:[0, 100],
@@ -62,7 +63,7 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_p
         for each_possible_offloading in batch_size_to_distinct_offloadings[each_batch_size]:
             num_prompts_on_gpu = int(each_batch_size* num_heads * (100-each_possible_offloading) / 100) // num_heads
             actual_kv_cache_bytes = (num_prompts_on_gpu / each_batch_size) * num_batches * total_kv_cache_bytes
-            free_mem_required =  total_kv_cache_bytes/2 * (prompt_len/seq_len) * (prompt_len/hidden_size) * (num_head+1)/num_head
+            free_mem_required =  total_kv_cache_bytes/2 * (prompt_len/seq_len) * (prompt_len/hidden_size) * (num_heads+1)/num_heads
             if each_possible_offloading != 0:
                 free_mem_required += total_kv_cache_bytes
             if total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes + free_mem_required <= total_available_gpu:
