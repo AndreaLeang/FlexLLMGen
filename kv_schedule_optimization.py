@@ -1002,6 +1002,7 @@ if __name__ == "__main__":
     parser.add_argument("--gbs", "--batch-size", type=int, default = 1)
     parser.add_argument("--off-per", "--offloading-percent", type=int, default = 0)
     parser.add_argument("--recomp-len", type=int, default = 0)
+    parser.add_argument("--var-to-min", type=str, default = "latency")
 
     parser.add_argument("--np", "--num-prompts", type=int)
     parser.add_argument("--test", "--testing", action="store_true")
@@ -1038,7 +1039,7 @@ if __name__ == "__main__":
                         dvfs_idle_power_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
                         lut_folder_abs_path="/home/akleang/akleang/energaizer-ispass26-artifact/database/data")
     if args.s:
-        single_strat_pred(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.gbs, args.off_per, args.recomp_len, args.fast, gpu_estimator)
+        single_strat_pred(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.gbs, args.off_per, args.recomp_len, args.fast, gpu_estimator, var_to_min = args.var_to_min)
     else: 
-        disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.test, args.fast, gpu_estimator)
+        disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.test, args.fast, gpu_estimator, var_to_min = args.var_to_min)
 
