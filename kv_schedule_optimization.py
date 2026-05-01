@@ -40,7 +40,7 @@ class CostModelConfig:
 
     
 
-def get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_prompts, seq_len, min_offloading=True):
+def get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_prompts, prompt_len, gen_len, seq_len, min_offloading=True):
     total_available_gpu = hardware_config.gmem # Bytes
     total_weight_bytes = opt_config.model_bytes() # Bytes
     num_heads = opt_config.n_head
@@ -62,10 +62,14 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_p
         for each_possible_offloading in batch_size_to_distinct_offloadings[each_batch_size]:
             num_prompts_on_gpu = int(each_batch_size* num_heads * (100-each_possible_offloading) / 100) // num_heads
             actual_kv_cache_bytes = (num_prompts_on_gpu / each_batch_size) * num_batches * total_kv_cache_bytes
-            if total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes <= total_available_gpu:
+            free_mem_required =  total_kv_cache_bytes/2 * (prompt_len/seq_len) * (prompt_len/hidden_size) * (num_head+1)/num_head
+            if each_possible_offloading != 0:
+                free_mem_required += total_kv_cache_bytes
+            if total_weight_bytes + actual_kv_cache_bytes + total_hidden_bytes + free_mem_required <= total_available_gpu:
                 if each_batch_size not in feasible_strategies:
                     feasible_strategies[each_batch_size] = []
                 feasible_strategies[each_batch_size].append(each_possible_offloading)
+                print(f"feasible strat: block size: {each_batch_size}, min off: {each_possible_offloading}, kv on gpu: {actual_kv_cache_bytes}, free mem req: {free_mem_required}")
                 if min_offloading: 
                     break
     return feasible_strategies
@@ -844,7 +848,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
     # understand what unique batch size is available 
     batch_sizes = get_batch_sizes(num_of_prompts)
     # understand what % offloadings are available 
-    all_feasible_strategies_dict = get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_prompts, prompt_len+gen_len)
+    all_feasible_strategies_dict = get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_prompts, prompt_len, gen_len, prompt_len+gen_len)
     
     ### ITERATE AND COMPARE STRATEGIES
 
