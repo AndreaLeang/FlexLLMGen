@@ -872,8 +872,8 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         batch_sizes = [1, 2]
         all_feasible_strategies_dict = {1: [100], 2:[100]}
 
-        batch_sizes = [2]
-        all_feasible_strategies_dict = {2:[100]}
+        batch_sizes = [1]
+        all_feasible_strategies_dict = {1:[100]}
 
     # start searching 
     for each_batch_size in batch_sizes:
