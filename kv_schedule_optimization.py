@@ -872,8 +872,8 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         # batch_sizes = [1, 2]
         # all_feasible_strategies_dict = {1: [100], 2:[100]}
 
-        batch_sizes = [4]
-        all_feasible_strategies_dict = {4:[100]}
+        # batch_sizes = [4]
+        # all_feasible_strategies_dict = {4:[100]}
 
     # start searching 
     for each_batch_size in batch_sizes:
@@ -956,7 +956,7 @@ def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, ha
     min_strategy = (batch_size, offloading_per, recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency )
     
     if save_results:
-        csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
+        csv_filename = "all_pred_model_"+ model + "_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
         print(csv_filename)
         fieldnames = ["Batch Size", "Offloading Percent to CPU", "Recompute Length", "Energy (J)", "Latency (s)", "Time to First Token (s)", "Avg Input Layer Energy (J)", "Avg Input Layer Latency (s)", "Avg Output Layer Energy (J)", "Avg Output Layer Latency (s)", "Avg MHA Layer Energy (J)", "Avg MHA Layer Latency (s)", "Avg MLP Layer Energy (J)", "Avg MLP Layer Latency (s)", "Percent Transfer Energy (%)", "Percent Active Energy (%)", "Percent Transfer Latency (%)"]
         write_header = not os.path.exists(csv_filename)
