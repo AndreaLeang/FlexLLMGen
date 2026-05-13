@@ -38,6 +38,15 @@ class CostModelConfig:
 
     gpu_freq: int = 1305
 
+    use_ideal_bw = False
+    ideal_bw = 16.0 # GB/s
+    use_flex_bw = False
+    flex_bw =  11.487 # GB/s
+    use_no_pinned = False
+    use_ideal_comp = False
+    ideal_mm_flops = 312 * T
+    flex_mm_flops = 162.172 * T
+
     
 
 def get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_prompts, prompt_len, gen_len, seq_len, min_offloading=True):
@@ -446,6 +455,8 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
 
 
 def pinned_pred(bytes, hardware_config, gpu_estimator):
+    if hardware_config.use_no_pinned:
+        return 0, 0
     if bytes == 0:
         return 0, 0
     latency_us = max(0, 5.168e-14 * bytes**2 + 3.317e-05 * bytes - 104.7)
@@ -458,22 +469,29 @@ def pinned_pred(bytes, hardware_config, gpu_estimator):
 
 
 def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True):
-    if bytes == 0:
-        return 0,0
-    bytes = bytes / 1000000000.0 # bytes --> GB
-    if single_directional:
-        bandwidth = 1.415 * math.log10(bytes) + 13.38
-        bandwidth = 12.04 - 5.561*math.exp(-259.6*bytes) 
-        bandwidth = 11.87 / ((3.462e-06 * 11.87)/bytes + 1)
-    else: 
-        bandwidth = 3.626 * math.log10(bytes) + 26.13 
-        bandwidth = 11.58 - 6.802*math.exp(-249.4*bytes)
-        bandwidth = 11.73 / ((5.859e-06 * 11.73)/bytes + 1)
-      
-    # bandwidth = max(min(bandwidth, 15.0), 0)
-    bandwidth = max(bandwidth, 0)
-    latency = max(bytes/bandwidth, 0)
+    if hardware_config.use_ideal_bw: 
+        latency = hardware_config.ideal_bw * bytes
+    elif hardware_config.use_flex_bw:
+        latency = hardware_config.flex_bw * bytes
+    else:
+        # actual model
     
+        if bytes == 0:
+            return 0,0
+        bytes = bytes / 1000000000.0 # bytes --> GB
+        if single_directional:
+            bandwidth = 1.415 * math.log10(bytes) + 13.38
+            bandwidth = 12.04 - 5.561*math.exp(-259.6*bytes) 
+            bandwidth = 11.87 / ((3.462e-06 * 11.87)/bytes + 1)
+        else: 
+            bandwidth = 3.626 * math.log10(bytes) + 26.13 
+            bandwidth = 11.58 - 6.802*math.exp(-249.4*bytes)
+            bandwidth = 11.73 / ((5.859e-06 * 11.73)/bytes + 1)
+          
+        # bandwidth = max(min(bandwidth, 15.0), 0)
+        bandwidth = max(bandwidth, 0)
+        latency = max(bytes/bandwidth, 0)
+        
     gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency
     return gpu_energy, latency
 
@@ -484,10 +502,15 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     # gemmLike      : ['gemm', 'fmha-approximate']
     # NonLinear     : ['softmax', 'layernorm', 'softmax_fusion', 'layernorm_fusion']
     # energaizer-ispass26-artifact/experiments_single/gee_estimator.py --> query specs 
-
+    
     if first_token:
         return 0, 0 # no recomputation, layer calculation will already take care of it
+    if hardware_config.use_ideal_comp:
+        recomp_ops = 4 * gpu_batch_size * recompute_len * input_dim * input_dim # from KVPR
+        latency = recomp_ops / hardware_config.ideal_mm_flops
+        return 0, latency
 
+    # Actual model
     all_queries = []
     all_query_types = []
   
@@ -499,13 +522,13 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     all_query_types.append(layer_norm_query_type)
   
     linear_query = {
-    	'batch': batch_size,
-    	'dimM' : recomp_len,
-    	'dimN' : opt_config.hidden_size,
-    	'dimK' : opt_config.hidden_size,
-    	'precM': 'bf16',
-    	'precA': 'bf16',
-    	'useTensorCore':  True
+        'batch': batch_size,
+        'dimM' : recomp_len,
+        'dimN' : opt_config.hidden_size,
+        'dimK' : opt_config.hidden_size,
+        'precM': 'bf16',
+        'precA': 'bf16',
+        'useTensorCore':  True
     }
     linear_query_type = ('gemm', 'tc', 'bf16')
     for i in range(2):
@@ -545,6 +568,18 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     return tot_energy, tot_lat
 
 def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type="MHA", first_token=False):
+    if hardware_config.use_ideal_comp:
+        if layer_type == "MHA":
+            if first_token:
+                comp_ops =  batch_size * (8 * prompt_len  * hardware_config.h1 ** 2  + 4 * prompt_len  * hardware_config.h1 * hardware_config.h2) +  4 * batch_size * prompt_len  ** 2 * hardware_config.h1
+            else:
+                comp_ops =  batch_size * (8 * hardware_config.h1 ** 2  + 4 * hardware_config.h1 * hardware_config.h2) + * 4 * batch_size * (prompt_len + gen_len / 2) * hardware_config.h1 
+            latency = comp_ops / hardware_config.ideal_mm_flops
+        else:
+            latency = 0.0
+        return 0, latency
+
+    # Actual Model
     all_queries = []
     all_query_types = []
 
@@ -1015,6 +1050,11 @@ if __name__ == "__main__":
     parser.add_argument("--fast", action="store_true")
     parser.add_argument("--save", "--save-all-strats", action="store_true")
 
+    parser.add_argument("--i-BW", "--ideal-bandwidth", action="store_false") # default = True
+    parser.add_argument("--f-BW", "--flexgen-bandwidth", action="store_false") # default = True
+    parser.add_argument("--nP", "--no-Pageable-to-Pinned", action="store_false")
+    parser.add_argument("--i-C", "--ideal-computations", action="store_false")
+
 
     args = parser.parse_args()
     config = CostModelConfig()
@@ -1034,6 +1074,11 @@ if __name__ == "__main__":
     config.cmem = alpha_c * args.cpu_mem * GB
     config.gmem = alpha_g * args.gpu_mem * GB
     config.gpu_freq = args.gpu_freq
+
+    config.ideal_bw = args.i_BW
+    config.flex_bw = args.f_BW
+    config.no_pinned = args.nP
+    config.ideal_comp = args.i_C
     
 
     #TODO: specify hardware config
