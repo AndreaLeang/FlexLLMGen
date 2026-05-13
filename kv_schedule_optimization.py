@@ -573,7 +573,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
             if first_token:
                 comp_ops =  batch_size * (8 * prompt_len  * hardware_config.h1 ** 2  + 4 * prompt_len  * hardware_config.h1 * hardware_config.h2) +  4 * batch_size * prompt_len  ** 2 * hardware_config.h1
             else:
-                comp_ops =  batch_size * (8 * hardware_config.h1 ** 2  + 4 * hardware_config.h1 * hardware_config.h2) + * 4 * batch_size * (prompt_len + gen_len / 2) * hardware_config.h1 
+                comp_ops =  batch_size * (8 * hardware_config.h1 ** 2  + 4 * hardware_config.h1 * hardware_config.h2) + 4 * batch_size * (prompt_len + gen_len / 2) * hardware_config.h1 
             latency = comp_ops / hardware_config.ideal_mm_flops
         else:
             latency = 0.0
