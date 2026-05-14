@@ -454,6 +454,10 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         return tot_energy, first_half_latency + second_half_latency, tot_transfer_energy, tot_active_energy, tot_transfer_lat
 
 
+
+
+
+
 def pinned_pred(bytes, hardware_config, gpu_estimator):
     # print(f"pinned: using no pinned: {hardware_config.use_no_pinned}")
     if hardware_config.use_no_pinned:
@@ -493,8 +497,9 @@ def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True
         # bandwidth = max(min(bandwidth, 15.0), 0)
         bandwidth = max(bandwidth, 0)
         latency = max(bytes/bandwidth, 0)
-    print(f"transfer lat: {latency}")
+    
     gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency
+    print(f"transfer energy: {gpu_energy}, lat: {latency}")
     return gpu_energy, latency
 
 def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len, gpu_estimator, hardware_config, first_token=False):
@@ -568,6 +573,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         tot_lat += latency
         tot_energy += energy
     tot_lat /= 1000.0 # ms --> s
+    print(f"recomp_pred energy: {tot_energy}, lat: {latency}")
     return tot_energy, tot_lat
 
 def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type="MHA", first_token=False):
@@ -877,7 +883,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         #     print(f"operation ind: {each_ind}, latency: {latency}")
     tot_lat /= 1000.0 # ms --> s
     fir_token_after_KV_latency /= 1000.0
-    # print(f"layer_calc: type: {layer_type}, energy (J): {tot_energy}, latency (s) : {tot_lat}")
+    print(f"layer_calc: type: {layer_type}, energy (J): {tot_energy}, latency (s) : {tot_lat}")
     return tot_energy, tot_lat, fir_token_after_KV_energy, fir_token_after_KV_latency
 
 
