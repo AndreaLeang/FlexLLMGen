@@ -501,7 +501,7 @@ def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True
         latency = max(bytes/bandwidth, 0)
     
     gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency
-    print(f"transfer energy: {gpu_energy}, lat: {latency}")
+    # print(f"transfer energy: {gpu_energy}, lat: {latency}")
     return gpu_energy, latency
 
 def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len, gpu_estimator, hardware_config, first_token=False):
@@ -517,7 +517,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     if hardware_config.use_ideal_comp:
         recomp_ops = 4 * batch_size * recomp_len * opt_config.input_dim * opt_config.input_dim # from KVPR
         latency = recomp_ops / hardware_config.ideal_mm_flops
-        print(f"recomp_pred lat: {latency}")
+        # print(f"recomp_pred lat: {latency}")
         return 0, latency
     
     # Actual model
@@ -575,7 +575,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
         tot_lat += latency
         tot_energy += energy
     tot_lat /= 1000.0 # ms --> s
-    print(f"recomp_pred energy: {tot_energy}, lat: {latency}")
+    # print(f"recomp_pred energy: {tot_energy}, lat: {latency}")
     return tot_energy, tot_lat
 
 def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type="MHA", first_token=False):
@@ -592,7 +592,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         fir_token_lat = 0.0
         if first_token:
             fir_token_lat = latency
-        print(f"layer_pred lat: {latency}")
+        # print(f"layer_pred lat: {latency}")
         return 0, latency, 0, fir_token_lat
 
     # Actual Model
@@ -885,7 +885,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         #     print(f"operation ind: {each_ind}, latency: {latency}")
     tot_lat /= 1000.0 # ms --> s
     fir_token_after_KV_latency /= 1000.0
-    print(f"layer_calc: type: {layer_type}, energy (J): {tot_energy}, latency (s) : {tot_lat}")
+    # print(f"layer_calc: type: {layer_type}, energy (J): {tot_energy}, latency (s) : {tot_lat}")
     return tot_energy, tot_lat, fir_token_after_KV_energy, fir_token_after_KV_latency
 
 
