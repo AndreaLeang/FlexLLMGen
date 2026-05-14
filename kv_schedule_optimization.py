@@ -508,7 +508,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     if first_token:
         return 0, 0 # no recomputation, layer calculation will already take care of it
     if hardware_config.use_ideal_comp:
-        recomp_ops = 4 * batch_size * recompute_len * opt_config.input_dim * opt_config.input_dim # from KVPR
+        recomp_ops = 4 * batch_size * recomp_len * opt_config.input_dim * opt_config.input_dim # from KVPR
         latency = recomp_ops / hardware_config.ideal_mm_flops
         return 0, latency
     
