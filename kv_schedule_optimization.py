@@ -482,9 +482,9 @@ def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True
         
     bytes = bytes / 1000000000.0 # bytes --> GB
     if hardware_config.use_ideal_bw: 
-        latency = hardware_config.ideal_bw / bytes
+        latency = bytes / hardware_config.ideal_bw 
     elif hardware_config.use_flex_bw:
-        latency = hardware_config.flex_bw / bytes
+        latency = bytes / hardware_config.flex_bw 
     else:
         # actual model
         if single_directional:
