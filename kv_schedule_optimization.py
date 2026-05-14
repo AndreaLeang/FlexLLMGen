@@ -116,7 +116,7 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
         input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency = single_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
     else:
         input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency  = multi_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
-    print(f"fast single token gen: input lat: {input_latency}, out lat: {output_latency}, tot_MHA_latency: {tot_MHA_latency}, tot_MLP_latency: {tot_MLP_latency}")
+    # print(f"fast single token gen: input lat: {input_latency}, out lat: {output_latency}, tot_MHA_latency: {tot_MHA_latency}, tot_MLP_latency: {tot_MLP_latency}")
     
     other_token_energy = (gen_len - 1) * (input_energy + tot_MHA_energy + tot_MLP_energy + output_energy)
     other_token_latency = (gen_len - 1) * (input_latency + tot_MHA_latency + tot_MLP_latency + output_latency)
