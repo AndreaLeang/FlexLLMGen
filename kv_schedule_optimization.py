@@ -580,7 +580,10 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
             latency = comp_ops / hardware_config.ideal_mm_flops
         else:
             latency = 0.0
-        return 0, latency
+        fir_token_lat = 0.0
+        if first_token:
+            fir_token_lat = latency
+        return 0, latency, 0, fir_token_lat
 
     # Actual Model
     all_queries = []
