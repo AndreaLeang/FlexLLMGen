@@ -471,6 +471,7 @@ def pinned_pred(bytes, hardware_config, gpu_estimator):
 
 def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True):
     # print(f"transfer_pred: using ideal bw: {hardware_config.use_ideal_bw}, using flex bw: {hardware_config.use_flex_bw}")
+     bytes = bytes / 1000000000.0 # bytes --> GB
     if hardware_config.use_ideal_bw: 
         latency = hardware_config.ideal_bw * bytes
     elif hardware_config.use_flex_bw:
@@ -480,7 +481,6 @@ def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True
     
         if bytes == 0:
             return 0,0
-        bytes = bytes / 1000000000.0 # bytes --> GB
         if single_directional:
             bandwidth = 1.415 * math.log10(bytes) + 13.38
             bandwidth = 12.04 - 5.561*math.exp(-259.6*bytes) 
@@ -493,7 +493,7 @@ def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True
         # bandwidth = max(min(bandwidth, 15.0), 0)
         bandwidth = max(bandwidth, 0)
         latency = max(bytes/bandwidth, 0)
-    print(f"transfer lat: {latency}")
+    # print(f"transfer lat: {latency}")
     gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency
     return gpu_energy, latency
 
@@ -510,7 +510,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     if hardware_config.use_ideal_comp:
         recomp_ops = 4 * batch_size * recomp_len * opt_config.input_dim * opt_config.input_dim # from KVPR
         latency = recomp_ops / hardware_config.ideal_mm_flops
-        print(f"recomp_pred lat: {latency}")
+        # print(f"recomp_pred lat: {latency}")
         return 0, latency
     
     # Actual model
@@ -584,7 +584,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
         fir_token_lat = 0.0
         if first_token:
             fir_token_lat = latency
-        print(f"layer_pred lat: {latency}")
+        # print(f"layer_pred lat: {latency}")
         return 0, latency, 0, fir_token_lat
 
     # Actual Model
