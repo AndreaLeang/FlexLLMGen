@@ -477,6 +477,9 @@ def pinned_pred(bytes, hardware_config, gpu_estimator):
 
 def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True):
     # print(f"transfer_pred: using ideal bw: {hardware_config.use_ideal_bw}, using flex bw: {hardware_config.use_flex_bw}")
+    if bytes == 0:
+        return 0,0
+        
     bytes = bytes / 1000000000.0 # bytes --> GB
     if hardware_config.use_ideal_bw: 
         latency = hardware_config.ideal_bw / bytes
@@ -484,9 +487,6 @@ def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True
         latency = hardware_config.flex_bw / bytes
     else:
         # actual model
-    
-        if bytes == 0:
-            return 0,0
         if single_directional:
             bandwidth = 1.415 * math.log10(bytes) + 13.38
             bandwidth = 12.04 - 5.561*math.exp(-259.6*bytes) 
