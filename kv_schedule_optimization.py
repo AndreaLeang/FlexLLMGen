@@ -455,6 +455,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
 
 
 def pinned_pred(bytes, hardware_config, gpu_estimator):
+    print(f"pinned: using no pinned: {hardware_config.use_no_pinned}")
     if hardware_config.use_no_pinned:
         return 0, 0
     if bytes == 0:
@@ -469,6 +470,7 @@ def pinned_pred(bytes, hardware_config, gpu_estimator):
 
 
 def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True):
+    print(f"transfer_pred: using ideal bw: {hardware_config.use_ideal_bw}, using flex bw: {hardware_config.use_flex_bw}")
     if hardware_config.use_ideal_bw: 
         latency = hardware_config.ideal_bw * bytes
     elif hardware_config.use_flex_bw:
@@ -502,14 +504,14 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     # gemmLike      : ['gemm', 'fmha-approximate']
     # NonLinear     : ['softmax', 'layernorm', 'softmax_fusion', 'layernorm_fusion']
     # energaizer-ispass26-artifact/experiments_single/gee_estimator.py --> query specs 
-    
+    print(f"recomp_calc_pred: using ideal comp: {hardware_config.use_ideal_comp}")
     if first_token:
         return 0, 0 # no recomputation, layer calculation will already take care of it
     if hardware_config.use_ideal_comp:
         recomp_ops = 4 * gpu_batch_size * recompute_len * input_dim * input_dim # from KVPR
         latency = recomp_ops / hardware_config.ideal_mm_flops
         return 0, latency
-
+    
     # Actual model
     all_queries = []
     all_query_types = []
@@ -568,6 +570,7 @@ def recomp_calc_pred(opt_config, batch_size, prompt_len, cur_gen_len, recomp_len
     return tot_energy, tot_lat
 
 def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type="MHA", first_token=False):
+    print(f"layer_calc_pred: using ideal comp: {hardware_config.use_ideal_comp}")
     if hardware_config.use_ideal_comp:
         if layer_type == "MHA":
             if first_token:
@@ -1079,6 +1082,10 @@ if __name__ == "__main__":
     config.use_flex_bw = args.f_BW
     config.use_no_pinned = args.nP
     config.use_ideal_comp = args.i_C
+    print(f"using ideal bw: { config.use_ideal_bw}")
+    print(f"using flex bw: { config.use_flex_bw}")
+    print(f"using no pinned: { config.use_no_pinned}")
+    print(f"using ideal comp: { config.use_ideal_comp}")
     
 
     #TODO: specify hardware config
