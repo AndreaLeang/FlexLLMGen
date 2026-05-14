@@ -1050,10 +1050,10 @@ if __name__ == "__main__":
     parser.add_argument("--fast", action="store_true")
     parser.add_argument("--save", "--save-all-strats", action="store_true")
 
-    parser.add_argument("--i-BW", "--ideal-bandwidth", action="store_false") # default = True
-    parser.add_argument("--f-BW", "--flexgen-bandwidth", action="store_false") # default = True
-    parser.add_argument("--nP", "--no-Pageable-to-Pinned", action="store_false")
-    parser.add_argument("--i-C", "--ideal-computations", action="store_false")
+    parser.add_argument("--i-BW", "--ideal-bandwidth", action="store_true") # default = True
+    parser.add_argument("--f-BW", "--flexgen-bandwidth", action="store_true") # default = True
+    parser.add_argument("--nP", "--no-Pageable-to-Pinned", action="store_true")
+    parser.add_argument("--i-C", "--ideal-computations", action="store_true")
 
 
     args = parser.parse_args()
@@ -1075,10 +1075,10 @@ if __name__ == "__main__":
     config.gmem = alpha_g * args.gpu_mem * GB
     config.gpu_freq = args.gpu_freq
 
-    config.ideal_bw = args.i_BW
-    config.flex_bw = args.f_BW
-    config.no_pinned = args.nP
-    config.ideal_comp = args.i_C
+    config.use_ideal_bw = args.i_BW
+    config.use_flex_bw = args.f_BW
+    config.use_no_pinned = args.nP
+    config.use_ideal_comp = args.i_C
     
 
     #TODO: specify hardware config
