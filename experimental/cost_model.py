@@ -637,6 +637,11 @@ if __name__ == "__main__":
             all_policies.append((i, max_throughput))
         print(f"all policies: {all_policies}")
     else:
+        if args.no_disk:
+            args.wg = 100
+            args.wc = 0
+            args.hg = 100
+            args.hc = 0
         best_policy, max_throughput = solve(config, solve_lp, vars(args))
         print(best_policy)
         print(f"max_throughput: {max_throughput:.2f} token/s")
