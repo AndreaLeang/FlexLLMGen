@@ -576,8 +576,9 @@ if __name__ == "__main__":
     parser.add_argument("--alpha-n", type=float)
     parser.add_argument("--sweep-cpu", action="store_true")
     parser.add_argument("--sweep-cpu-start", type=int, default=0)
-
+    
     parser.add_argument("--flex-test", action="store_true") # if false, use ideal values
+    parser.add_argument("--no-disk", action="store_true") 
 
     args = parser.parse_args()
     assert not (args.percent and (args.wg or args.wc or args.cg or args.cc or args.hg or args.hc)), "cost model: percent and other arguments are not compatible"
@@ -622,6 +623,11 @@ if __name__ == "__main__":
                 args.percent[3] = i
             else:
                 # args.percent = [100, 0, 100-i, i, 100, 0]
+                if args.no_disk:
+                    args.wg = 100
+                    args.wc = 0
+                    args.hg = 100
+                    args.hc = 0
                 args.cg = 100 - i
                 args.cc = i
             best_policy, max_throughput = solve(config, solve_lp, vars(args))
