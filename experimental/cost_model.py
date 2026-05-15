@@ -61,6 +61,7 @@ class CostModelConfig:
 
     # hardware constants
     # default value aligned on google cloud T4
+    # now using ideal for pcie 3.0 16 lanes
     ctog_bdw: float = 16.0 * GB
     gtoc_bdw_cache: float = 16.0 * GB
     gtoc_bdw_hidden: float = 16.0 * GB
@@ -576,9 +577,11 @@ if __name__ == "__main__":
     parser.add_argument("--sweep-cpu", action="store_true")
     parser.add_argument("--sweep-cpu-start", type=int, default=0)
 
+    parser.add_argument("--flex-test", action="store_true") # if false, use ideal values
+
     args = parser.parse_args()
     assert not (args.percent and (args.wg or args.wc or args.cg or args.cc or args.hg or args.hc)), "cost model: percent and other arguments are not compatible"
-
+  
     if args.alpha_g:
         alpha_g = args.alpha_g
     if args.alpha_c:
@@ -600,6 +603,16 @@ if __name__ == "__main__":
     config.gmem = args.gpu_mem * GB
     config.cmem = args.cpu_mem * GB
     config.nmem = args.nvme_mem * GB
+
+    if args.flex_test:
+        config.ctog_bdw = 11.486 * GB
+        config.gtoc_bdw_cache = 5.874 * GB
+        config.gtoc_bdw_hidden = 11.956 * GB
+
+        config.mm_flops_p = 185.464 * T 
+        config.mm_flops_g = 148.470 * T
+        config.bmm_flops_p = 171.128 * T
+        config.bmm_flops_g = 73.031 * T
 
     if args.sweep_cpu:
         all_policies = []
