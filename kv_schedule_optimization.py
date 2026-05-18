@@ -917,8 +917,8 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
         test_offloading_per = 10
         test_recomp_len = 0
 
-        batch_sizes = [1, 2, 4, 8]
-        all_feasible_strategies_dict = {1: [100], 2:[100], 4:[60], 8:[80]}
+        batch_sizes = [1, 2, 4, 8, 16]
+        all_feasible_strategies_dict = {1: [100], 2:[50], 4:[20], 8:[10], 16:[20]}
 
         # batch_sizes = [1, 2, 4]
         # all_feasible_strategies_dict = {1: [100], 2:[100], 4:[100]}
