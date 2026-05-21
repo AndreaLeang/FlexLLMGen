@@ -107,6 +107,9 @@ def main():
     parser.add_argument("--recomp-len", type=int, default=0)
 
     parser.add_argument("--d", "--decode",action="store_true")
+    parser.add_argument("--s-r", "--sweep-recomp",action="store_true")
+    parser.add_argument("--sweep-re-start", type=int, default=0)
+    parser.add_argument("--sweep-re-step", type=int, default=10)
 
     parser.add_argument("--layer-focus", action="store_true")
 
@@ -116,97 +119,101 @@ def main():
     out_dir = Path(args.out_dir)
     if not os.path.exists(args.out_dir):
         out_dir.mkdir(exist_ok=True)
-
-    bench = LLMPowerBench(
-        model_id=args.model,
-        gpu_indices=args.gpu,
-        socket_ids=args.sockets,
-        monitor_interval_ms=args.interval_ms,
-        block_size= args.block_size,
-        num_of_blocks= args.num_blocks,
-        prompt_len=args.prompt_len,
-        gen_len=args.gen_len,
-        recomp_len=args.recomp_len,
-        offload_percent=args.off_per,
-        decode = args.d,
-    ).load()
-
-    # ── warm-up (not recorded) ────────────────────────────────────────
-
-    all_rows   = []
-    n_cells    = len(PROMPTS) * len(OUTPUT_LENGTHS)
-    cell_count = 0
-
-
-    tag = cell_tag(args.model, args.prompt_len, args.gen_len, args.block_size*args.num_blocks, args.block_size)
-
-    print(f"{'='*64}")
-    print(f"  [{cell_count}/{n_cells}]  {tag}")
-    print(f"{'='*64}")
-
-    if args.layer_focus:
-        result = bench.run_layers(
-            n_iters=args.n_iters,
-            n_iters_layer=args.n_iters_layer,
-            min_duration_s=args.min_duration,
-        )
-    else:
-        result = bench.run(
-            n_iters=args.n_iters,
-            n_iters_layer=args.n_iters_layer,
-            min_duration_s=args.min_duration,
-        )
-    bench.print_report(result)
-
-    # save per-cell JSON (full detail including raw phase data)
-    json_path = out_dir / f"{tag}.json"
-    bench.save_json(result, str(json_path))
-    fix_ownership(str(json_path))
-
-    # save per-cell power trace CSV
-    csv_path = out_dir / f"{tag}_trace.csv"
-    mon_stub = type("M", (), {
-        "samples":     result.all_samples,
-        "gpu_indices": args.gpu,
-    })()
-    # reuse PowerMonitor.save_csv logic inline
-    n_sockets = (len(result.all_samples[0].socket_pkg_w)
-                    if result.all_samples else 0)
-    skt_cols  = ([f"s{i}_pkg_w"  for i in range(n_sockets)] +
-                    [f"s{i}_dram_w" for i in range(n_sockets)])
-    gpu_cols  = [f"gpu{i}_w" for i in args.gpu]
-    with open(csv_path, "w", newline="") as f:
-        w = csv.writer(f)
-        w.writerow(["timestamp_s", "cpu_pkg_w", "cpu_dram_w"]
-                    + skt_cols + gpu_cols)
-        for x in result.all_samples:
-            w.writerow([
-                f"{x.timestamp:.4f}",
-                f"{x.cpu_pkg_w:.2f}", f"{x.cpu_dram_w:.2f}",
-                *[f"{v:.2f}" for v in x.socket_pkg_w],
-                *[f"{v:.2f}" for v in x.socket_dram_w],
-                *[f"{g:.2f}" for g in x.gpu_w],
-            ])
-    fix_ownership(csv_path)
-
-    all_rows.append(flat_row(tag, result))
-
-
-    # ── write aggregated summary CSV ──────────────────────────────────
-    summary_path = out_dir / "power_summary.csv"
-    if all_rows:
-        fieldnames = list(all_rows[0].keys())
-        with open(summary_path, "w", newline="") as f:
-            w = csv.DictWriter(f, fieldnames=fieldnames)
-            w.writeheader()
-            w.writerows(all_rows)
-        fix_ownership(summary_path)
-
-    print(f"\n{'='*64}")
-    print(f"  Done.  {cell_count} cells completed.")
-    print(f"  Summary CSV  → {summary_path}")
-    print(f"  Per-cell JSON/trace → {out_dir}/")
-    print(f"{'='*64}\n")
+    all_re_per_ranges = range(args.sweep_re_start, 110, args.sweep_re_step)
+    if not args.s_r:
+        all_re_per_ranges = [args.recomp_len]
+        
+    for each_re in all_re_per_ranges:
+        bench = LLMPowerBench(
+            model_id=args.model,
+            gpu_indices=args.gpu,
+            socket_ids=args.sockets,
+            monitor_interval_ms=args.interval_ms,
+            block_size= args.block_size,
+            num_of_blocks= args.num_blocks,
+            prompt_len=args.prompt_len,
+            gen_len=args.gen_len,
+            recomp_len=each_re,
+            offload_percent=args.off_per,
+            decode = args.d,
+        ).load()
+    
+        # ── warm-up (not recorded) ────────────────────────────────────────
+    
+        all_rows   = []
+        n_cells    = len(PROMPTS) * len(OUTPUT_LENGTHS)
+        cell_count = 0
+    
+    
+        tag = cell_tag(args.model, args.prompt_len, args.gen_len, args.block_size*args.num_blocks, args.block_size)
+    
+        print(f"{'='*64}")
+        print(f"  [{cell_count}/{n_cells}]  {tag}")
+        print(f"{'='*64}")
+    
+        if args.layer_focus:
+            result = bench.run_layers(
+                n_iters=args.n_iters,
+                n_iters_layer=args.n_iters_layer,
+                min_duration_s=args.min_duration,
+            )
+        else:
+            result = bench.run(
+                n_iters=args.n_iters,
+                n_iters_layer=args.n_iters_layer,
+                min_duration_s=args.min_duration,
+            )
+        bench.print_report(result)
+    
+        # save per-cell JSON (full detail including raw phase data)
+        json_path = out_dir / f"{tag}.json"
+        bench.save_json(result, str(json_path))
+        fix_ownership(str(json_path))
+    
+        # save per-cell power trace CSV
+        csv_path = out_dir / f"{tag}_trace.csv"
+        mon_stub = type("M", (), {
+            "samples":     result.all_samples,
+            "gpu_indices": args.gpu,
+        })()
+        # reuse PowerMonitor.save_csv logic inline
+        n_sockets = (len(result.all_samples[0].socket_pkg_w)
+                        if result.all_samples else 0)
+        skt_cols  = ([f"s{i}_pkg_w"  for i in range(n_sockets)] +
+                        [f"s{i}_dram_w" for i in range(n_sockets)])
+        gpu_cols  = [f"gpu{i}_w" for i in args.gpu]
+        with open(csv_path, "w", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(["timestamp_s", "cpu_pkg_w", "cpu_dram_w"]
+                        + skt_cols + gpu_cols)
+            for x in result.all_samples:
+                w.writerow([
+                    f"{x.timestamp:.4f}",
+                    f"{x.cpu_pkg_w:.2f}", f"{x.cpu_dram_w:.2f}",
+                    *[f"{v:.2f}" for v in x.socket_pkg_w],
+                    *[f"{v:.2f}" for v in x.socket_dram_w],
+                    *[f"{g:.2f}" for g in x.gpu_w],
+                ])
+        fix_ownership(csv_path)
+    
+        all_rows.append(flat_row(tag, result))
+    
+    
+        # ── write aggregated summary CSV ──────────────────────────────────
+        summary_path = out_dir / "power_summary.csv"
+        if all_rows:
+            fieldnames = list(all_rows[0].keys())
+            with open(summary_path, "w", newline="") as f:
+                w = csv.DictWriter(f, fieldnames=fieldnames)
+                w.writeheader()
+                w.writerows(all_rows)
+            fix_ownership(summary_path)
+    
+        print(f"\n{'='*64}")
+        print(f"  Done.  {cell_count} cells completed.")
+        print(f"  Summary CSV  → {summary_path}")
+        print(f"  Per-cell JSON/trace → {out_dir}/")
+        print(f"{'='*64}\n")
 
 
 if __name__ == "__main__":
