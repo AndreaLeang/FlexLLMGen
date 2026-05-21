@@ -240,8 +240,8 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
         if cur_gen_len == 0:
             time_to_first_token = one_forward_latency
-        print(f"total energy  of this forward pass: {one_forward_energy}")
-        print(f"total energy seen so far: {tot_energy}")
+        # print(f"total energy  of this forward pass: {one_forward_energy}")
+        # print(f"total energy seen so far: {tot_energy}")
 
     # get total energy and latency and time_to_first_token
     percent_energy_offloading = tot_transfer_energy / tot_energy *100
