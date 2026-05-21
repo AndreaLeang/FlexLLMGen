@@ -161,6 +161,7 @@ class LLMPowerBench:
         gen_len:             int                 = 16,
         recomp_len:          int                 = 0,
         offload_percent:     int                 = 0,
+        decode:              bool                = False,
         dtype:               torch.dtype         = torch.float16,
     ):
         self.model_id        = model_id
@@ -179,6 +180,7 @@ class LLMPowerBench:
         self.model          = None
         self.env            = None
         self.policy         = None
+        self.decode         = decode
 
 
     def load(self):
