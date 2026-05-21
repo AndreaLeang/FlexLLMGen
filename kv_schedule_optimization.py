@@ -94,7 +94,7 @@ def get_batch_sizes(num_of_prompts):
         cur_num_batches //= 2
     return possible_batch_sizes
 
-def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator):
+def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, decode):
     tot_energy = 0
     tot_latency = 0
     time_to_first_token = 0
@@ -104,10 +104,25 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     num_hidden_layers = model.num_hidden_layers
     
     # First Token Prediction
-    fir_input_energy, fir_input_latency, fir_output_energy, fir_output_latency, fir_tot_MHA_energy, fir_tot_MHA_latency, fir_tot_MLP_energy, fir_tot_MLP_latency, fir_tot_transfer_energy, fir_tot_active_energy, fir_tot_transfer_latency = first_token_forward_pass(model, num_of_prompts, prompt_len, 0, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
-    
-    first_token_energy = fir_input_energy + fir_tot_MHA_energy + fir_tot_MLP_energy + fir_output_energy
-    first_token_latency = fir_input_latency + fir_tot_MHA_latency + fir_tot_MLP_latency + fir_output_latency
+    if decode: 
+        first_token_energy = 0.0
+        first_token_latency = 0.0
+        fir_input_energy = 0.0
+        fir_input_latency = 0.0
+        fir_output_energy = 0.0
+        fir_output_latency = 0.0
+        fir_tot_MHA_energy = 0.0
+        fir_tot_MHA_latency = 0.0
+        fir_tot_MLP_energy = 0.0
+        fir_tot_MLP_latency = 0.0
+        fir_tot_transfer_energy = 0.0
+        fir_tot_active_energy = 0.0
+        fir_tot_transfer_latency = 0.0
+    else:
+        fir_input_energy, fir_input_latency, fir_output_energy, fir_output_latency, fir_tot_MHA_energy, fir_tot_MHA_latency, fir_tot_MLP_energy, fir_tot_MLP_latency, fir_tot_transfer_energy, fir_tot_active_energy, fir_tot_transfer_latency = first_token_forward_pass(model, num_of_prompts, prompt_len, 0, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
+        
+        first_token_energy = fir_input_energy + fir_tot_MHA_energy + fir_tot_MLP_energy + fir_output_energy
+        first_token_latency = fir_input_latency + fir_tot_MHA_latency + fir_tot_MLP_latency + fir_output_latency
 
     
 
@@ -149,7 +164,7 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer, percent_energy_offloading, percent_energy_active, percent_latency_transfer
 
 
-def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator):
+def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, decode):
     #offloading percent is amount offloaded to the cpu
 
     tot_energy = 0
@@ -169,7 +184,20 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     for cur_gen_len in range(gen_len):
         # input, output, MHA and MLP
         if cur_gen_len == 0:
-            input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency = first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
+            if decode:
+                input_energy = 0.0
+                input_latency = 0.0
+                output_energy = 0.0
+                output_latency = 0.0 
+                tot_MHA_energy =0.0 
+                tot_MHA_latency = 0.0
+                tot_MLP_energy = 0.0
+                tot_MLP_latency = 0.0 
+                cur_transfer_energy = 0.0
+                cur_active_energy = 0.0
+                cur_transfer_latency = 0.0
+            else:
+                input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency = first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
         elif num_batches == 1:
             input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency = single_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, last_token=cur_gen_len==1)
         else:
@@ -892,7 +920,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
 
 
 
-def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, testing, fast, gpu_estimator, var_to_min="latency"):
+def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, testing, fast, gpu_estimator, decode, var_to_min="latency"):
     # break model into layers
   
     ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
@@ -936,9 +964,9 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                     print(f'cur strat: {each_batch_size}, {each_feasible_offloading}, {each_recomp_len}')
                     #Model Prediction 
                     if fast:
-                        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
+                        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator, decode)
                     else: 
-                        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator)
+                        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator, decode)
                     if save_results: 
                         cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
                         all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency)
@@ -987,7 +1015,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
     print(f'best policy: batch_size = {min_strategy[0]}, offloading_percent = {min_strategy[1]}, recomp_len = {min_strategy[2]}, energy = {min_strategy[3]}, latency = {min_strategy[4]}, % Energy for Transfer = {min_strategy[5]}, % Energy for Active = {min_strategy[6]}, % Latency for Transfer = {min_strategy[7]}')
     return min_objective_val, min_strategy
 
-def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, batch_size, offloading_per, recomp_len, fast, gpu_estimator, var_to_min="latency"):
+def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, batch_size, offloading_per, recomp_len, fast, gpu_estimator, decode, var_to_min="latency"):
     min_objective_val = float('inf')
     min_strategy = None
 
@@ -996,9 +1024,9 @@ def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, ha
 
     # single run
     if fast: 
-        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency  = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator)
+        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency  = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator, decode)
     else:
-        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency  = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator)
+        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency  = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator, decode)
     if save_results: 
         cur_strat = (batch_size, offloading_per, recomp_len)
         all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency )
@@ -1071,6 +1099,8 @@ if __name__ == "__main__":
     parser.add_argument("--nP", "--no-Pageable-to-Pinned", action="store_true")
     parser.add_argument("--i-C", "--ideal-computations", action="store_true")
 
+    parser.add_argument("--d", "--decode", action="store_true")
+
 
     args = parser.parse_args()
     config = CostModelConfig()
@@ -1110,7 +1140,7 @@ if __name__ == "__main__":
                         dvfs_idle_power_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
                         lut_folder_abs_path="/home/akleang/akleang/energaizer-ispass26-artifact/database/data")
     if args.s:
-        single_strat_pred(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.gbs, args.off_per, args.recomp_len, args.fast, gpu_estimator, var_to_min = args.var_to_min)
+        single_strat_pred(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.gbs, args.off_per, args.recomp_len, args.fast, gpu_estimator, args.d, var_to_min = args.var_to_min)
     else: 
-        disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.test, args.fast, gpu_estimator, var_to_min = args.var_to_min)
+        disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.test, args.fast, gpu_estimator, args.d var_to_min = args.var_to_min)
 
