@@ -120,8 +120,9 @@ def main():
     if not os.path.exists(args.out_dir):
         out_dir.mkdir(exist_ok=True)
     all_re_per_ranges = range(args.sweep_re_start, 110, args.sweep_re_step)
+    all_re = [(cur_re_per * args.prompt_len) // 100 for cur_re_per in all_re_per_ranges]
     if not args.s_r:
-        all_re_per_ranges = [args.recomp_len]
+        all_re = [args.recomp_len]
         
     for each_re in all_re_per_ranges:
         bench = LLMPowerBench(
