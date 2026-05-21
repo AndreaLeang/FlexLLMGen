@@ -106,6 +106,8 @@ def main():
     parser.add_argument("--off-per", type=int, default=0)
     parser.add_argument("--recomp-len", type=int, default=0)
 
+    parser.add_argument("--d", "--decode",action="store_true")
+
     parser.add_argument("--layer-focus", action="store_true")
 
 
@@ -126,6 +128,7 @@ def main():
         gen_len=args.gen_len,
         recomp_len=args.recomp_len,
         offload_percent=args.off_per,
+        decode = args.d,
     ).load()
 
     # ── warm-up (not recorded) ────────────────────────────────────────
