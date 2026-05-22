@@ -183,8 +183,12 @@ def main():
         skt_cols  = ([f"s{i}_pkg_w"  for i in range(n_sockets)] +
                         [f"s{i}_dram_w" for i in range(n_sockets)])
         gpu_cols  = [f"gpu{i}_w" for i in args.gpu]
+        
+        if not os.path.exists(csv_path):
+            with open(csv_path, 'w', newline='') as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
         with open(csv_path, "w", newline="") as f:
-            w = csv.writer(f)
             w.writerow(["timestamp_s", "cpu_pkg_w", "cpu_dram_w"]
                         + skt_cols + gpu_cols)
             for x in result.all_samples:
@@ -204,9 +208,11 @@ def main():
         summary_path = out_dir / "power_summary.csv"
         if all_rows:
             fieldnames = list(all_rows[0].keys())
+            if not os.path.exists(summary_path):
+                with open(summary_path, 'w', newline='') as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                    writer.writeheader()
             with open(summary_path, "w", newline="") as f:
-                w = csv.DictWriter(f, fieldnames=fieldnames)
-                w.writeheader()
                 w.writerows(all_rows)
             fix_ownership(summary_path)
     
