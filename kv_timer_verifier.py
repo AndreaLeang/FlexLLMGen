@@ -495,7 +495,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             writer.writeheader()
 
             for idx in range(mha_flops_ind):
-                writer.writerow({'idx': idx, 'FLOPS': mha_flops[mha_flops_ind]})
+                writer.writerow({'idx': idx, 'FLOPS': mha_flops[idx]})
                 
         with open(cur_filename + '_all_recomp_flops.csv', 'w', newline='') as csvfile:
             fieldnames = ['idx', 'FLOPS']
@@ -503,7 +503,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             writer.writeheader()
 
             for idx in range(recomp_flops_ind):
-                writer.writerow({'idx': idx, 'FLOPS': recomp_flops[recomp_flops_ind]})
+                writer.writerow({'idx': idx, 'FLOPS': recomp_flops[idx]})
     
     # Record Pinned Cache Times
     with open(cur_filename + '_pinned.csv', 'w', newline='') as csvfile:
