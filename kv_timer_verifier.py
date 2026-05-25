@@ -6,11 +6,26 @@ import os
 from pathlib import Path
 # import matplotlib.pyplot as plt
 
-def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandwidth=False, record_ind_events=False, split_dir=False, re_dist=False, re_no_load=False):
+def break_down_filename(filename):
+    components = filename.split("-")
+    gbs = int(components[2][3:])
+    prompt_len = int(components[4][6:])
+    gen_len = int(components[5][3:])
+    recomp_len = components[14]
+    if recomp_len == "gpu":
+        recomp_len = 0
+    else:
+        recomp_len = int(recomp_len)
+    return gbs, prompt_len, gen_len, recomp_len
+    
+
+def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandwidth=False, record_ind_events=False, split_dir=False, re_dist=False, re_no_load=False, flops=False):
     # open json file
     with open(json_filename, 'r') as file:
         # load json file
         data = json.load(file)
+
+    gbs, prompt_len, gen_len, recomp_len = break_down_filename(filename)   
     
     # initialize the dictionary to hold the ac2g
     ac2g_dict = {}
@@ -30,6 +45,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     store_intervals = []
     recomp_data_transfer_intervals = []
     recomp_data_calc_intervals = []
+    mha_intervals = []
 
     # for each item in the result of the "traceEvents" key,
     num_of_events = len(data['traceEvents'])
@@ -54,6 +70,10 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             recompute_start_time = event['ts']
             recompute_end_time = event['ts'] + event['dur']
             recomp_data_calc_intervals.append((recompute_start_time, recompute_end_time))
+        elif flops and event['name'] == 'pytorch_backend.py(425): mha_gen':
+            mha_start_time = event['ts']
+            mha_end_time = event['ts'] + event['dur']
+            mha_intervals.append((mha_start_time, mha_end_time))
 
     #TODO
     # Get Smart copy head for pinned and memcpyasync connection
@@ -77,6 +97,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     load_memcpy_correlations = []
     store_memcpy_correlations = []
     recomp_load_memcpy_correlations = []
+    recomp_intervals = []
     
 
     recomp_calc_times = {} # [idx] = time from start of compute layer to start of mha (rercompute)
@@ -139,17 +160,74 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                         break
                     elif event['ts'] < interval[0]:
                         break
-        elif re_dist and event['name'] == 'pytorch_backend.py(425): mha_gen':
+        elif event['name'] == 'pytorch_backend.py(425): mha_gen':
             # difference between of start of compute_layer and start of mha
             for interval in recomp_data_calc_intervals:
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
+                    recomp_start_time = event['ts']
+                    recomp_end_time = event['ts'] + event['dur']
+                    recomp_intervals.append((recomp_start_time, recomp_end_time))
                     calc_time = event['ts'] - interval[0]
                     tot_recomp_calc_time += calc_time
                     recomp_calc_times[recomp_calc_idx] = calc_time
                     recomp_calc_idx += 1
                 elif event['ts'] < interval[0]:
                     break
-        
+
+    # FLOPs: get correlations for GPU operations
+    mha_correlations = {}
+    recomp_correlations = {}
+    mha_next_ind = 0
+    recomp_next_ind = 0
+    mha_flops = {} # [ind] = flop
+    recomp_flops = {}
+    mha_flops_ind = 0
+    recomp_flops_ind = 0
+    
+    if flops: 
+        for event_idx in range(num_of_events):
+            event = data['traceEvents'][event_idx]
+            if event['name'] == 'cudaLaunchKernel':
+                # Recomp
+                for interval in recomp_intervals:
+                    if event['ts'] >= interval[0] and event['ts'] < interval[1]:
+                        recomp_correlations[event['args']['correlation']] = True
+                        break
+                # MHA
+                for interval in mha_intervals:
+                    if event['ts'] >= interval[0] and event['ts'] < interval[1]:
+                        mha_correlations[event['args']['correlation']] = True
+                        break
+        for event_idx in range(num_of_events):
+            event = data['traceEvents'][event_idx]
+            if event['args']['correlation'] in recomp_correlations:
+                # recomp op
+                cur_lat = event['dur'] / 1000000.0 # in s now
+                hidden_size = 4096 # for opt-6.7b
+                if recomp_next_ind == 1 or recomp_next_ind == 2:
+                    # Linear 
+                    ops = 2*batch_size*recomp_len*hidden_size * hidden_size
+                    cur_flops = ops / cur_lat
+                    recomp_flops[recomp_flops_ind] = cur_flops
+                    recomp_flops_ind += 1
+                    
+                recomp_next_ind = (recomp_next_ind+1) %7
+            elif event['args']['correlation'] in mha_correlations:
+                # mha op
+                cur_lat = event['dur'] / 1000000.0 # in s now
+                ops = 0
+                hidden_size = 4096 # for opt-6.7b
+                if mha_next_ind == 1 or mha_next_ind == 3 or mha_next_ind == 4:
+                    # Linear 
+                    ops = 2*batch_size*1*hidden_size * hidden_size # discount prefill in results
+                    cur_flops = ops / cur_lat
+                    mha_flops[mha_flops_ind] = cur_flops
+                    mha_flops_ind += 1
+                mha_next_ind = (mha_next_ind+1) %12
+                
+                
+                
+                    
             
                 
 
@@ -408,6 +486,22 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             writer.writeheader()
             for idx in range(recomp_calc_idx):
                 writer.writerow({'idx': idx, 'compute time (s)': recomp_calc_times[idx], 'bytes transferred (B)': recomp_prep_transfer_times[idx][1]})
+    if flops: 
+        with open(cur_filename + '_all_mha_flops.csv', 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'FLOPS']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for idx in range(mha_flops_ind):
+                writer.writerow({'idx': idx, 'FLOPS': mha_flops[mha_flops_ind]})
+                
+        with open(cur_filename + '_all_recomp_flops.csv', 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'FLOPS']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for idx in range(recomp_flops_ind):
+                writer.writerow({'idx': idx, 'FLOPS': recomp_flops[recomp_flops_ind]})
     
     # Record Pinned Cache Times
     with open(cur_filename + '_pinned.csv', 'w', newline='') as csvfile:
@@ -656,6 +750,7 @@ def add_parser_arguments(parser):
     parser.add_argument('--recomp', action="store_true", help="Measure the distribution of data transfer for recomputation")
     parser.add_argument('--recomp-no-load', action="store_true", help="do not save load csvs")
     parser.add_argument('--layer-val', action="store_true", help="layer latency validation")
+    parser.add_argument('--flops', action="store_true", help="store flops for GPU operations")
 
 if __name__ == "__main__":
     SCRIPT_DIR = Path(__file__).parent.absolute()
@@ -673,7 +768,7 @@ if __name__ == "__main__":
     for batch_filename in batch_filenames:
         print(f"Processing {batch_filename}")
         if not args.layer_val:
-            all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir, args.recomp, args.recomp_no_load)
+            all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(str(SCRIPT_DIR / batch_filename), args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir, args.recomp, args.recomp_no_load, args.flops)
             print(f"Total GPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][0]} s")
             print(f"Total GPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][1]} s")
             print(f"Total Pinned Time for {batch_filename}: {all_kv_times[batch_filename][6]} s")
