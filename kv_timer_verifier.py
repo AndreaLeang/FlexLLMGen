@@ -169,7 +169,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             for interval in recomp_data_calc_intervals:
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                     recomp_start_time = event['ts']
-                    recomp_end_time = event['ts'] + event['dur']
+                    recomp_end_time = interval[0]
                     recomp_intervals.append((recomp_start_time, recomp_end_time))
                     calc_time = event['ts'] - interval[0]
                     tot_recomp_calc_time += calc_time
@@ -189,6 +189,8 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     recomp_flops_ind = 0
     
     if flops: 
+        print(f"num of recomp intervals: {len(recomp_intervals)}")
+        print(f"num of mha intervals: {len(mha_intervals)}")
         for event_idx in range(num_of_events):
             event = data['traceEvents'][event_idx]
             if event['name'] == 'cudaLaunchKernel':
