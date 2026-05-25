@@ -215,7 +215,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 print(f"each_cor {each_cor}")
         for event_idx in range(num_of_events):
             event = data['traceEvents'][event_idx]
-            if event['name'] == "ampere_fp16_s16816gemm_fp16_128x128_ldg8_relu_f2f_stages_32x5_tn":
+            if "gemm" in event['name']:
                 if event['args']['correlation'] in recomp_correlations:
                     # recomp op
                     cur_lat = event['dur'] / 1000000.0 # in s now
@@ -225,9 +225,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     cur_flops = ops / cur_lat
                     recomp_flops[recomp_flops_ind] = (cur_flops, event['args']['correlation'], ops)
                     recomp_flops_ind += 1
-                        
-            elif event['name'] == "ampere_fp16_s16816gemm_fp16_64x64_ldg8_relu_f2f_stages_64x5_tn":
-                if event['args']['correlation'] in mha_correlations:
+                elif event['args']['correlation'] in mha_correlations:
                     # mha op
                     cur_lat = event['dur'] / 1000000.0 # in s now
                     ops = 0
