@@ -168,8 +168,8 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             # difference between of start of compute_layer and start of mha
             for interval in recomp_data_calc_intervals:
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
-                    recomp_start_time = event['ts']
-                    recomp_end_time = interval[0]
+                    recomp_start_time = interval[0] # start of compute layer
+                    recomp_end_time = event['ts'] # start of mha
                     recomp_intervals.append((recomp_start_time, recomp_end_time))
                     calc_time = event['ts'] - interval[0]
                     tot_recomp_calc_time += calc_time
