@@ -209,7 +209,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         print(f"num of recomp correlations: {len(recomp_correlations)}")
         print(f"num of mha correlations: {len(mha_correlations)}")
 
-        print(f"")
+        print(f"recomp_correlations: {recomp_correlations}")
         for each_cor in recomp_correlations:
             if each_cor in mha_correlations:
                 print(f"each_cor {each_cor}")
@@ -217,7 +217,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
             event = data['traceEvents'][event_idx]
             if "gemm" in event['name']:
                 if event['name'] == "void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8>(cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8::Params)":
-                    print("found kernel gemm")
+                    print(f"found kernel gemm: {event['args']['correlation']}")
                 if event['args']['correlation'] in recomp_correlations:
                     # recomp op
                     cur_lat = event['dur'] / 1000000.0 # in s now
