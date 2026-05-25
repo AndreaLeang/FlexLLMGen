@@ -16,7 +16,7 @@ def break_down_filename(filename):
     print(f"gen_len: {gen_len}")
     recomp_len = components[14]
     print(f"recomp_len: {recomp_len}")
-    if recomp_len == "gpu":
+    if recomp_len == "cache.json":
         recomp_len = 0
     else:
         recomp_len = int(recomp_len)
