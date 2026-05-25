@@ -9,9 +9,13 @@ from pathlib import Path
 def break_down_filename(filename):
     components = filename.split("-")
     gbs = int(components[2][3:])
+    print(f"gbs: {gbs}")
     prompt_len = int(components[4][6:])
+    print(f"prompt_len: {prompt_len}")
     gen_len = int(components[5][3:])
+    print(f"gen_len: {gen_len}")
     recomp_len = components[14]
+    print(f"recomp_len: {recomp_len}")
     if recomp_len == "gpu":
         recomp_len = 0
     else:
