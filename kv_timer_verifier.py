@@ -223,7 +223,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     # Linear 
                     ops = 2*batch_size*recomp_len*hidden_size * hidden_size
                     cur_flops = ops / cur_lat
-                    recomp_flops[recomp_flops_ind] = (cur_flops, event['args']['correlation'])
+                    recomp_flops[recomp_flops_ind] = (cur_flops, event['args']['correlation'], ops)
                     recomp_flops_ind += 1
                         
             elif event['name'] == "ampere_fp16_s16816gemm_fp16_64x64_ldg8_relu_f2f_stages_64x5_tn":
@@ -235,7 +235,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     # Linear 
                     ops = 2*batch_size*1*hidden_size * hidden_size # discount prefill in results
                     cur_flops = ops / cur_lat
-                    mha_flops[mha_flops_ind] = (cur_flops, event['args']['correlation'])
+                    mha_flops[mha_flops_ind] = (cur_flops, event['args']['correlation'], ops)
                     mha_flops_ind += 1
                     
                 
@@ -498,20 +498,20 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 writer.writerow({'idx': idx, 'compute time (s)': recomp_calc_times[idx], 'bytes transferred (B)': recomp_prep_transfer_times[idx][1]})
     if flops: 
         with open(cur_filename + '_all_mha_flops.csv', 'w', newline='') as csvfile:
-            fieldnames = ['idx', 'FLOPS', 'Correlation']
+            fieldnames = ['idx', 'FLOPS', 'Correlation', 'Num_of_Operations']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
             for idx in range(mha_flops_ind):
-                writer.writerow({'idx': idx, 'FLOPS': mha_flops[idx][0], 'Correlation': mha_flops[idx][1] })
+                writer.writerow({'idx': idx, 'FLOPS': mha_flops[idx][0], 'Correlation': mha_flops[idx][1], 'Num_of_Operations': mha_flops[idx][2] })
                 
         with open(cur_filename + '_all_recomp_flops.csv', 'w', newline='') as csvfile:
-            fieldnames = ['idx', 'FLOPS', 'Correlation']
+            fieldnames = ['idx', 'FLOPS', 'Correlation', 'Num_of_Operations']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
 
             for idx in range(recomp_flops_ind):
-                writer.writerow({'idx': idx, 'FLOPS': recomp_flops[idx][0], 'Correlation': recomp_flops[idx][1]})
+                writer.writerow({'idx': idx, 'FLOPS': recomp_flops[idx][0], 'Correlation': recomp_flops[idx][1], 'Num_of_Operations': recomp_flops[idx][2]})
     
     # Record Pinned Cache Times
     with open(cur_filename + '_pinned.csv', 'w', newline='') as csvfile:
