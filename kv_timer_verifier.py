@@ -215,7 +215,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 print(f"each_cor {each_cor}")
         for event_idx in range(num_of_events):
             event = data['traceEvents'][event_idx]
-            if event['name'] == "void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8>(cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8::Params)":
+            if event['name'] == "ampere_fp16_s16816gemm_fp16_128x128_ldg8_relu_f2f_stages_32x5_tn":
                 if event['args']['correlation'] in recomp_correlations:
                     # recomp op
                     cur_lat = event['dur'] / 1000000.0 # in s now
