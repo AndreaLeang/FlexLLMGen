@@ -220,27 +220,24 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     # recomp op
                     cur_lat = event['dur'] / 1000000.0 # in s now
                     hidden_size = 4096 # for opt-6.7b
-                    if recomp_next_ind == 1 or recomp_next_ind == 2:
-                        # Linear 
-                        ops = 2*batch_size*recomp_len*hidden_size * hidden_size
-                        cur_flops = ops / cur_lat
-                        recomp_flops[recomp_flops_ind] = (cur_flops, event['args']['correlation'])
-                        recomp_flops_ind += 1
+                    # Linear 
+                    ops = 2*batch_size*recomp_len*hidden_size * hidden_size
+                    cur_flops = ops / cur_lat
+                    recomp_flops[recomp_flops_ind] = (cur_flops, event['args']['correlation'])
+                    recomp_flops_ind += 1
                         
-                    recomp_next_ind = (recomp_next_ind+1) %7
             elif event['name'] == "ampere_fp16_s16816gemm_fp16_64x64_ldg8_relu_f2f_stages_64x5_tn":
                 if event['args']['correlation'] in mha_correlations:
                     # mha op
                     cur_lat = event['dur'] / 1000000.0 # in s now
                     ops = 0
                     hidden_size = 4096 # for opt-6.7b
-                    if mha_next_ind == 1 or mha_next_ind == 3 or mha_next_ind == 4:
-                        # Linear 
-                        ops = 2*batch_size*1*hidden_size * hidden_size # discount prefill in results
-                        cur_flops = ops / cur_lat
-                        mha_flops[mha_flops_ind] = (cur_flops, event['args']['correlation'])
-                        mha_flops_ind += 1
-                    mha_next_ind = (mha_next_ind+1) %12
+                    # Linear 
+                    ops = 2*batch_size*1*hidden_size * hidden_size # discount prefill in results
+                    cur_flops = ops / cur_lat
+                    mha_flops[mha_flops_ind] = (cur_flops, event['args']['correlation'])
+                    mha_flops_ind += 1
+                    
                 
                 
 
