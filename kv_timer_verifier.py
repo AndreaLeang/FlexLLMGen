@@ -204,8 +204,14 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                         mha_correlations[event['args']['correlation']] = True
                         break
+        print(f"first recomp interval: {recomp_intervals[0]}")
+        print(f"first mha interval: {mha_intervals[0]}")
         print(f"num of recomp correlations: {len(recomp_correlations)}")
         print(f"num of mha correlations: {len(mha_correlations)}")
+
+        print(f"")
+        print(f"recomp_correlations: {recomp_correlations}")
+        print(f"mha_correlations: {mha_correlations}")
         for event_idx in range(num_of_events):
             event = data['traceEvents'][event_idx]
             if event['name'] == "void cutlass::Kernel2<cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8>(cutlass_80_tensorop_f16_s16816gemm_relu_f16_128x128_32x5_tn_align8::Params)":
