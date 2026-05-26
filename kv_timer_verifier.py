@@ -204,15 +204,11 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                         mha_correlations[event['args']['correlation']] = True
                         break
-        print(f"first recomp interval: {recomp_intervals[0]}")
-        print(f"first mha interval: {mha_intervals[0]}")
-        print(f"num of recomp correlations: {len(recomp_correlations)}")
-        print(f"num of mha correlations: {len(mha_correlations)}")
+        # print(f"first recomp interval: {recomp_intervals[0]}")
+        # print(f"first mha interval: {mha_intervals[0]}")
+        # print(f"num of recomp correlations: {len(recomp_correlations)}")
+        # print(f"num of mha correlations: {len(mha_correlations)}")
 
-        print(f"recomp_correlations: {recomp_correlations}")
-        for each_cor in recomp_correlations:
-            if each_cor in mha_correlations:
-                print(f"each_cor {each_cor}")
         for event_idx in range(num_of_events):
             event = data['traceEvents'][event_idx]
             if "gemm" in event['name']:
