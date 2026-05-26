@@ -193,7 +193,7 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         print(f"num of mha intervals: {len(mha_intervals)}")
         for event_idx in range(num_of_events):
             event = data['traceEvents'][event_idx]
-            if event['name'] == 'cudaLaunchKernel':
+            if event['name'] == 'cudaLaunchKernel' or event['name'] == 'cuLaunchKernel':
                 # Recomp
                 for interval in recomp_intervals:
                     if event['ts'] >= interval[0] and event['ts'] < interval[1]:
