@@ -774,7 +774,8 @@ if __name__ == "__main__":
     all_layer_times = {}
     # batch_tklqt = [12014.2443359375, 18471.943251953126, 49995.56291894531, 104777.457796875, 232505.366203125, 461461.98833007814]
     for batch_filename in batch_filenames:
-        print(f"Processing {os.path.basename(batch_filename).split('/')[-1]}")
+        batch_filename = os.path.basename(batch_filename).split('/')[-1]
+        print(f"Processing {batch_filename}")
          
         if not args.layer_val:
             all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(batch_filename, args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir, args.recomp, args.recomp_no_load, args.flops)
