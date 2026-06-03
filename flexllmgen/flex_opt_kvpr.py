@@ -1916,7 +1916,7 @@ if __name__ == "__main__":
                                     ngbs = each_run[7]
                                     writer.writerow({'model': model, 'iter': args.sweep_average, 'gbs': gbs, 'ngbs': ngbs, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'recompute_len': cur_recompute_len,  'Throughput (token/s)': cur_throughput, 'Decode Latency (s)': decode_lat})
                                     print(f"model: {model}")
-                                    print(f"(prompt_len, gen_len, cpu_range, recomp len, avg throughput, decode lat, gbs, ngbs) over {args.sweep_average} iterations: {cur_run}")
+                                    print(f"(prompt_len, gen_len, cpu_range, recomp len, avg throughput, decode lat, gbs, ngbs) over {args.sweep_average} iterations: {each_run}")
         # all_policies_avg[model] = all_policies
 
     # with open(csv_filename, 'a', newline='') as csvfile:
