@@ -35,6 +35,8 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         data = json.load(file)
 
     model_name, batch_size, ngbs, prompt_len, gen_len, off_per, recomp_len = break_down_filename(json_filename)   
+    if recomp_len == 0:
+        re_dist = False
     
     # initialize the dictionary to hold the ac2g
     ac2g_dict = {}
