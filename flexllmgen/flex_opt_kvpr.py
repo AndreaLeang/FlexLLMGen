@@ -1857,7 +1857,7 @@ if __name__ == "__main__":
         all_prompt_len = [args.prompt_len]
     if not args.sweep_gen_len:
         all_gen_len = [args.gen_len]
-    if not args.sweep_gen_len:
+    if not args.sweep_b_size:
         all_gbs = [args.gpu_batch_size]
         all_ngbs = [args.num_gpu_batches]
 
