@@ -1804,6 +1804,7 @@ def add_parser_arguments(parser):
     parser.add_argument("--sweep-re-start", type=int, default=0)
     parser.add_argument("--sweep-re-step", type=int, default=10)
 
+    parser.add_argument("--sweep-model", action="store_true")
     parser.add_argument("--sweep-b-size", action="store_true")
 
     parser.add_argument("--sweep-prompt-len", action="store_true") # 512, 1024, 2048, 4096
@@ -1861,8 +1862,12 @@ if __name__ == "__main__":
         all_ngbs = [args.num_gpu_batches]
 
     all_policies_avg = {}
-    
-
+    csv_filename = 'experienced_data.csv'
+    fieldnames = ['model', 'iter','gbs', 'ngbs', 'prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'recompute_len', 'Throughput (token/s)', 'Decode Latency (s)']
+    if not os.path.exists(csv_filename):
+        with open(csv_filename, 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
     for model in all_models:
         args.model = model
         all_policies = []
@@ -1891,32 +1896,42 @@ if __name__ == "__main__":
                                     tot_throughput += cur_throughput
                                     tot_decode_lat += decode_latency
                                 if num_valid_iter == 0:
-                                    all_policies.append((prompt_len, gen_len, cpu_range, re_len, None))
+                                    each_run = [prompt_len, gen_len, cpu_range, re_len, None, args.gpu_batch_size, args.num_gpu_batches]
                                 else:
                                     tot_throughput /= float(num_valid_iter)
                                     tot_decode_lat /= float(num_valid_iter)
-                                    all_policies.append((prompt_len, gen_len, cpu_range, re_len, tot_throughput, tot_decode_lat))
-        all_policies_avg[model] = all_policies
+                                    each_run = [prompt_len, gen_len, cpu_range, re_len, tot_throughput, tot_decode_lat, args.gpu_batch_size, args.num_gpu_batches]
+                                # save 
+                                
+                                with open(csv_filename, 'a', newline='') as csvfile:
+                                    writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                                    cur_prompt_len = each_run[0]
+                                    cur_gen_len = each_run[1]
+                                    cur_kv_gpu_percent = 100-each_run[2]
+                                    cur_kv_cpu_percent = each_run[2]
+                                    cur_recompute_len = each_run[3]
+                                    cur_throughput = each_run[4]
+                                    decode_lat = each_run[5]
+                                    gbs = each_run[6]
+                                    ngbs = each_run[7]
+                                    writer.writerow({'model': model, 'iter': args.sweep_average, 'gbs': gbs, 'ngbs': ngbs, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'recompute_len': cur_recompute_len,  'Throughput (token/s)': cur_throughput, 'Decode Latency (s)': decode_lat})
+                                    print(f"model: {model}")
+                                    print(f"(prompt_len, gen_len, cpu_range, recomp len, avg throughput, decode lat, gbs, ngbs) over {args.sweep_average} iterations: {cur_run}")
+        # all_policies_avg[model] = all_policies
 
-    csv_filename = get_filename(args).split("gbs")[0] + 'throughput.csv'
-    fieldnames = ['model', 'iter','gbs', 'ngbs', 'prompt_len', 'gen_len', 'kv_gpu_percent', 'kv_cpu_percent', 'recompute_len', 'Throughput (token/s)', 'Decode Latency (s)']
-
-    if not os.path.exists(csv_filename):
-        with open(csv_filename, 'w', newline='') as csvfile:
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-        
-    with open(csv_filename, 'a', newline='') as csvfile:
-        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-        for model in all_models:
-            for each_run in all_policies_avg[model]:
-                cur_prompt_len = each_run[0]
-                cur_gen_len = each_run[1]
-                cur_kv_gpu_percent = 100-each_run[2]
-                cur_kv_cpu_percent = each_run[2]
-                cur_recompute_len = each_run[3]
-                cur_throughput = each_run[4]
-                decode_lat = each_run[5]
-                writer.writerow({'model': model, 'iter': args.sweep_average, 'gbs': args.gpu_batch_size, 'ngbs': args.num_gpu_batches, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'recompute_len': cur_recompute_len,  'Throughput (token/s)': cur_throughput, 'Decode Latency (s)': decode_lat})
-            print(f"model: {model}")
-            print(f"(prompt_len, gen_len, cpu_range, avg throughput) over {args.sweep_average} iterations: {all_policies_avg[model]}")
+    # with open(csv_filename, 'a', newline='') as csvfile:
+    #     writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    #     for model in all_models:
+    #         for each_run in all_policies_avg[model]:
+    #             cur_prompt_len = each_run[0]
+    #             cur_gen_len = each_run[1]
+    #             cur_kv_gpu_percent = 100-each_run[2]
+    #             cur_kv_cpu_percent = each_run[2]
+    #             cur_recompute_len = each_run[3]
+    #             cur_throughput = each_run[4]
+    #             decode_lat = each_run[5]
+    #             gbs = each_run[6]
+    #             ngbs = each_run[7]
+    #             writer.writerow({'model': model, 'iter': args.sweep_average, 'gbs': gbs, 'ngbs': ngbs, 'prompt_len': cur_prompt_len, 'gen_len': cur_gen_len, 'kv_gpu_percent': cur_kv_gpu_percent, 'kv_cpu_percent': cur_kv_cpu_percent, 'recompute_len': cur_recompute_len,  'Throughput (token/s)': cur_throughput, 'Decode Latency (s)': decode_lat})
+    #         print(f"model: {model}")
+    #         print(f"(prompt_len, gen_len, cpu_range, avg throughput) over {args.sweep_average} iterations: {all_policies_avg[model]}")
