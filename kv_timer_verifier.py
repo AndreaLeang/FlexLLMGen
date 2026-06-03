@@ -8,28 +8,33 @@ from pathlib import Path
 
 def break_down_filename(filename):
     components = filename.split("-")
+    model_name = components[1]
     gbs = int(components[2][3:])
     print(f"gbs: {gbs}")
+    ngbs = int(components[3][4:])
+    print(f"ngbs: {ngbs}")
     prompt_len = int(components[4][6:])
     print(f"prompt_len: {prompt_len}")
     gen_len = int(components[5][3:])
     print(f"gen_len: {gen_len}")
+    off_per = int(components[10])
+    print(f"off_per: {off_per}")
     recomp_len = components[14]
     print(f"recomp_len: {recomp_len}")
     if recomp_len == "cache.json":
         recomp_len = 0
     else:
         recomp_len = int(recomp_len)
-    return gbs, prompt_len, gen_len, recomp_len
+    return model_name, gbs, ngbs, prompt_len, gen_len, off_per, recomp_len
     
 
-def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandwidth=False, record_ind_events=False, split_dir=False, re_dist=False, re_no_load=False, flops=False):
+def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandwidth=False, record_ind_events=False, split_dir=False, re_dist=False, flops=False):
     # open json file
     with open(json_filename, 'r') as file:
         # load json file
         data = json.load(file)
 
-    batch_size, prompt_len, gen_len, recomp_len = break_down_filename(json_filename)   
+    model_name, batch_size, ngbs, prompt_len, gen_len, off_per, recomp_len = break_down_filename(json_filename)   
     
     # initialize the dictionary to hold the ac2g
     ac2g_dict = {}
@@ -103,21 +108,14 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     recomp_load_memcpy_correlations = []
     recomp_intervals = []
     
-
-    recomp_calc_times = {} # [idx] = time from start of compute layer to start of mha (rercompute)
-    recomp_prep_transfer_times = {} # [idx] = time from start of load_hidden_compute to start of cudaMemcpyAsync, corrlelation (recompute prep)
     smart_load_cache_big_blocks = {} #[start of smart copy] = (end of smart copy, correlation of memcpyasync)
     kv_memcpy_to_bytes = {} # 
     recomp_memcpy_to_bytes = {}
     cache_pinned_times = {} # [idx] =  time of aten::pin_memory, bytes transferred (pinned) --> need to link to amount of bytes --> link to the memcpyasync 
     
-    recomp_prep_idx = 0
-    recomp_calc_idx = 0
     cache_pinned_idx = 0
     
-    tot_recomp_prep_transfer_time = 0
     tot_recomp_transfer_time = 0
-    tot_recomp_calc_time = 0
     tot_pinned_cache_time = 0
     
 
@@ -158,23 +156,16 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 for interval in recomp_data_transfer_intervals:
                     if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                         recomp_load_memcpy_correlations.append(event['args']['correlation'])
-                        recomp_prep_transfer_times[recomp_prep_idx] = (event['ts'] - interval[0], event['args']['correlation'])
-                        recomp_prep_idx += 1
-                        tot_recomp_prep_transfer_time += event['ts'] - interval[0]
                         break
                     elif event['ts'] < interval[0]:
                         break
         elif event['name'] == 'pytorch_backend.py(425): mha_gen':
-            # difference between of start of compute_layer and start of mha
+            # difference between of start of compute_layer and start of mha --> Active Recomputation
             for interval in recomp_data_calc_intervals:
                 if event['ts'] >= interval[0] and event['ts'] < interval[1]:
                     recomp_start_time = interval[0] # start of compute layer
                     recomp_end_time = event['ts'] # start of mha
                     recomp_intervals.append((recomp_start_time, recomp_end_time))
-                    calc_time = event['ts'] - interval[0]
-                    tot_recomp_calc_time += calc_time
-                    recomp_calc_times[recomp_calc_idx] = calc_time
-                    recomp_calc_idx += 1
                 elif event['ts'] < interval[0]:
                     break
 
@@ -235,8 +226,6 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                     mha_flops_ind += 1
                     
                 
-                
-
     # get the actual GPU memcpy durations
 
     if record_ind_events:
@@ -449,49 +438,31 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 for idx in range(one_dir_store_ind):
                     writer.writerow({'idx': idx, 'og Index': one_dir_storing_events[idx][0], 'data (B)': one_dir_storing_events[idx][1] , 'bandwidth (GB/s)': one_dir_storing_events[idx][2]})
     if re_dist: 
-        if not re_no_load:
-            # Recomputation's Load
-            with open(cur_filename + '_all_load_r.csv', 'w', newline='') as csvfile:
-                fieldnames = ['idx', 'data (B)', 'bandwidth (GB/s)']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-    
-                for idx in range(cur_re_loading_idx):
-                    writer.writerow({'idx': idx, 'data (B)': all_re_load[idx][0] , 'bandwidth (GB/s)': all_re_load[idx][1]})
-            # Recomputation's Bidirectional Load
-            with open(cur_filename + '_bi_load_r.csv', 'w', newline='') as csvfile:
-                fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-    
-                for idx in range(bi_dir_re_load_ind):
-                    writer.writerow({'idx': idx, 'og Index': bi_re_load_events[idx][0], 'data (B)': bi_re_load_events[idx][1] , 'bandwidth (GB/s)': bi_re_load_events[idx][2]})
-            # Recomputation's One Direction Load
-            with open(cur_filename + '_one_load_r.csv', 'w', newline='') as csvfile:
-                fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-    
-                for idx in range(one_dir_re_load_ind):
-                    writer.writerow({'idx': idx, 'og Index': one_re_load_events[idx][0], 'data (B)': one_re_load_events[idx][1] , 'bandwidth (GB/s)': one_re_load_events[idx][2]})
-        
-        # Recomp prep time
-        with open(cur_filename + '_recomp_prep.csv', 'w', newline='') as csvfile:
-            fieldnames = ['idx', 'transfer prep time (s)', 'bytes transferred (B)']
+        # Recomputation's Load
+        with open(cur_filename + '_all_load_r.csv', 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'data (B)', 'bandwidth (GB/s)']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            for idx in range(recomp_prep_idx):
-                cur_time_cor = recomp_prep_transfer_times[idx]
-                recomp_prep_transfer_times[idx] = (cur_time_cor[0], recomp_memcpy_to_bytes[cur_time_cor[1]])
-                writer.writerow({'idx': idx, 'transfer prep time (s)': recomp_prep_transfer_times[idx][0], 'bytes transferred (B)': recomp_prep_transfer_times[idx][1]})
 
-        # Recomp calc time
-        with open(cur_filename + '_recomp_calc.csv', 'w', newline='') as csvfile:
-            fieldnames = ['idx', 'compute time (s)', 'bytes transferred (B)']
+            for idx in range(cur_re_loading_idx):
+                writer.writerow({'idx': idx, 'data (B)': all_re_load[idx][0] , 'bandwidth (GB/s)': all_re_load[idx][1]})
+        # Recomputation's Bidirectional Load
+        with open(cur_filename + '_bi_load_r.csv', 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
             writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
             writer.writeheader()
-            for idx in range(recomp_calc_idx):
-                writer.writerow({'idx': idx, 'compute time (s)': recomp_calc_times[idx], 'bytes transferred (B)': recomp_prep_transfer_times[idx][1]})
+
+            for idx in range(bi_dir_re_load_ind):
+                writer.writerow({'idx': idx, 'og Index': bi_re_load_events[idx][0], 'data (B)': bi_re_load_events[idx][1] , 'bandwidth (GB/s)': bi_re_load_events[idx][2]})
+        # Recomputation's One Direction Load
+        with open(cur_filename + '_one_load_r.csv', 'w', newline='') as csvfile:
+            fieldnames = ['idx', 'og Index', 'data (B)', 'bandwidth (GB/s)']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+
+            for idx in range(one_dir_re_load_ind):
+                writer.writerow({'idx': idx, 'og Index': one_re_load_events[idx][0], 'data (B)': one_re_load_events[idx][1] , 'bandwidth (GB/s)': one_re_load_events[idx][2]})
+     
     if flops: 
         with open(cur_filename + '_all_mha_flops.csv', 'w', newline='') as csvfile:
             fieldnames = ['idx', 'FLOPS', 'Correlation', 'Num_of_Operations']
@@ -524,13 +495,9 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     tot_pinned_cache_time  /= 1000000.0
 
     if re_dist:
-        tot_recomp_prep_transfer_time /= 1000000.0 # originally in microseconds (10^-6)
         tot_recomp_transfer_time /= 1000000.0
-        tot_recomp_calc_time  /= 1000000.0
     else:
-        tot_recomp_prep_transfer_time = None
         tot_recomp_transfer_time = None
-        tot_recomp_calc_time = None
     
     if get_cpu_time:
         total_loading_cache_time_cpu /= 1000000.0
@@ -549,15 +516,10 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
     #     est_storing_bandwidth = total_storing_bytes / total_storing_cache_time_gpu # GB / s
 
     # Check if file exists to write header only once
-    all_file_var = json_filename.split('-')
-    cur_gbs = all_file_var[9]
-    kv_gpu_percent = int(all_file_var[9])
-    cur_recompute_len = all_file_var[14]
-    csv_filename = json_filename.split('-percent')[0] + '-' + all_file_var[9] + '-' + all_file_var[10] + '_trace_stats.csv' # added header for recomp
-    fieldnames = ['kv_gpu_percent', 'recompute_len', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 
+    csv_filename = 'All_trace_stats.csv' 
+    fieldnames = ['model_name', 'batch_size', 'num_of_batches', 'kv_cpu_percent', 'prompt_len', 'gen_len', 'recompute_len', 'tot_loading_time_gpu (s)', 'tot_storing_time_gpu (s)', 
         'tot_loading_time_cpu (s)','tot_storing_time_cpu (s)',  'total_loading_bytes (GB)', 'total_storing_bytes (GB)',
-        'tot_pinned_cache_time (s)', 'tot_recomp_prep_transfer_time (s)', 'tot_recomp_transfer_time (s)', 
-        'tot_recomp_calc_time (s)']
+        'tot_pinned_cache_time (s)', 'tot_recomp_transfer_time (s)']
 
 
     write_header = not os.path.exists(csv_filename)
@@ -567,8 +529,13 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
         if write_header:
             writer.writeheader()
-        writer.writerow({'kv_gpu_percent': kv_gpu_percent, 
-                'recompute_len': cur_recompute_len,
+        writer.writerow({'model_name': model_name, 
+                'batch_size': batch_size, 
+                'num_of_batches': ngbs, 
+                'kv_cpu_percent': off_per, 
+                'prompt_len': prompt_len, 
+                'gen_len': gen_len,
+                'recompute_len': recomp_len,
                 'tot_loading_time_gpu (s)': total_loading_cache_time_gpu, 
                 'tot_storing_time_gpu (s)': total_storing_cache_time_gpu, 
                 'tot_loading_time_cpu (s)': total_loading_cache_time_cpu, 
@@ -576,13 +543,11 @@ def get_all_gpu_memcpy_correlations(json_filename, get_cpu_time=False, est_bandw
                 'total_loading_bytes (GB)': total_loading_bytes, 
                 'total_storing_bytes (GB)': total_storing_bytes,
                 'tot_pinned_cache_time (s)': tot_pinned_cache_time,
-                'tot_recomp_prep_transfer_time (s)': tot_recomp_prep_transfer_time,
                 'tot_recomp_transfer_time (s)': tot_recomp_transfer_time,
-                'tot_recomp_calc_time (s)': tot_recomp_calc_time,
                 })
 
 
-    return total_loading_cache_time_gpu, total_storing_cache_time_gpu, total_loading_cache_time_cpu, total_storing_cache_time_cpu, total_loading_bytes, total_storing_bytes, tot_pinned_cache_time, tot_recomp_prep_transfer_time, tot_recomp_transfer_time, tot_recomp_calc_time
+    return total_loading_cache_time_gpu, total_storing_cache_time_gpu, total_loading_cache_time_cpu, total_storing_cache_time_cpu, total_loading_bytes, total_storing_bytes, tot_pinned_cache_time, tot_recomp_transfer_time
 
 def get_layer_composition(json_filename):
     # open json file
@@ -754,7 +719,6 @@ def add_parser_arguments(parser):
     parser.add_argument('--event-dist', action="store_true", help="Measure the distribution of the data transfer bytes")
     parser.add_argument('--split-dir', action="store_true", help="Split into bi direction and single direction data transfers")
     parser.add_argument('--recomp', action="store_true", help="Measure the distribution of data transfer for recomputation")
-    parser.add_argument('--recomp-no-load', action="store_true", help="do not save load csvs")
     parser.add_argument('--layer-val', action="store_true", help="layer latency validation")
     parser.add_argument('--flops', action="store_true", help="store flops for GPU operations")
 
@@ -778,7 +742,7 @@ if __name__ == "__main__":
         print(f"Processing {batch_filename}")
          
         if not args.layer_val:
-            all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(batch_filename, args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir, args.recomp, args.recomp_no_load, args.flops)
+            all_kv_times[batch_filename] = get_all_gpu_memcpy_correlations(batch_filename, args.cpu_time, args.est_bandwidth, args.event_dist, args.split_dir, args.recomp, args.flops)
             print(f"Total GPU Loading Cache Time for {batch_filename}: {all_kv_times[batch_filename][0]} s")
             print(f"Total GPU Storing Cache Time for {batch_filename}: {all_kv_times[batch_filename][1]} s")
             print(f"Total Pinned Time for {batch_filename}: {all_kv_times[batch_filename][6]} s")
