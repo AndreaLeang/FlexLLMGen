@@ -755,7 +755,7 @@ if __name__ == "__main__":
                 print(f"Total Loading Bytes for {batch_filename}: {all_kv_times[batch_filename][4]} GB")
                 print(f"Total Storing Bytes (GB) for {batch_filename}: {all_kv_times[batch_filename][5]} GB")
             if args.recomp:
-                print(f"Total Recomputation Loading Time for {batch_filename}: {all_kv_times[batch_filename][8]} s")
+                print(f"Total Recomputation Loading Time for {batch_filename}: {all_kv_times[batch_filename][7]} s")
         else:
             all_layer_times[batch_filename] = get_layer_composition(str(SCRIPT_DIR / batch_filename))
     print()
