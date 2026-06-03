@@ -1804,7 +1804,7 @@ def add_parser_arguments(parser):
     parser.add_argument("--sweep-re-start", type=int, default=0)
     parser.add_argument("--sweep-re-step", type=int, default=10)
 
-    parser.add_argument("--sweep-model", action="store_true")
+    parser.add_argument("--sweep-b-size", action="store_true")
 
     parser.add_argument("--sweep-prompt-len", action="store_true") # 512, 1024, 2048, 4096
     parser.add_argument("--sweep-gen-len", action="store_true") # 512, 1024, 2048, 4096
@@ -1840,6 +1840,8 @@ if __name__ == "__main__":
     all_re = [(cur_re_per * args.prompt_len) // 100 for cur_re_per in all_re_per_ranges]
     all_prompt_len = [512, 1024, 2048, 4096]
     all_gen_len = [512, 1024, 2048, 4096]
+    all_gbs = [1, 2, 4, 8, 16]
+    all_ngbs = [16, 8, 4, 2, 1]
     single_cpu = False 
     single_re = False
     if not args.sweep_model:
@@ -1854,6 +1856,9 @@ if __name__ == "__main__":
         all_prompt_len = [args.prompt_len]
     if not args.sweep_gen_len:
         all_gen_len = [args.gen_len]
+    if not args.sweep_gen_len:
+        all_gbs = [args.gpu_batch_size]
+        all_ngbs = [args.num_gpu_batches]
 
     all_policies_avg = {}
     
@@ -1869,25 +1874,28 @@ if __name__ == "__main__":
                         if not single_re: # otherwise, keep the recompute_len specified 
                             # recompute the recompute len
                             args.recompute_len = re_len
-                        for cpu_range in all_cpu_ranges:
-                            if not single_cpu: # otherwise, use specified percent
-                                args.percent = [all_model_weight_on_gpu[model], 100-all_model_weight_on_gpu[model], 100-cpu_range, cpu_range, 100, 0]
-                            tot_throughput = 0.0
-                            tot_decode_lat = 0.0
-                            num_valid_iter = 0
-                            for each_iter in range(args.sweep_average):
-                                cur_throughput, decode_latency = run_flexllmgen(args)
-                                if cur_throughput is None:
-                                    break
-                                num_valid_iter += 1
-                                tot_throughput += cur_throughput
-                                tot_decode_lat += decode_latency
-                            if num_valid_iter == 0:
-                                all_policies.append((prompt_len, gen_len, cpu_range, re_len, None))
-                            else:
-                                tot_throughput /= float(num_valid_iter)
-                                tot_decode_lat /= float(num_valid_iter)
-                                all_policies.append((prompt_len, gen_len, cpu_range, re_len, tot_throughput, tot_decode_lat))
+                        for gbs_idx in range(len(all_gbs)):
+                            args.gpu_batch_size = all_gbs[gbs_idx]
+                            args.num_gpu_batches = all_ngbs[gbs_idx]
+                            for cpu_range in all_cpu_ranges:
+                                if not single_cpu: # otherwise, use specified percent
+                                    args.percent = [all_model_weight_on_gpu[model], 100-all_model_weight_on_gpu[model], 100-cpu_range, cpu_range, 100, 0]
+                                tot_throughput = 0.0
+                                tot_decode_lat = 0.0
+                                num_valid_iter = 0
+                                for each_iter in range(args.sweep_average):
+                                    cur_throughput, decode_latency = run_flexllmgen(args)
+                                    if cur_throughput is None:
+                                        break
+                                    num_valid_iter += 1
+                                    tot_throughput += cur_throughput
+                                    tot_decode_lat += decode_latency
+                                if num_valid_iter == 0:
+                                    all_policies.append((prompt_len, gen_len, cpu_range, re_len, None))
+                                else:
+                                    tot_throughput /= float(num_valid_iter)
+                                    tot_decode_lat /= float(num_valid_iter)
+                                    all_policies.append((prompt_len, gen_len, cpu_range, re_len, tot_throughput, tot_decode_lat))
         all_policies_avg[model] = all_policies
 
     csv_filename = get_filename(args).split("gbs")[0] + 'throughput.csv'
