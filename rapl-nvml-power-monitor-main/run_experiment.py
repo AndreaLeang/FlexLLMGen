@@ -185,12 +185,11 @@ def main():
         gpu_cols  = [f"gpu{i}_w" for i in args.gpu]
         
         if not os.path.exists(csv_path):
+            fieldnames = ["timestamp_s", "cpu_pkg_w", "cpu_dram_w"] + skt_cols + gpu_cols
             with open(csv_path, 'w', newline='') as csvfile:
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
         with open(csv_path, "w", newline="") as f:
-            w.writerow(["timestamp_s", "cpu_pkg_w", "cpu_dram_w"]
-                        + skt_cols + gpu_cols)
             for x in result.all_samples:
                 w.writerow([
                     f"{x.timestamp:.4f}",
