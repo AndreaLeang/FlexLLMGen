@@ -351,6 +351,7 @@ class LLMPowerBench:
               t1 = time.perf_counter()
               acc_decode.add(mon.samples, i0, i1, t0, t1)
             filename = "testing_power_" + str(iteration) + "V.json" 
+            prof.export_chrome_trace(filename)
             fix_ownership(filename)
 
             elapsed    = time.perf_counter() - loop_start
