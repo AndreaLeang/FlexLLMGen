@@ -281,12 +281,12 @@ class LLMPowerBench:
         acc_prefill = _PhaseAccum("prefill",    prompt_len)
         acc_decode  = _PhaseAccum("decode",     gen_len)
               
-        tot_refresh_cache_time = 0
+        tot_refresh_cache_time = 0.0
         iteration = 0
-        # mon.start()
+        mon.start()
         loop_start = time.perf_counter()
-        tot_prefill = 0.0
-        tot_decode = 0.0
+        # tot_prefill = 0.0
+        # tot_decode = 0.0
         
         while True:
             iteration += 1
@@ -295,6 +295,7 @@ class LLMPowerBench:
             # The following buffers store values used
             # for the i-th token, j-th layer, k-th gpu batch.
             t0 = time.perf_counter()
+          
             # Output token ids
             self.model.output_ids = np.full((len(task.inputs), prompt_len + gen_len),
                 self.model.config.pad_token_id, dtype=np.int32)
@@ -314,65 +315,108 @@ class LLMPowerBench:
             for k in range(num_gpu_batches):
                 self.model.attention_mask[k].clear()
             self.model.hidden = array_3d(gen_len, num_layers, num_gpu_batches, ValueHolder)
-            t1 = time.perf_counter()
-            tot_refresh_cache_time += t1-t0
 
-            # ── prefill ───────────────────────────────────────────────
-            # with profile(
-            #     activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-            #     record_shapes=True, 
-            #     profile_memory=True, 
-            #     with_stack=True, 
-            #     with_modules=True
-            # ) as prof:        
-            t0 = time.perf_counter()
-            # i0 = len(mon.samples)
+            # init cache
             for j in range(num_layers):
                 for k in range(num_gpu_batches):
                     self.model.init_cache(j, k)
                     if self.recomp_len > 0:
                         self.model.init_hidden(j, k)
-            torch.cuda.synchronize()
-            # i1 = len(mon.samples)
+            # Prologue
+            if num_gpu_batches == 1:
+                for k in range(self.num_of_blocks):
+                    self.model.load_weight(0, 0, k)
+            else: 
+                for k in range(self.num_of_blocks):
+                    self.load_weight(0, 0, k)
+                self.model.load_hidden(0, 0, 0)
+            self.model.sync()
+          
             t1 = time.perf_counter()
-            prefill_lat = t1-t0
-            tot_prefill += prefill_lat
-            # acc_prefill.add(mon.samples, i0, i1, t0, t1)
+            tot_refresh_cache_time += t1-t0
+
+            # ── prefill ───────────────────────────────────────────────
+            t0 = time.perf_counter()
+            i0 = len(mon.samples)
+            if num_gpu_batches == 1:
+                # Generate single token
+                self.update_attention_mask(0, 0)
+                for j in range(self.model.num_layers):
+                    self.model.load_weight(0, j+1, 0)
+                    self.model.load_hidden_compute(0,j+1, 0)
+                    self.model.load_cache(0, j+1, 0)
+                    self.model.load_hidden(0, j, 0)
+                    self.model.compute_layer(0, j, 0)
+                    self.model.store_cache(0, j-1, 0)
+                    self.model.store_hidden(0, j, 0)
+                    self.model.sync()
+            else: 
+                # Generate single token
+                for k in range(self.model.num_gpu_batches):
+                    self.update_attention_mask(0, k)
+                for j in range(self.model.num_layers):
+                    for k in range(self.model.num_gpu_batches):
+                        self.model.load_weight(0, j+1, k)
+                        self.model.load_hidden_compute(0,j, k+1)
+                        self.model.load_cache(0, j, k+1)
+                        self.model.store_hidden(0, j, k-1)
+                        self.model.load_hidden(0, j, k+1)
+                        self.model.compute_layer(0, j, k)
+                        self.model.store_cache(0, j, k-1)
+                        self.model.sync()
+            i1 = len(mon.samples)
+            t1 = time.perf_counter()
+            acc_prefill.add(mon.samples, i0, i1, t0, t1)
 
             # ── decode ────────────────────────────────────────────────
             t0 = time.perf_counter()
-            # i0 = len(mon.samples)
+            i0 = len(mon.samples)
           
             # Power Caputure for entire inference
             if num_gpu_batches == 1:
-                print(f"self.model.execute_gen_len: {self.model.execute_gen_len}")
-                self.model.generation_loop_overlap_single_batch()
+                for i in range(1, self.model.execute_gen_len):
+                    self.model.update_attention_mask(i, 0)
+                    for j in range(self.model.num_layers):
+                        self.model.load_weight(i, j+1, 0)
+                        self.model.load_hidden_compute(i,j+1, 0)
+                        self.model.load_cache(i, j+1, 0)
+                        self.model.load_hidden(i, j, 0)
+                        self.model.compute_layer(i, j, 0)
+                        self.model.store_cache(i, j-1, 0)
+                        self.model.store_hidden(i, j, 0)
+                        self.model.sync()
             else:
-                self.model.generation_loop_overlap_multi_batch()
-          
-            out_ids = self.model.output_ids
+                for i in range(1, self.model.execute_gen_len):
+                    for k in range(self.model.num_gpu_batches):
+                        self.model.update_attention_mask(i, k)
+                    for j in range(self.model.num_layers):
+                        for k in range(self.model.num_gpu_batches):
+                            self.model.load_weight(i, j+1, k)
+                            self.model.load_hidden_compute(i,j, k+1)
+                            self.model.load_cache(i, j, k+1)
+                            self.model.store_hidden(i, j, k-1)
+                            self.model.load_hidden(i, j, k+1)
+                            self.model.compute_layer(i, j, k)
+                            self.model.store_cache(i, j, k-1)
+                            self.model.sync()
 
-            torch.cuda.synchronize()
-            # i1 = len(mon.samples)
+            i1 = len(mon.samples)
             t1 = time.perf_counter()
-            decode_lat = t1-t0
-            tot_decode += decode_lat
-            # acc_decode.add(mon.samples, i0, i1, t0, t1)
-            # filename = "testing_power_" + str(iteration) + "V.json" 
-            # out_dir = Path("rapl-nvml-power-monitor-main/power_results")
-            # json_path = out_dir / filename
-            # prof.export_chrome_trace(str(json_path))
-            # fix_ownership(json_path)
+            acc_decode.add(mon.samples, i0, i1, t0, t1)
 
+            # ── Delete cache ────────────────────────────────────────────────
+            for j in range(num_layers):
+                for k in range(num_gpu_batches):
+                    self.model.delete_cache(j, k)
+                    if self.recomp_len > 0:
+                        self.model.delete_hidden_compute(j, k)
+            # ── Done/Print ────────────────────────────────────────────────
+            out_ids = self.model.output_ids
             elapsed    = time.perf_counter() - loop_start
 
-            # print(f"iterations {iteration}  "
-            #       f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
-            #       f"decode {acc_decode.durations[-1]*1000:.0f}ms  "
-            #       f"elapsed {elapsed:.1f}s")
             print(f"iterations {iteration}  "
-                  f"prefill {prefill_lat*1000}ms  "
-                  f"decode {decode_lat*1000}ms  "
+                  f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
+                  f"decode {acc_decode.durations[-1]*1000:.0f}ms  "
                   f"elapsed {elapsed:.1f}s")
 
             # stop when BOTH conditions met
@@ -381,8 +425,8 @@ class LLMPowerBench:
 
         # mon.stop()
         total_dur = time.perf_counter() - loop_start - tot_refresh_cache_time
-        print(f"avg prefill: {tot_prefill / iteration}")
-        print(f"avg decode: {tot_decode / iteration}")
+        # print(f"avg prefill: {tot_prefill / iteration}")
+        # print(f"avg decode: {tot_decode / iteration}")
 
         # decode output from last iteration
         new_ids    = out_ids[0][prompt_len:]
