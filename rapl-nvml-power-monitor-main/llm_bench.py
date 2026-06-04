@@ -368,13 +368,16 @@ class LLMPowerBench:
             acc_prefill.add(mon.samples, i0, i1, t0, t1)
 
             # ── decode ────────────────────────────────────────────────
+            time_for_update_attn_mask = 0.0
             t0 = time.perf_counter()
             i0 = len(mon.samples)
           
             # Power Caputure for entire inference
             if num_gpu_batches == 1:
                 for i in range(1, self.model.execute_gen_len):
+                    t3 = time.perf_counter()
                     self.model.update_attention_mask(i, 0)
+                    time_for_update_attn_mask += time.perf_counter() - t3
                     for j in range(self.num_layers):
                         self.model.load_weight(i, j+1, 0)
                         self.model.load_hidden_compute(i,j+1, 0)
@@ -387,7 +390,9 @@ class LLMPowerBench:
             else:
                 for i in range(1, self.model.execute_gen_len):
                     for k in range(num_gpu_batches):
+                        t3 = time.perf_counter()
                         self.model.update_attention_mask(i, k)
+                        time_for_update_attn_mask += time.perf_counter() - t3
                     for j in range(num_layers):
                         for k in range(num_gpu_batches):
                             self.model.load_weight(i, j+1, k)
@@ -416,7 +421,8 @@ class LLMPowerBench:
             print(f"iterations {iteration}  "
                   f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
                   f"decode {acc_decode.durations[-1]*1000:.0f}ms  "
-                  f"elapsed {elapsed:.1f}s")
+                  f"elapsed {elapsed:.1f}s"
+                  f"time_for_update_attn_mask: {time_for_update_attn_mask*1000:.0f}ms")
 
             # stop when BOTH conditions met
             if iteration >= n_iters and elapsed >= min_duration_s:
