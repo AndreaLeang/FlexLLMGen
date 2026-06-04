@@ -21,6 +21,8 @@ import torch
 import numpy as np
 from transformers import AutoTokenizer
 from power_monitor import PowerMonitor, PowerSample
+from pathlib import Path
+
 
 from flexllmgen.compression import CompressionConfig
 from flexllmgen.opt_config import get_opt_config
