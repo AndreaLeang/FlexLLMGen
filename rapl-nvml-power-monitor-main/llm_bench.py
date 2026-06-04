@@ -351,8 +351,10 @@ class LLMPowerBench:
               t1 = time.perf_counter()
               acc_decode.add(mon.samples, i0, i1, t0, t1)
             filename = "testing_power_" + str(iteration) + "V.json" 
-            prof.export_chrome_trace(filename)
-            fix_ownership(filename)
+            out_dir = Path("rapl-nvml-power-monitor-main/power_results")
+            json_path = out_dir / filename
+            prof.export_chrome_trace(str(json_path))
+            fix_ownership(json_path)
 
             elapsed    = time.perf_counter() - loop_start
 
