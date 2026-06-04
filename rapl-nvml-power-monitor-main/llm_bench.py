@@ -285,7 +285,9 @@ class LLMPowerBench:
         iteration = 0
         # mon.start()
         loop_start = time.perf_counter()
-
+        tot_prefill = 0.0
+        tot_decode = 0.0
+        
         while True:
             iteration += 1
             # ── Refresh Cache ───────────────────────────────────────────────
@@ -333,6 +335,8 @@ class LLMPowerBench:
             torch.cuda.synchronize()
             # i1 = len(mon.samples)
             t1 = time.perf_counter()
+            prefill_lat = t1-t0
+            tot_prefill += prefill_lat
             # acc_prefill.add(mon.samples, i0, i1, t0, t1)
 
             # ── decode ────────────────────────────────────────────────
@@ -351,6 +355,8 @@ class LLMPowerBench:
             torch.cuda.synchronize()
             # i1 = len(mon.samples)
             t1 = time.perf_counter()
+            decode_lat = t1-t0
+            tot_decode += decode_lat
             # acc_decode.add(mon.samples, i0, i1, t0, t1)
             # filename = "testing_power_" + str(iteration) + "V.json" 
             # out_dir = Path("rapl-nvml-power-monitor-main/power_results")
@@ -360,9 +366,13 @@ class LLMPowerBench:
 
             elapsed    = time.perf_counter() - loop_start
 
+            # print(f"iterations {iteration}  "
+            #       f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
+            #       f"decode {acc_decode.durations[-1]*1000:.0f}ms  "
+            #       f"elapsed {elapsed:.1f}s")
             print(f"iterations {iteration}  "
-                  f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
-                  f"decode {acc_decode.durations[-1]*1000:.0f}ms  "
+                  f"prefill {prefill_lat*1000}ms  "
+                  f"decode {decode_lat*1000}ms  "
                   f"elapsed {elapsed:.1f}s")
 
             # stop when BOTH conditions met
@@ -371,6 +381,8 @@ class LLMPowerBench:
 
         # mon.stop()
         total_dur = time.perf_counter() - loop_start - tot_refresh_cache_time
+        print(f"avg prefill: {tot_prefill / iteration}")
+        print(f"avg decode: {tot_decode / iteration}")
 
         # decode output from last iteration
         new_ids    = out_ids[0][prompt_len:]
