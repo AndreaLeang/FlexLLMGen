@@ -21,7 +21,6 @@ import torch
 import numpy as np
 from transformers import AutoTokenizer
 from power_monitor import PowerMonitor, PowerSample
-from run_experiment import fix_ownership
 
 from flexllmgen.compression import CompressionConfig
 from flexllmgen.opt_config import get_opt_config
@@ -35,6 +34,17 @@ import torch
 import torchvision.models as models
 from torch.profiler import profile, ProfilerActivity, record_function
 
+
+def fix_ownership(path):
+    """Change the owner of the file to SUDO_UID"""
+    try: 
+        uid = os.environ.get('SUDO_UID')
+        gid = os.environ.get('SUDO_GID')
+        if uid is not None:
+            os.chown(path, int(uid), int(gid))
+    except: 
+        print(f"not in sudo, file ownership is ok")
+        return None
 
 # ── Data structures ───────────────────────────────────────────────────
 
