@@ -184,9 +184,8 @@ def main():
         skt_cols  = ([f"s{i}_pkg_w"  for i in range(n_sockets)] +
                         [f"s{i}_dram_w" for i in range(n_sockets)])
         gpu_cols  = [f"gpu{i}_w" for i in args.gpu]
-        
+        fieldnames = ["timestamp_s", "cpu_pkg_w", "cpu_dram_w"] + skt_cols + gpu_cols
         if not os.path.exists(csv_path):
-            fieldnames = ["timestamp_s", "cpu_pkg_w", "cpu_dram_w"] + skt_cols + gpu_cols
             with open(csv_path, 'w', newline='') as csvfile:
                 writer = csv.DictWriter(csv_path, fieldnames=fieldnames)
                 writer.writeheader()
