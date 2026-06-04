@@ -191,6 +191,7 @@ def main():
                 writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
                 writer.writeheader()
         with open(csv_path, "w", newline="") as f:
+            w = csv.DictWriter(csvfile, fieldnames=fieldnames)
             for x in result.all_samples:
                 w.writerow([
                     f"{x.timestamp:.4f}",
