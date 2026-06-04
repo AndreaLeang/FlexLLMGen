@@ -324,10 +324,9 @@ class LLMPowerBench:
                         self.model.init_hidden(j, k)
             # Prologue
             if num_gpu_batches == 1:
-                for k in range(self.num_of_blocks):
-                    self.model.load_weight(0, 0, k)
+                self.model.load_weight(0, 0, 0)
             else: 
-                for k in range(self.num_of_blocks):
+                for k in range(num_gpu_batches):
                     self.model.load_weight(0, 0, k)
                 self.model.load_hidden(0, 0, 0)
             self.model.sync()
@@ -353,7 +352,7 @@ class LLMPowerBench:
             else: 
                 # Generate single token
                 for k in range(num_gpu_batches):
-                    self.update_attention_mask(0, k)
+                    self.model.update_attention_mask(0, k)
                 for j in range(num_layers):
                     for k in range(num_gpu_batches):
                         self.model.load_weight(0, j+1, k)
