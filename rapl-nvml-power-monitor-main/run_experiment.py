@@ -188,10 +188,10 @@ def main():
         if not os.path.exists(csv_path):
             fieldnames = ["timestamp_s", "cpu_pkg_w", "cpu_dram_w"] + skt_cols + gpu_cols
             with open(csv_path, 'w', newline='') as csvfile:
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer = csv.DictWriter(csv_path, fieldnames=fieldnames)
                 writer.writeheader()
         with open(csv_path, "w", newline="") as f:
-            w = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            w = csv.DictWriter(csv_path, fieldnames=fieldnames)
             for x in result.all_samples:
                 w.writerow([
                     f"{x.timestamp:.4f}",
