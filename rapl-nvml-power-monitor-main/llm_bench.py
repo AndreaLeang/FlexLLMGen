@@ -283,7 +283,7 @@ class LLMPowerBench:
               
         tot_refresh_cache_time = 0
         iteration = 0
-        mon.start()
+        # mon.start()
         loop_start = time.perf_counter()
 
         while True:
@@ -324,20 +324,20 @@ class LLMPowerBench:
             #     with_modules=True
             # ) as prof:        
             t0 = time.perf_counter()
-            i0 = len(mon.samples)
+            # i0 = len(mon.samples)
             for j in range(num_layers):
                 for k in range(num_gpu_batches):
                     self.model.init_cache(j, k)
                     if self.recomp_len > 0:
                         self.model.init_hidden(j, k)
             torch.cuda.synchronize()
-            i1 = len(mon.samples)
+            # i1 = len(mon.samples)
             t1 = time.perf_counter()
-            acc_prefill.add(mon.samples, i0, i1, t0, t1)
+            # acc_prefill.add(mon.samples, i0, i1, t0, t1)
 
             # ── decode ────────────────────────────────────────────────
             t0 = time.perf_counter()
-            i0 = len(mon.samples)
+            # i0 = len(mon.samples)
           
             # Power Caputure for entire inference
             if num_gpu_batches == 1:
@@ -349,9 +349,9 @@ class LLMPowerBench:
             out_ids = self.model.output_ids
 
             torch.cuda.synchronize()
-            i1 = len(mon.samples)
+            # i1 = len(mon.samples)
             t1 = time.perf_counter()
-            acc_decode.add(mon.samples, i0, i1, t0, t1)
+            # acc_decode.add(mon.samples, i0, i1, t0, t1)
             # filename = "testing_power_" + str(iteration) + "V.json" 
             # out_dir = Path("rapl-nvml-power-monitor-main/power_results")
             # json_path = out_dir / filename
@@ -369,7 +369,7 @@ class LLMPowerBench:
             if iteration >= n_iters and elapsed >= min_duration_s:
                 break
 
-        mon.stop()
+        # mon.stop()
         total_dur = time.perf_counter() - loop_start - tot_refresh_cache_time
 
         # decode output from last iteration
