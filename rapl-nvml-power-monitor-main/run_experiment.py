@@ -15,6 +15,10 @@ from dataclasses import asdict
 from pathlib import Path
 from llm_bench import LLMPowerBench
 
+import torch
+import torchvision.models as models
+from torch.profiler import profile, ProfilerActivity, record_function
+
 
 # ── Sweep configuration ───────────────────────────────────────────────
 
@@ -159,11 +163,22 @@ def main():
                 min_duration_s=args.min_duration,
             )
         else:
-            result = bench.run(
-                n_iters=args.n_iters,
-                n_iters_layer=args.n_iters_layer,
-                min_duration_s=args.min_duration,
-            )
+            with profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+                record_shapes=True, 
+                profile_memory=True, 
+                with_stack=True, 
+                with_modules=True
+            ) as prof:        
+               result = bench.run(
+                    n_iters=args.n_iters,
+                    n_iters_layer=args.n_iters_layer,
+                    min_duration_s=args.min_duration,
+                )
+            
+            filename = "testing_power.json"
+            prof.export_chrome_trace(filename)
+            
         bench.print_report(result)
     
         # save per-cell JSON (full detail including raw phase data)
