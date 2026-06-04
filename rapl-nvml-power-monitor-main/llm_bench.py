@@ -21,6 +21,7 @@ import torch
 import numpy as np
 from transformers import AutoTokenizer
 from power_monitor import PowerMonitor, PowerSample
+from run_experiment import fix_ownership
 
 from flexllmgen.compression import CompressionConfig
 from flexllmgen.opt_config import get_opt_config
@@ -339,8 +340,8 @@ class LLMPowerBench:
               i1 = len(mon.samples)
               t1 = time.perf_counter()
               acc_decode.add(mon.samples, i0, i1, t0, t1)
-            filename = "testing_power.json"
-            prof.export_chrome_trace(filename)
+            filename = "testing_power_" + str(iteration) + "V.json" 
+            fix_ownership(filename)
 
             elapsed    = time.perf_counter() - loop_start
 
