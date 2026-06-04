@@ -328,7 +328,7 @@ class LLMPowerBench:
                     self.model.load_weight(0, 0, k)
             else: 
                 for k in range(self.num_of_blocks):
-                    self.load_weight(0, 0, k)
+                    self.model.load_weight(0, 0, k)
                 self.model.load_hidden(0, 0, 0)
             self.model.sync()
           
@@ -340,8 +340,8 @@ class LLMPowerBench:
             i0 = len(mon.samples)
             if num_gpu_batches == 1:
                 # Generate single token
-                self.update_attention_mask(0, 0)
-                for j in range(self.model.num_layers):
+                self.model.update_attention_mask(0, 0)
+                for j in range(num_layers):
                     self.model.load_weight(0, j+1, 0)
                     self.model.load_hidden_compute(0,j+1, 0)
                     self.model.load_cache(0, j+1, 0)
@@ -352,10 +352,10 @@ class LLMPowerBench:
                     self.model.sync()
             else: 
                 # Generate single token
-                for k in range(self.model.num_gpu_batches):
+                for k in range(num_gpu_batches):
                     self.update_attention_mask(0, k)
-                for j in range(self.model.num_layers):
-                    for k in range(self.model.num_gpu_batches):
+                for j in range(num_layers):
+                    for k in range(num_gpu_batches):
                         self.model.load_weight(0, j+1, k)
                         self.model.load_hidden_compute(0,j, k+1)
                         self.model.load_cache(0, j, k+1)
@@ -376,7 +376,7 @@ class LLMPowerBench:
             if num_gpu_batches == 1:
                 for i in range(1, self.model.execute_gen_len):
                     self.model.update_attention_mask(i, 0)
-                    for j in range(self.model.num_layers):
+                    for j in range(self.num_layers):
                         self.model.load_weight(i, j+1, 0)
                         self.model.load_hidden_compute(i,j+1, 0)
                         self.model.load_cache(i, j+1, 0)
@@ -387,10 +387,10 @@ class LLMPowerBench:
                         self.model.sync()
             else:
                 for i in range(1, self.model.execute_gen_len):
-                    for k in range(self.model.num_gpu_batches):
+                    for k in range(num_gpu_batches):
                         self.model.update_attention_mask(i, k)
-                    for j in range(self.model.num_layers):
-                        for k in range(self.model.num_gpu_batches):
+                    for j in range(num_layers):
+                        for k in range(num_gpu_batches):
                             self.model.load_weight(i, j+1, k)
                             self.model.load_hidden_compute(i,j, k+1)
                             self.model.load_cache(i, j, k+1)
