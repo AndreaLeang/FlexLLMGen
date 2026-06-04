@@ -1387,6 +1387,9 @@ class OptLM:
             f"{np.sum(timers('KVStoreTimer').costs):.6f} s")
 
     def generation_loop_overlap_multi_batch(self):
+        #Testing
+        print(f"Policy: {self.policy}")
+        
         # Prologue
         for k in range(self.num_gpu_batches):
             self.load_weight(0, 0, k)
