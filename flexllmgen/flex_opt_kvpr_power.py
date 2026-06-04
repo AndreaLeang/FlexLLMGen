@@ -1389,6 +1389,8 @@ class OptLM:
     def generation_loop_overlap_multi_batch(self):
         #Testing
         print(f"Policy: {self.policy}")
+        print(f"opt config: {self.config}")
+        print("")
         
         # Prologue
         for k in range(self.num_gpu_batches):
