@@ -316,47 +316,47 @@ class LLMPowerBench:
             tot_refresh_cache_time += t1-t0
 
             # ── prefill ───────────────────────────────────────────────
-            with profile(
-                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
-                record_shapes=True, 
-                profile_memory=True, 
-                with_stack=True, 
-                with_modules=True
-            ) as prof:        
-              t0 = time.perf_counter()
-              i0 = len(mon.samples)
-              for j in range(num_layers):
-                  for k in range(num_gpu_batches):
-                      self.model.init_cache(j, k)
-                      if self.recomp_len > 0:
-                          self.model.init_hidden(j, k)
-              torch.cuda.synchronize()
-              i1 = len(mon.samples)
-              t1 = time.perf_counter()
-              acc_prefill.add(mon.samples, i0, i1, t0, t1)
-  
-              # ── decode ────────────────────────────────────────────────
-              t0 = time.perf_counter()
-              i0 = len(mon.samples)
-            
-              # Power Caputure for entire inference
-              if num_gpu_batches == 1:
-                  print(f"self.model.execute_gen_len: {self.model.execute_gen_len}")
-                  self.model.generation_loop_overlap_single_batch()
-              else:
-                  self.model.generation_loop_overlap_multi_batch()
-            
-              out_ids = self.model.output_ids
-  
-              torch.cuda.synchronize()
-              i1 = len(mon.samples)
-              t1 = time.perf_counter()
-              acc_decode.add(mon.samples, i0, i1, t0, t1)
-            filename = "testing_power_" + str(iteration) + "V.json" 
-            out_dir = Path("rapl-nvml-power-monitor-main/power_results")
-            json_path = out_dir / filename
-            prof.export_chrome_trace(str(json_path))
-            fix_ownership(json_path)
+            # with profile(
+            #     activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA], 
+            #     record_shapes=True, 
+            #     profile_memory=True, 
+            #     with_stack=True, 
+            #     with_modules=True
+            # ) as prof:        
+            t0 = time.perf_counter()
+            i0 = len(mon.samples)
+            for j in range(num_layers):
+                for k in range(num_gpu_batches):
+                    self.model.init_cache(j, k)
+                    if self.recomp_len > 0:
+                        self.model.init_hidden(j, k)
+            torch.cuda.synchronize()
+            i1 = len(mon.samples)
+            t1 = time.perf_counter()
+            acc_prefill.add(mon.samples, i0, i1, t0, t1)
+
+            # ── decode ────────────────────────────────────────────────
+            t0 = time.perf_counter()
+            i0 = len(mon.samples)
+          
+            # Power Caputure for entire inference
+            if num_gpu_batches == 1:
+                print(f"self.model.execute_gen_len: {self.model.execute_gen_len}")
+                self.model.generation_loop_overlap_single_batch()
+            else:
+                self.model.generation_loop_overlap_multi_batch()
+          
+            out_ids = self.model.output_ids
+
+            torch.cuda.synchronize()
+            i1 = len(mon.samples)
+            t1 = time.perf_counter()
+            acc_decode.add(mon.samples, i0, i1, t0, t1)
+            # filename = "testing_power_" + str(iteration) + "V.json" 
+            # out_dir = Path("rapl-nvml-power-monitor-main/power_results")
+            # json_path = out_dir / filename
+            # prof.export_chrome_trace(str(json_path))
+            # fix_ownership(json_path)
 
             elapsed    = time.perf_counter() - loop_start
 
