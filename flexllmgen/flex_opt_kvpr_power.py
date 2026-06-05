@@ -1349,6 +1349,32 @@ class OptLM:
 
             if self.task.stop and np.all(self.stopped):
                 break
+    def generation_loop_overlap_single_batch_prefill(self):
+        print(f"single batch: prefill")
+        i = 0
+        self.update_attention_mask(i, 0)
+        for j in range(self.num_layers):
+            self.load_weight(i, j+1, 0)
+            self.load_hidden_compute(i,j+1, 0)
+            self.load_cache(i, j+1, 0)
+            self.load_hidden(i, j, 0)
+            self.compute_layer(i, j, 0)
+            self.store_cache(i, j-1, 0)
+            self.store_hidden(i, j, 0)
+            self.sync()
+    def generation_loop_overlap_single_batch_decode(self):
+        # Generate
+        for i in range(1, self.execute_gen_len):
+            self.update_attention_mask(i, 0)
+            for j in range(self.num_layers):
+                self.load_weight(i, j+1, 0)
+                self.load_hidden_compute(i,j+1, 0)
+                self.load_cache(i, j+1, 0)
+                self.load_hidden(i, j, 0)
+                self.compute_layer(i, j, 0)
+                self.store_cache(i, j-1, 0)
+                self.store_hidden(i, j, 0)
+                self.sync()
 
     def generation_loop_overlap_single_batch_debug_kv_timers(self):
         print("starting generation loop overlap single batch w kv timers")
@@ -1409,6 +1435,42 @@ class OptLM:
                     self.store_cache(i, j, k-1)
                     self.sync()
             timers("generate").stop()
+
+        # Epilogue
+        self.store_hidden(
+            self.execute_gen_len-1, self.num_layers-1, self.num_gpu_batches-1)
+        
+    def generation_loop_overlap_multi_batch_prefill(self):
+        # Generate
+        i = 0
+        for k in range(self.num_gpu_batches):
+            self.update_attention_mask(i, k)
+        for j in range(self.num_layers):
+            for k in range(self.num_gpu_batches):
+                self.load_weight(i, j+1, k)
+                self.load_hidden_compute(i,j, k+1)
+                self.load_cache(i, j, k+1)
+                self.store_hidden(i, j, k-1)
+                self.load_hidden(i, j, k+1)
+                self.compute_layer(i, j, k)
+                self.store_cache(i, j, k-1)
+                self.sync()
+                
+    def generation_loop_overlap_multi_batch_decode(self):
+        # Generate
+        for i in range(1, self.execute_gen_len):
+            for k in range(self.num_gpu_batches):
+                self.update_attention_mask(i, k)
+            for j in range(self.num_layers):
+                for k in range(self.num_gpu_batches):
+                    self.load_weight(i, j+1, k)
+                    self.load_hidden_compute(i,j, k+1)
+                    self.load_cache(i, j, k+1)
+                    self.store_hidden(i, j, k-1)
+                    self.load_hidden(i, j, k+1)
+                    self.compute_layer(i, j, k)
+                    self.store_cache(i, j, k-1)
+                    self.sync()
 
         # Epilogue
         self.store_hidden(
