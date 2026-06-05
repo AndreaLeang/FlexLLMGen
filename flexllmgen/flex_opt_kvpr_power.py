@@ -1174,6 +1174,9 @@ class OptLM:
                 if num_gpu_batches == 1:
                     self.generation_loop_overlap_single_batch()
                 else:
+                    print(f"optLM model: {self}")
+                    print(f"opt config: {self.config}")
+                    print(f"task: {self.task}")
                      # Prologue
                     for k in range(self.num_gpu_batches):
                         self.load_weight(0, 0, k)
