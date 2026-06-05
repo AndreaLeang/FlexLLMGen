@@ -30,7 +30,7 @@ from flexllmgen.pytorch_backend import (TorchDevice, TorchDisk,
     TorchMixedDevice)
 from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
     array_1d, array_2d, array_3d, str2bool)
-from flexllmgen.flex_opt_kvpr import OptLM, Policy, get_test_inputs
+from flexllmgen.flex_opt_kvpr_power import OptLM, Policy, get_test_inputs
 
 import torch
 import torchvision.models as models
@@ -338,31 +338,35 @@ class LLMPowerBench:
             t0 = time.perf_counter()
             i0 = len(mon.samples)
             if num_gpu_batches == 1:
-                # Generate single token
-                self.model.update_attention_mask(0, 0)
-                for j in range(num_layers):
-                    self.model.load_weight(0, j+1, 0)
-                    self.model.load_hidden_compute(0,j+1, 0)
-                    self.model.load_cache(0, j+1, 0)
-                    self.model.load_hidden(0, j, 0)
-                    self.model.compute_layer(0, j, 0)
-                    self.model.store_cache(0, j-1, 0)
-                    self.model.store_hidden(0, j, 0)
-                    self.model.sync()
-            else: 
-                # Generate single token
-                for k in range(num_gpu_batches):
-                    self.model.update_attention_mask(0, k)
-                for j in range(num_layers):
-                    for k in range(num_gpu_batches):
-                        self.model.load_weight(0, j+1, k)
-                        self.model.load_hidden_compute(0,j, k+1)
-                        self.model.load_cache(0, j, k+1)
-                        self.model.store_hidden(0, j, k-1)
-                        self.model.load_hidden(0, j, k+1)
-                        self.model.compute_layer(0, j, k)
-                        self.model.store_cache(0, j, k-1)
-                        self.model.sync()
+                self.model.generation_loop_overlap_single_batch_prefill()
+            else:
+                self.model.generation_loop_overlap_multi_batch_prefill()
+            # if num_gpu_batches == 1:
+            #     # Generate single token
+            #     self.model.update_attention_mask(0, 0)
+            #     for j in range(num_layers):
+            #         self.model.load_weight(0, j+1, 0)
+            #         self.model.load_hidden_compute(0,j+1, 0)
+            #         self.model.load_cache(0, j+1, 0)
+            #         self.model.load_hidden(0, j, 0)
+            #         self.model.compute_layer(0, j, 0)
+            #         self.model.store_cache(0, j-1, 0)
+            #         self.model.store_hidden(0, j, 0)
+            #         self.model.sync()
+            # else: 
+            #     # Generate single token
+            #     for k in range(num_gpu_batches):
+            #         self.model.update_attention_mask(0, k)
+            #     for j in range(num_layers):
+            #         for k in range(num_gpu_batches):
+            #             self.model.load_weight(0, j+1, k)
+            #             self.model.load_hidden_compute(0,j, k+1)
+            #             self.model.load_cache(0, j, k+1)
+            #             self.model.store_hidden(0, j, k-1)
+            #             self.model.load_hidden(0, j, k+1)
+            #             self.model.compute_layer(0, j, k)
+            #             self.model.store_cache(0, j, k-1)
+            #             self.model.sync()
             i1 = len(mon.samples)
             t1 = time.perf_counter()
             acc_prefill.add(mon.samples, i0, i1, t0, t1)
@@ -372,39 +376,44 @@ class LLMPowerBench:
             time_for_update_attn_mask = 0.0
             t0 = time.perf_counter()
             i0 = len(mon.samples)
-          
-            # Power Caputure for entire inference
+
             if num_gpu_batches == 1:
-                for i in range(1, self.model.execute_gen_len):
-                    t3 = time.perf_counter()
-                    for j in range(self.num_layers):
-                        self.model.load_weight(i, j+1, 0)
-                        self.model.load_hidden_compute(i,j+1, 0)
-                        self.model.load_cache(i, j+1, 0)
-                        self.model.load_hidden(i, j, 0)
-                        self.model.compute_layer(i, j, 0)
-                        self.model.store_cache(i, j-1, 0)
-                        self.model.store_hidden(i, j, 0)
-                        self.model.sync()
-                    tot_decode += time.perf_counter() - t3
+                self.model.generation_loop_overlap_single_batch_decode()
             else:
-                for i in range(1, self.model.execute_gen_len):
-                    t3 = time.perf_counter()
-                    for k in range(num_gpu_batches):
-                        self.model.update_attention_mask(i, k)
-                    for j in range(num_layers):
-                        for k in range(num_gpu_batches):
+                self.model.generation_loop_overlap_multi_batch_decode()
+          
+            # # Power Caputure for entire inference
+            # if num_gpu_batches == 1:
+            #     for i in range(1, self.model.execute_gen_len):
+            #         t3 = time.perf_counter()
+            #         for j in range(self.num_layers):
+            #             self.model.load_weight(i, j+1, 0)
+            #             self.model.load_hidden_compute(i,j+1, 0)
+            #             self.model.load_cache(i, j+1, 0)
+            #             self.model.load_hidden(i, j, 0)
+            #             self.model.compute_layer(i, j, 0)
+            #             self.model.store_cache(i, j-1, 0)
+            #             self.model.store_hidden(i, j, 0)
+            #             self.model.sync()
+            #         tot_decode += time.perf_counter() - t3
+            # else:
+            #     for i in range(1, self.model.execute_gen_len):
+            #         t3 = time.perf_counter()
+            #         for k in range(num_gpu_batches):
+            #             self.model.update_attention_mask(i, k)
+            #         for j in range(num_layers):
+            #             for k in range(num_gpu_batches):
                             
-                            self.model.load_weight(i, j+1, k)
-                            self.model.load_hidden_compute(i,j, k+1)
-                            self.model.load_cache(i, j, k+1)
-                            self.model.store_hidden(i, j, k-1)
-                            self.model.load_hidden(i, j, k+1)
-                            self.model.compute_layer(i, j, k)
-                            self.model.store_cache(i, j, k-1)
-                            self.model.sync()
-                    print(f"cur token lat: {time.perf_counter() - t3}")
-                    tot_decode += time.perf_counter() - t3
+            #                 self.model.load_weight(i, j+1, k)
+            #                 self.model.load_hidden_compute(i,j, k+1)
+            #                 self.model.load_cache(i, j, k+1)
+            #                 self.model.store_hidden(i, j, k-1)
+            #                 self.model.load_hidden(i, j, k+1)
+            #                 self.model.compute_layer(i, j, k)
+            #                 self.model.store_cache(i, j, k-1)
+            #                 self.model.sync()
+            #         print(f"cur token lat: {time.perf_counter() - t3}")
+            #         tot_decode += time.perf_counter() - t3
 
             i1 = len(mon.samples)
             t1 = time.perf_counter()
