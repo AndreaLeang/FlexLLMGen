@@ -290,6 +290,11 @@ class LLMPowerBench:
         
         while True:
             print(f"optLM model: {self.model}")
+            print(f"env: {self.env}")
+            print(f"policy: {self.policy}")
+            print(f"num_gpu_batches: {self.num_gpu_batches}")
+            print(f"policy: {self.recompute_len}")
+            print(f"cpu_gpu_compute: {self.cpu_gpu_compute}")
             print(f"opt config: {self.opt_config}")
             # print(f"task: {self.model.task}")
             iteration += 1
