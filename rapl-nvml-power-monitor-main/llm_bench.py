@@ -285,8 +285,8 @@ class LLMPowerBench:
         iteration = 0
         mon.start()
         loop_start = time.perf_counter()
-        # tot_prefill = 0.0
-        # tot_decode = 0.0
+        tot_prefill = 0.0
+        tot_decode = 0.0
         
         while True:
             iteration += 1
@@ -366,6 +366,7 @@ class LLMPowerBench:
             i1 = len(mon.samples)
             t1 = time.perf_counter()
             acc_prefill.add(mon.samples, i0, i1, t0, t1)
+            tot_prefill += t1 - t0
 
             # ── decode ────────────────────────────────────────────────
             time_for_update_attn_mask = 0.0
@@ -376,8 +377,6 @@ class LLMPowerBench:
             if num_gpu_batches == 1:
                 for i in range(1, self.model.execute_gen_len):
                     t3 = time.perf_counter()
-                    self.model.update_attention_mask(i, 0)
-                    time_for_update_attn_mask += time.perf_counter() - t3
                     for j in range(self.num_layers):
                         self.model.load_weight(i, j+1, 0)
                         self.model.load_hidden_compute(i,j+1, 0)
@@ -387,14 +386,15 @@ class LLMPowerBench:
                         self.model.store_cache(i, j-1, 0)
                         self.model.store_hidden(i, j, 0)
                         self.model.sync()
+                    tot_decode += time.perf_counter() - t3
             else:
                 for i in range(1, self.model.execute_gen_len):
+                    t3 = time.perf_counter()
                     for k in range(num_gpu_batches):
-                        t3 = time.perf_counter()
                         self.model.update_attention_mask(i, k)
-                        time_for_update_attn_mask += time.perf_counter() - t3
                     for j in range(num_layers):
                         for k in range(num_gpu_batches):
+                            
                             self.model.load_weight(i, j+1, k)
                             self.model.load_hidden_compute(i,j, k+1)
                             self.model.load_cache(i, j, k+1)
@@ -403,6 +403,7 @@ class LLMPowerBench:
                             self.model.compute_layer(i, j, k)
                             self.model.store_cache(i, j, k-1)
                             self.model.sync()
+                    tot_decode += time.perf_counter() - t3
 
             i1 = len(mon.samples)
             t1 = time.perf_counter()
@@ -430,8 +431,8 @@ class LLMPowerBench:
 
         # mon.stop()
         total_dur = time.perf_counter() - loop_start - tot_refresh_cache_time
-        # print(f"avg prefill: {tot_prefill / iteration}")
-        # print(f"avg decode: {tot_decode / iteration}")
+        print(f"avg prefill: {tot_prefill / iteration}")
+        print(f"avg decode: {tot_decode / iteration}")
 
         # decode output from last iteration
         new_ids    = out_ids[0][prompt_len:]
