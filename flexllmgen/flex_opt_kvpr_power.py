@@ -1174,6 +1174,11 @@ class OptLM:
                 if num_gpu_batches == 1:
                     self.generation_loop_overlap_single_batch()
                 else:
+                     # Prologue
+                    for k in range(self.num_gpu_batches):
+                        self.load_weight(0, 0, k)
+                    self.load_hidden(0, 0, 0)
+                    self.sync()
                     t3 = time.perf_counter()
                     self.generation_loop_overlap_multi_batch_prefill()
                     print(f"prefill lat: {time.perf_counter()-t3}")
