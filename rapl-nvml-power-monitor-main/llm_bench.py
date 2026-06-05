@@ -441,8 +441,7 @@ class LLMPowerBench:
             print(f"iterations {iteration}  "
                   f"prefill {acc_prefill.durations[-1]*1000:.0f}ms  "
                   f"decode {acc_decode.durations[-1]*1000:.0f}ms  "
-                  f"elapsed {elapsed:.1f}s"
-                  f"time_for_update_attn_mask: {time_for_update_attn_mask*1000:.0f}ms")
+                  f"elapsed {elapsed:.1f}s")
 
             # stop when BOTH conditions met
             if iteration >= n_iters and elapsed >= min_duration_s:
