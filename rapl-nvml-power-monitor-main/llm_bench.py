@@ -291,7 +291,7 @@ class LLMPowerBench:
         while True:
             print(f"optLM model: {self.model}")
             print(f"opt config: {self.opt_config}")
-            print(f"task: {self.model.task}")
+            # print(f"task: {self.model.task}")
             iteration += 1
             # ── Refresh Cache ───────────────────────────────────────────────
             # Intermediate tensors
