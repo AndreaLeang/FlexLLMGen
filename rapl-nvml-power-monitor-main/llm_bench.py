@@ -289,6 +289,9 @@ class LLMPowerBench:
         tot_decode = 0.0
         
         while True:
+            print(f"optLM model: {self.model}")
+            print(f"opt config: {self.opt_config}")
+            print(f"task: {self.model.task}")
             iteration += 1
             # ── Refresh Cache ───────────────────────────────────────────────
             # Intermediate tensors
