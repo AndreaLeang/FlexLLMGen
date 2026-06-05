@@ -295,7 +295,7 @@ class LLMPowerBench:
             print(f"num_gpu_batches: {self.model.num_gpu_batches}")
             print(f"policy: {self.model.recompute_len}")
             print(f"cpu_gpu_compute: {self.model.cpu_gpu_compute}")
-            print(f"opt config: {self.model.opt_config}")
+            print(f"opt config: {self.opt_config}")
             # print(f"task: {self.model.task}")
             iteration += 1
             # ── Refresh Cache ───────────────────────────────────────────────
