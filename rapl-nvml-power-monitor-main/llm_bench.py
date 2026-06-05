@@ -289,14 +289,14 @@ class LLMPowerBench:
         tot_decode = 0.0
         
         while True:
-            print(f"optLM model: {self.model}")
-            print(f"env: {self.model.env}")
-            print(f"policy: {self.model.policy}")
-            print(f"num_gpu_batches: {self.model.num_gpu_batches}")
-            print(f"model recomp len: {self.model.recompute_len}")
-            print(f"bench recomp len: {self.recomp_len}")
-            print(f"cpu_gpu_compute: {self.model.cpu_gpu_compute}")
-            print(f"opt config: {self.opt_config}")
+            # print(f"optLM model: {self.model}")
+            # print(f"env: {self.model.env}")
+            # print(f"policy: {self.model.policy}")
+            # print(f"num_gpu_batches: {self.model.num_gpu_batches}")
+            # print(f"model recomp len: {self.model.recompute_len}")
+            # print(f"bench recomp len: {self.recomp_len}")
+            # print(f"cpu_gpu_compute: {self.model.cpu_gpu_compute}")
+            # print(f"opt config: {self.opt_config}")
             # print(f"task: {self.model.task}")
             iteration += 1
             # ── Refresh Cache ───────────────────────────────────────────────
