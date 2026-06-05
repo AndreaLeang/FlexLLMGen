@@ -403,6 +403,7 @@ class LLMPowerBench:
                             self.model.compute_layer(i, j, k)
                             self.model.store_cache(i, j, k-1)
                             self.model.sync()
+                    print(f"cur token lat: time.perf_counter() - t3")
                     tot_decode += time.perf_counter() - t3
 
             i1 = len(mon.samples)
