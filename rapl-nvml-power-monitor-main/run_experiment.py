@@ -124,7 +124,7 @@ def main():
     if not args.s_r:
         all_re = [args.recomp_len]
         
-    for each_re in all_re_per_ranges:
+    for each_re in all_re:
         bench = LLMPowerBench(
             model_id=args.model,
             gpu_indices=args.gpu,
