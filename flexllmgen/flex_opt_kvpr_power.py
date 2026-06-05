@@ -1176,7 +1176,6 @@ class OptLM:
                 else:
                     print(f"optLM model: {self}")
                     print(f"opt config: {self.config}")
-                    print(f"task: {self.task}")
                      # Prologue
                     for k in range(self.num_gpu_batches):
                         self.load_weight(0, 0, k)
