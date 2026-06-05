@@ -1174,7 +1174,12 @@ class OptLM:
                 if num_gpu_batches == 1:
                     self.generation_loop_overlap_single_batch()
                 else:
-                    self.generation_loop_overlap_multi_batch()
+                    t3 = time.perf_counter()
+                    self.generation_loop_overlap_multi_batch_prefill()
+                    print(f"prefill lat: {time.perf_counter()-t3}")
+                    t3 = time.perf_counter()
+                    self.generation_loop_overlap_multi_batch_decode()
+                    print(f"decode lat: {time.perf_counter()-t3}")
         elif debug_mode == "fewer_batch":
             # Run fewer layeres and batches for debugging
             if num_gpu_batches == 1:
