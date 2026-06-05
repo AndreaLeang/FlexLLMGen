@@ -1363,6 +1363,7 @@ class OptLM:
         # Generate
         for i in range(self.execute_gen_len):
             timers("generate").start()
+            t3 = time.perf_counter() # remove before profiling
             for k in range(self.num_gpu_batches):
                 self.update_attention_mask(i, k)
             for j in range(self.num_layers):
@@ -1375,6 +1376,7 @@ class OptLM:
                     self.compute_layer(i, j, k)
                     self.store_cache(i, j, k-1)
                     self.sync()
+            print(f"cur token gen time: {time.perf_counter() - t3}") # remove before profiling
             timers("generate").stop()
 
         # Epilogue
