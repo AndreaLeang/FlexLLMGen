@@ -1175,7 +1175,13 @@ class OptLM:
                     self.generation_loop_overlap_single_batch()
                 else:
                     print(f"optLM model: {self}")
+                    print(f"env: {self.env}")
+                    print(f"policy: {self.policy}")
+                    print(f"num_gpu_batches: {self.num_gpu_batches}")
+                    print(f"policy: {self.recompute_len}")
+                    print(f"cpu_gpu_compute: {self.cpu_gpu_compute}")
                     print(f"opt config: {self.config}")
+                    
                      # Prologue
                     for k in range(self.num_gpu_batches):
                         self.load_weight(0, 0, k)
