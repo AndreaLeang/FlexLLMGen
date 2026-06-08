@@ -130,7 +130,7 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     if num_batches == 1: 
         input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency, cur_component_breakdown = single_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
     else:
-        input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency, cur_component_breakdown  = multi_batch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
+        input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency, cur_component_breakdown  = ch_forward_pass(model, num_of_prompts, prompt_len, gen_len-1, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers)
     # print(f"fast single token gen: input lat: {input_latency}, out lat: {output_latency}, tot_MHA_latency: {tot_MHA_latency}, tot_MLP_latency: {tot_MLP_latency}")
     
     other_token_energy = (gen_len - 1) * (input_energy + tot_MHA_energy + tot_MLP_energy + output_energy)
@@ -221,7 +221,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         elif num_batches == 1:
             input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency, cur_component_breakdown = single_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, last_token=cur_gen_len==1)
         else:
-            input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency, cur_component_breakdown  = multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, last_token=cur_gen_len==1)
+            input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency, cur_component_breakdown  = ch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, last_token=cur_gen_len==1)
       
         middle_layer_latency = tot_MHA_latency + tot_MLP_latency
         middle_layer_energy = tot_MHA_energy + tot_MLP_energy
@@ -472,7 +472,7 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     print(f"output_component_breakdown: {output_component_breakdown}")
 
     print(f"lat breakdown: ")
-    print(f"input lat: {input_latency}, MLP lat: {MLP_latency}, MHA lat: {MHA_latency}, output lat: {output_latency}")
+    print(f"input lat: {input_latency}, MLP lat: {tot_MLP_latency}, MHA lat: {tot_MHA_latency}, output lat: {output_latency}")
     return input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, total_transfer_energy, total_active_energy, total_transfer_latency, total_component_breakdown
 
 
@@ -574,7 +574,6 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         tot_transfer_energy = recomp_transfer_energy + k_transfer_energy + v_transfer_energy
         tot_active_energy = recomp_calc_energy + layer_calc_energy
         tot_transfer_lat = recomp_transfer_latency + k_transfer_latency + v_transfer_latency
-        print(f"cur layer load & store breakdown: {component_breakdown}")
         return tot_energy, first_half_latency + second_half_latency, tot_transfer_energy, tot_active_energy, tot_transfer_lat, component_breakdown
 
 
