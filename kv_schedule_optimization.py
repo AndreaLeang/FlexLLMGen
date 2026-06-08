@@ -526,7 +526,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         transfer_energy, transfer_latency = transfer_pred(get_bytes_to_store(batch_size), hardware_config, gpu_estimator)
         component_breakdown[2] = recomp_transfer_latency
         if recomp_calc_latency+layer_calc_latency > transfer_latency:
-            component_breakdown[3] = recomp_calc_latency.item()
+            component_breakdown[3] = recomp_calc_latency
             component_breakdown[4] = layer_calc_latency.item()
         tot_latency = recomp_transfer_latency+max(recomp_calc_latency+layer_calc_latency, transfer_latency)
         tot_energy = recomp_transfer_energy+recomp_calc_energy+layer_calc_energy+transfer_energy
@@ -554,7 +554,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         second_half_latency = max(pinned_latency + recomp_calc_latency + layer_calc_latency, k_transfer_latency + v_transfer_latency)
         if pinned_latency + recomp_calc_latency+ layer_calc_latency > k_transfer_latency + v_transfer_latency:
             component_breakdown[1] = pinned_latency
-            component_breakdown[3] = recomp_calc_latency.item()
+            component_breakdown[3] = recomp_calc_latency
             component_breakdown[4] = layer_calc_latency.item()
         else: 
             component_breakdown[5] = k_transfer_latency
@@ -564,6 +564,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         tot_transfer_energy = recomp_transfer_energy + k_transfer_energy + v_transfer_energy
         tot_active_energy = recomp_calc_energy + layer_calc_energy
         tot_transfer_lat = recomp_transfer_latency + k_transfer_latency + v_transfer_latency
+        print(f"cur layer load & store breakdown: {component_breakdown}")
         return tot_energy, first_half_latency + second_half_latency, tot_transfer_energy, tot_active_energy, tot_transfer_lat, component_breakdown
 
 
