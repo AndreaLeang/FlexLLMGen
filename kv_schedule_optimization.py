@@ -159,9 +159,20 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     percent_energy_offloading = tot_transfer_energy / tot_energy * 100
     percent_energy_active = tot_active_energy / tot_energy * 100
     percent_latency_transfer = tot_transfer_latency / tot_latency * 100
+
+    # Total Time For Each Component 
+    PtP_1 = 0.0
+    PtP_2 = 0.0
+    Recomp_transfer_3 = 0.0
+    Recomp_comp_4 = 0.0
+    Layer_comp_5 = 0.0
+    KV_transfer_6 = 0.0
+    KV_transfer_7 = 0.0
+
+    component_breakdown = (PtP_1/tot_latency*100, PtP_2/tot_latency*100, Recomp_transfer_3/tot_latency*100, Recomp_comp_4/tot_latency*100, Layer_comp_5/tot_latency*100, KV_transfer_6/tot_latency*100, KV_transfer_7/tot_latency*100)
   
     # get total energy and latency and time_to_first_token
-    return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer, percent_energy_offloading, percent_energy_active, percent_latency_transfer
+    return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer, percent_energy_offloading, percent_energy_active, percent_latency_transfer, component_breakdown
 
 
 def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, decode):
@@ -247,7 +258,20 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     percent_energy_offloading = tot_transfer_energy / tot_energy *100
     percent_energy_active = tot_active_energy / tot_energy * 100
     percent_latency_transfer = tot_transfer_latency / tot_latency * 100
-    return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer, percent_energy_offloading, percent_energy_active, percent_latency_transfer
+
+    # Total Time For Each Component 
+    PtP_1 = 0.0
+    PtP_2 = 0.0
+    Recomp_transfer_3 = 0.0
+    Recomp_comp_4 = 0.0
+    Layer_comp_5 = 0.0
+    KV_transfer_6 = 0.0
+    KV_transfer_7 = 0.0
+
+    component_breakdown = (PtP_1/tot_latency*100, PtP_2/tot_latency*100, Recomp_transfer_3/tot_latency*100, Recomp_comp_4/tot_latency*100, Layer_comp_5/tot_latency*100, KV_transfer_6/tot_latency*100, KV_transfer_7/tot_latency*100)
+  
+    
+    return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer, percent_energy_offloading, percent_energy_active, percent_latency_transfer, component_breakdown
 
 
 def first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers):
@@ -923,7 +947,7 @@ def layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config
 def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, testing, fast, gpu_estimator, decode, var_to_min="latency"):
     # break model into layers
   
-    ### UNDERSTAND WHAT STRATEGIES ARE AVVAILABLE
+    ### UNDERSTAND WHAT STRATEGIES ARE AVAILABLE
                                                                                                                                                                                        
     # understand what unique batch size is available 
     batch_sizes = get_batch_sizes(num_of_prompts)
@@ -964,12 +988,12 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                     print(f'cur strat: {each_batch_size}, {each_feasible_offloading}, {each_recomp_len}')
                     #Model Prediction 
                     if fast:
-                        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator, decode)
+                        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator, decode)
                     else: 
-                        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator, decode)
+                        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator, decode)
                     if save_results: 
                         cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
-                        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency)
+                        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown)
                   
                     cur_objective_val = cur_latency
                     if var_to_min == "energy":
@@ -977,12 +1001,12 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                     # compare to optimal policy seen so far
                     if cur_objective_val < min_objective_val:
                         min_objective_val = cur_objective_val
-                        min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency)
+                        min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown)
 
     if save_results:
         csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
         print(csv_filename)
-        fieldnames = ["Batch Size", "Offloading Percent to CPU", "Recompute Length", "Energy (J)", "Latency (s)", "Time to First Token (s)", "Avg Input Layer Energy (J)", "Avg Input Layer Latency (s)", "Avg Output Layer Energy (J)", "Avg Output Layer Latency (s)", "Avg MHA Layer Energy (J)", "Avg MHA Layer Latency (s)", "Avg MLP Layer Energy (J)", "Avg MLP Layer Latency (s)", "Percent Transfer Energy (%)", "Percent Active Energy (%)", "Percent Transfer Latency (%)"]
+        fieldnames = ["Batch Size", "Offloading Percent to CPU", "Recompute Length", "Energy (J)", "Latency (s)", "Time to First Token (s)", "Avg Input Layer Energy (J)", "Avg Input Layer Latency (s)", "Avg Output Layer Energy (J)", "Avg Output Layer Latency (s)", "Avg MHA Layer Energy (J)", "Avg MHA Layer Latency (s)", "Avg MLP Layer Energy (J)", "Avg MLP Layer Latency (s)", "Percent Transfer Energy (%)", "Percent Active Energy (%)", "Percent Transfer Latency (%)", "PtP Component 1 Contribution (%)", "PtP Component 2 Contribution (%)", "Recomp Transfer Component 3 Contribution (%)", "Recomp Calc Component 4 Contribution (%)", "Layer Calc Component 5 Contribution (%)", "KV Transfer Component 6 Contribution (%)", "KV Transfer Component 7 Contribution (%)"]
         write_header = not os.path.exists(csv_filename)
       
         with open(csv_filename, 'a', newline='') as csvfile:
@@ -991,7 +1015,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                 writer.writeheader()
             print(f"# of results: {len(all_results)}")
             for each_strat in all_results:
-              cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = all_results[each_strat]
+              cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown = all_results[each_strat]
               writer.writerow({'Batch Size': each_strat[0], 
                       'Offloading Percent to CPU': each_strat[1],
                       'Recompute Length': each_strat[2], 
@@ -1009,10 +1033,23 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                       'Percent Transfer Energy (%)': per_transfer_energy,
                       'Percent Active Energy (%)': per_active_energy,
                       'Percent Transfer Latency (%)': per_transfer_latency,
+                      'PtP Component 1 Contribution (%)': component_breakdown[0],
+                      'PtP Component 2 Contribution (%)': component_breakdown[1],
+                      'Recomp Transfer Component 3 Contribution (%)': component_breakdown[2],
+                      'Recomp Calc Component 4 Contribution (%)': component_breakdown[3],
+                      'Layer Calc Component 5 Contribution (%)': component_breakdown[4],
+                      'KV Transfer Component 6 Contribution (%)': component_breakdown[5],
+                      'KV Transfer Component 7 Contribution (%)': component_breakdown[6],
                       })
 
     # return best policy and optimal latency, energy, etc.
     print(f'best policy: batch_size = {min_strategy[0]}, offloading_percent = {min_strategy[1]}, recomp_len = {min_strategy[2]}, energy = {min_strategy[3]}, latency = {min_strategy[4]}, % Energy for Transfer = {min_strategy[5]}, % Energy for Active = {min_strategy[6]}, % Latency for Transfer = {min_strategy[7]}')
+    print(f"best strat breakdown: ")
+    component_breakdown= min_strategy[8]
+    print(f"PtP 1: {component_breakdown[0]}, PtP 2: {component_breakdown[1]}")
+    print(f"Recomp Transfer 3: {component_breakdown[2]}, Recomp Calc 3: {component_breakdown[3]}, Layer Calc 3: {component_breakdown[4]} ")
+    print(f"KV Transfer 6: {component_breakdown[5]}, KV Transfer 7: {component_breakdown[6]}")
+    
     return min_objective_val, min_strategy
 
 def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, save_results, batch_size, offloading_per, recomp_len, fast, gpu_estimator, decode, var_to_min="latency"):
@@ -1024,20 +1061,20 @@ def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, ha
 
     # single run
     if fast: 
-        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency  = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator, decode)
+        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown  = fast_strat_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator, decode)
     else:
-        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency  = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator, decode)
+        cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown  = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator, decode)
     if save_results: 
         cur_strat = (batch_size, offloading_per, recomp_len)
-        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency )
+        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown )
   
     min_objective_val = cur_latency
-    min_strategy = (batch_size, offloading_per, recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency )
+    min_strategy = (batch_size, offloading_per, recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown )
     
     if save_results:
         csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
         print(csv_filename)
-        fieldnames = ["Batch Size", "Offloading Percent to CPU", "Recompute Length", "Energy (J)", "Latency (s)", "Time to First Token (s)", "Avg Input Layer Energy (J)", "Avg Input Layer Latency (s)", "Avg Output Layer Energy (J)", "Avg Output Layer Latency (s)", "Avg MHA Layer Energy (J)", "Avg MHA Layer Latency (s)", "Avg MLP Layer Energy (J)", "Avg MLP Layer Latency (s)", "Percent Transfer Energy (%)", "Percent Active Energy (%)", "Percent Transfer Latency (%)"]
+        fieldnames = ["Batch Size", "Offloading Percent to CPU", "Recompute Length", "Energy (J)", "Latency (s)", "Time to First Token (s)", "Avg Input Layer Energy (J)", "Avg Input Layer Latency (s)", "Avg Output Layer Energy (J)", "Avg Output Layer Latency (s)", "Avg MHA Layer Energy (J)", "Avg MHA Layer Latency (s)", "Avg MLP Layer Energy (J)", "Avg MLP Layer Latency (s)", "Percent Transfer Energy (%)", "Percent Active Energy (%)", "Percent Transfer Latency (%)", "PtP Component 1 Contribution (%)", "PtP Component 2 Contribution (%)", "Recomp Transfer Component 3 Contribution (%)", "Recomp Calc Component 4 Contribution (%)", "Layer Calc Component 5 Contribution (%)", "KV Transfer Component 6 Contribution (%)", "KV Transfer Component 7 Contribution (%)"]
         write_header = not os.path.exists(csv_filename)
       
         with open(csv_filename, 'a', newline='') as csvfile:
@@ -1046,7 +1083,7 @@ def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, ha
                 writer.writeheader()
             print(f"# of results: {len(all_results)}")
             for each_strat in all_results:
-              cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency = all_results[each_strat]
+              cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown = all_results[each_strat]
               writer.writerow({'Batch Size': each_strat[0], 
                       'Offloading Percent to CPU': each_strat[1],
                       'Recompute Length': each_strat[2], 
@@ -1064,10 +1101,22 @@ def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, ha
                       'Percent Transfer Energy (%)': per_transfer_energy,
                       'Percent Active Energy (%)': per_active_energy,
                       'Percent Transfer Latency (%)': per_transfer_latency,
+                      'PtP Component 1 Contribution (%)': component_breakdown[0],
+                      'PtP Component 2 Contribution (%)': component_breakdown[1],
+                      'Recomp Transfer Component 3 Contribution (%)': component_breakdown[2],
+                      'Recomp Calc Component 4 Contribution (%)': component_breakdown[3],
+                      'Layer Calc Component 5 Contribution (%)': component_breakdown[4],
+                      'KV Transfer Component 6 Contribution (%)': component_breakdown[5],
+                      'KV Transfer Component 7 Contribution (%)': component_breakdown[6],
                       })
 
     # return best policy and optimal latency, energy, etc.
     print(f'best policy: batch_size = {min_strategy[0]}, offloading_percent = {min_strategy[1]}, recomp_len = {min_strategy[2]}, energy = {min_strategy[3]}, latency = {min_strategy[4]}, % Energy for Transfer = {min_strategy[5]}, % Energy for Active = {min_strategy[6]}, % Latency for Transfer = {min_strategy[7]}')
+    print(f"best strat breakdown: ")
+    component_breakdown= min_strategy[8]
+    print(f"PtP 1: {component_breakdown[0]}, PtP 2: {component_breakdown[1]}")
+    print(f"Recomp Transfer 3: {component_breakdown[2]}, Recomp Calc 3: {component_breakdown[3]}, Layer Calc 3: {component_breakdown[4]} ")
+    print(f"KV Transfer 6: {component_breakdown[5]}, KV Transfer 7: {component_breakdown[6]}")
     return min_objective_val, min_strategy
 
 
