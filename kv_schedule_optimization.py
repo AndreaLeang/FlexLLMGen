@@ -353,7 +353,7 @@ def single_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, ha
     total_transfer_energy = input_transfer_energy + MHA_transfer_energy + MLP_transfer_energy + output_transfer_energy
     total_active_energy = input_active_energy + MHA_active_energy + MLP_active_energy + output_active_energy
     total_transfer_latency = input_transfer_latency + MHA_transfer_latency + MLP_transfer_latency + output_transfer_latency 
-    component_breakdown = input_component_breakdown + output_component_breakdown + MHA_component_breakdown + MLP_component_breakdown + last_MLP_component_breakdown
+    component_breakdown = [sum(elements) for elements in zip(input_component_breakdown, output_component_breakdown, MHA_component_breakdown, MLP_component_breakdown, last_MLP_component_breakdown)]
     
     return input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, total_transfer_energy, total_active_energy, total_transfer_latency, component_breakdown
 
@@ -368,7 +368,8 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     input_transfer_energy = (num_batches-1)*load_input_transfer_energy + no_load_input_transfer_energy 
     input_active_energy = (num_batches-1)*load_input_active_energy + no_load_input_active_energy 
     input_transfer_latency = (num_batches-1)*load_input_transfer_latency + no_load_input_transfer_latency
-    input_component_breakdown = [x * (num_batches-1) for x in load_input_component_breakdown] + no_load_input_component_breakdown
+    load_input_component_breakdown = [x * (num_batches-1) for x in load_input_component_breakdown]
+    input_component_breakdown = [sum(elements) for elements in zip(load_input_component_breakdown, no_load_input_component_breakdown)]
     print(f"load input breakdown: {load_input_component_breakdown}")
     print(f"no load input breakdown: {no_load_input_component_breakdown}")
 
@@ -395,7 +396,7 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
         output_transfer_energy = default_output_transfer_energy + store_output_transfer_energy
         output_active_energy = default_output_active_energy + store_output_active_energy
         output_transfer_latency = default_output_transfer_latency + store_output_transfer_latency
-        output_component_breakdown = default_output_component_breakdown + store_output_component_breakdown
+        output_component_breakdown = [sum(elements) for elements in zip(default_output_component_breakdown, store_output_component_breakdown)]
   
     # MHA: load, load_store*(num_batches-2), store   MLP: store, nothing*(num_batches-2), load
     will_store = 2
@@ -412,7 +413,9 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     MHA_transfer_energy = single_load_MHA_transfer_energy + (num_batches-2)*bi_dir_MHA_transfer_energy + single_store_MHA_transfer_energy
     MHA_active_energy = single_load_MHA_active_energy + (num_batches-2)*bi_dir_MHA_active_energy + single_store_MHA_active_energy
     MHA_transfer_latency = single_load_MHA_transfer_latency + (num_batches-2)*bi_dir_MHA_transfer_latency + single_store_MHA_transfer_latency
-    MHA_component_breakdown = single_load_MHA_component_breakdown + (num_batches-2)*bi_dir_MHA_component_breakdown + single_store_MHA_component_breakdown
+    
+    bi_dir_MHA_component_breakdown = [x * (num_batches-2) for x in bi_dir_MHA_component_breakdown]
+    MHA_component_breakdown = [sum(elements) for elements in zip(single_load_MHA_component_breakdown, bi_dir_MHA_component_breakdown,single_store_MHA_component_breakdown)]
     
     tot_MHA_energy *= num_hidden_layers
     tot_MHA_latency *= num_hidden_layers  
@@ -431,14 +434,12 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     MLP_transfer_energy = single_store_MLP_transfer_energy + (num_batches-2)*nothing_MLP_transfer_energy + single_load_MLP_transfer_energy
     MLP_active_energy = single_store_MLP_active_energy + (num_batches-2)*nothing_MLP_active_energy + single_load_MLP_active_energy
     MLP_transfer_latency = single_store_MLP_transfer_latency + (num_batches-2)*nothing_MLP_transfer_latency + single_load_MLP_transfer_latency
-    MLP_component_breakdown = single_store_MLP_component_breakdown + [x * (num_batches-2) for x in nothing_MLP_component_breakdown] + single_load_MLP_component_breakdown
     
     tot_MLP_energy *= (num_hidden_layers-1)
     tot_MLP_latency *= (num_hidden_layers-1)
     MLP_transfer_energy *= (num_hidden_layers-1)
     MLP_active_energy *= (num_hidden_layers-1)
     MLP_transfer_latency *= (num_hidden_layers-1)
-    MLP_component_breakdown = [x * (num_hidden_layers-1) for x in MLP_component_breakdown]
 
     # Last MLP layer: pattern changes (no load in end)
     tot_MLP_energy += single_store_energy + (num_batches-1)*nothing_MLP_energy
@@ -446,7 +447,12 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     MLP_transfer_energy += single_store_MLP_transfer_energy + (num_batches-1)*nothing_MLP_transfer_energy
     MLP_active_energy += single_store_MLP_active_energy + (num_batches-1)*nothing_MLP_active_energy
     MLP_transfer_latency += single_store_MLP_transfer_latency + (num_batches-1)*nothing_MLP_transfer_latency
-    MLP_component_breakdown += single_store_MLP_component_breakdown + [x * (num_batches-1) for x in nothing_MLP_component_breakdown]
+    
+    single_store_MLP_component_breakdown = [x * (num_hidden_layers) for x in single_store_MLP_component_breakdown]
+    nothing_MLP_component_breakdown = [x * ((num_batches-2)*(num_hidden_layers-1)+(num_batches-1)) for x in nothing_MLP_component_breakdown]
+    single_load_MLP_component_breakdown = [x * (num_hidden_layers-1) for x in single_load_MLP_component_breakdown]
+    
+    MLP_component_breakdown = [sum(elements) for elements in zip(single_store_MLP_component_breakdown, nothing_MLP_component_breakdown, single_load_MLP_component_breakdown)]
 
     total_transfer_energy = input_transfer_energy + MHA_transfer_energy + MLP_transfer_energy + output_transfer_energy
     total_active_energy = input_active_energy + MHA_active_energy + MLP_active_energy + output_active_energy
@@ -459,12 +465,14 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     print("output: ")
     print(f"input_energy: {input_energy}, input_latency: {input_latency}, output_energy: {output_energy}, output_latency: {output_latency}, tot_MHA_energy: {tot_MHA_energy}, tot_MHA_latency: {tot_MHA_latency}, tot_MLP_energy: {tot_MLP_energy}")
     print(f"tot_MLP_latency: {tot_MLP_latency}, total_transfer_energy: {total_transfer_energy}, total_active_energy: {total_active_energy}, total_transfer_latency: {total_transfer_latency}, total_component_breakdown: {total_component_breakdown}")
-    print(f"{input_active_energy + MHA_active_energy} and {MLP_active_energy + output_active_energy}")
     print(f"all breakdowns: ")
     print(f"input_component_breakdown: {input_component_breakdown}")
     print(f"MHA_component_breakdown: {MHA_component_breakdown}")
     print(f"MLP_component_breakdown: {MLP_component_breakdown}")
     print(f"output_component_breakdown: {output_component_breakdown}")
+
+    print(f"lat breakdown: ")
+    print(f"input lat: {input_latency}, MLP lat: {MLP_latency}, MHA lat: {MHA_latency}, output lat: {output_latency}")
     return input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, total_transfer_energy, total_active_energy, total_transfer_latency, total_component_breakdown
 
 
