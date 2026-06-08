@@ -175,6 +175,9 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     print(f"tot_energy: {tot_energy}, tot_latency: {tot_latency}, time_to_first_token: {time_to_first_token}, avg_energy_per_layer: {avg_energy_per_layer}, avg_latency_per_layer: {avg_latency_per_layer}")
     print(f"percent_energy_offloading: {percent_energy_offloading}, percent_energy_active: {percent_energy_active}, percent_latency_transfer: {percent_latency_transfer}")
     print(f"component_breakdown: {component_breakdown}")
+    print(f"tot_active_energy: {tot_active_energy}")
+    print(f"other_token_active_energy: {other_token_active_energy}")
+    
   
     # get total energy and latency and time_to_first_token
     return tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer, avg_latency_per_layer, percent_energy_offloading, percent_energy_active, percent_latency_transfer, component_breakdown
