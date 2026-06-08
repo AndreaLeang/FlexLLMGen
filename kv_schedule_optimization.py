@@ -1031,7 +1031,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                         cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, each_recomp_len, each_feasible_offloading, each_batch_size, num_of_prompts // each_batch_size, gpu_estimator, decode)
                     if save_results: 
                         cur_strat = (each_batch_size, each_feasible_offloading, each_recomp_len)
-                        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown)
+                        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, tuple(component_breakdown))
                   
                     cur_objective_val = cur_latency
                     if var_to_min == "energy":
@@ -1039,7 +1039,7 @@ def disect_input(model, opt_config, num_of_prompts, prompt_len, gen_len, hardwar
                     # compare to optimal policy seen so far
                     if cur_objective_val < min_objective_val:
                         min_objective_val = cur_objective_val
-                        min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown)
+                        min_strategy = (each_batch_size, each_feasible_offloading, each_recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency, tuple(component_breakdown))
 
     if save_results:
         csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
@@ -1104,10 +1104,10 @@ def single_strat_pred(model, opt_config, num_of_prompts, prompt_len, gen_len, ha
         cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown  = strategy_prediction(opt_config, num_of_prompts, prompt_len, gen_len, hardware_config, recomp_len, offloading_per, batch_size, num_of_prompts // batch_size, gpu_estimator, decode)
     if save_results: 
         cur_strat = (batch_size, offloading_per, recomp_len)
-        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown )
+        all_results[cur_strat] = (cur_energy, cur_latency, cur_TTFT, avg_energy_per_layer, avg_latency_per_layer, per_transfer_energy, per_active_energy, per_transfer_latency, tuple(component_breakdown) )
   
     min_objective_val = cur_latency
-    min_strategy = (batch_size, offloading_per, recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency, component_breakdown )
+    min_strategy = (batch_size, offloading_per, recomp_len, cur_energy, cur_latency, per_transfer_energy, per_active_energy, per_transfer_latency, tuple(component_breakdown))
     
     if save_results:
         csv_filename = "all_pred_totP_" + str(num_of_prompts) +"prompt_len_" + str(prompt_len) + "gen_len" + str(gen_len) + ".csv"
