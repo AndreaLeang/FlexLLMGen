@@ -138,7 +138,7 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     other_token_transfer_energy = (gen_len - 1) * cur_transfer_energy
     other_token_active_energy = (gen_len - 1) * cur_active_energy
     other_token_transfer_latency = (gen_len - 1) * cur_transfer_latency
-    other_token_component_breakdown = (gen_len - 1) * cur_component_breakdown
+    other_token_component_breakdown = [x * (gen_len-1) for x in cur_component_breakdown]
 
     tot_energy = first_token_energy + other_token_energy
     tot_latency = first_token_latency + other_token_latency
@@ -170,7 +170,7 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     KV_transfer_6 = 0.0
     KV_transfer_7 = 0.0
 
-    component_breakdown = other_token_component_breakdown / other_token_latency * 100
+    component_breakdown = [element/ other_token_latency * 100 for element in other_token_component_breakdown]
     # print(f"fast strat pred output: ")
     # print(f"tot_energy: {tot_energy}, tot_latency: {tot_latency}, time_to_first_token: {time_to_first_token}, avg_energy_per_layer: {avg_energy_per_layer}, avg_latency_per_layer: {avg_latency_per_layer}")
     # print(f"percent_energy_offloading: {percent_energy_offloading}, percent_energy_active: {percent_energy_active}, percent_latency_transfer: {percent_latency_transfer}")
@@ -253,7 +253,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         tot_transfer_energy += cur_transfer_energy
         tot_active_energy += cur_active_energy
         tot_transfer_latency += cur_transfer_latency
-        tot_component_breakdown += cur_component_breakdown
+        tot_component_breakdown = [sum(element) for element in zip(tot_component_breakdown, cur_component_breakdown)]
       
         # print(f"cur pass transfer energy: {cur_transfer_energy}, tot_transfer_energy: {tot_transfer_energy}")
         # print(f"cur pass active energy: {tot_active_energy}, tot_transfer_energy: {cur_active_energy}")
@@ -278,7 +278,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     KV_transfer_6 = 0.0
     KV_transfer_7 = 0.0
 
-    component_breakdown = tot_component_breakdown / (tot_latency - time_to_first_token) * 100
+    component_breakdown = [element/ (tot_latency - time_to_first_token) * 100 for element in tot_component_breakdown]
 
   
     
