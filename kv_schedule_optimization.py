@@ -171,12 +171,12 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     KV_transfer_7 = 0.0
 
     component_breakdown = other_token_component_breakdown / other_token_latency * 100
-    print(f"fast strat pred output: ")
-    print(f"tot_energy: {tot_energy}, tot_latency: {tot_latency}, time_to_first_token: {time_to_first_token}, avg_energy_per_layer: {avg_energy_per_layer}, avg_latency_per_layer: {avg_latency_per_layer}")
-    print(f"percent_energy_offloading: {percent_energy_offloading}, percent_energy_active: {percent_energy_active}, percent_latency_transfer: {percent_latency_transfer}")
-    print(f"component_breakdown: {component_breakdown}")
-    print(f"tot_active_energy: {tot_active_energy}")
-    print(f"other_token_active_energy: {other_token_active_energy}")
+    # print(f"fast strat pred output: ")
+    # print(f"tot_energy: {tot_energy}, tot_latency: {tot_latency}, time_to_first_token: {time_to_first_token}, avg_energy_per_layer: {avg_energy_per_layer}, avg_latency_per_layer: {avg_latency_per_layer}")
+    # print(f"percent_energy_offloading: {percent_energy_offloading}, percent_energy_active: {percent_energy_active}, percent_latency_transfer: {percent_latency_transfer}")
+    # print(f"component_breakdown: {component_breakdown}")
+    # print(f"tot_active_energy: {tot_active_energy}")
+    # print(f"other_token_active_energy: {other_token_active_energy}")
     
   
     # get total energy and latency and time_to_first_token
@@ -450,6 +450,10 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     total_active_energy = input_active_energy + MHA_active_energy + MLP_active_energy + output_active_energy
     total_transfer_latency = input_transfer_latency + MHA_transfer_latency + MLP_transfer_latency + output_transfer_latency 
     total_component_breakdown = input_component_breakdown + MHA_component_breakdown + MLP_component_breakdown + output_component_breakdown
+
+    print(f"energies: ")
+    print(f"input_active_energy: {input_active_energy}, MHA_transfer_energy: {MHA_transfer_energy}")
+    print(f"MLP_transfer_energy: {MLP_transfer_energy}, output_transfer_energy: {output_transfer_energy}")
 
     return input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, total_transfer_energy, total_active_energy, total_transfer_latency, total_component_breakdown
 
