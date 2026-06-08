@@ -436,8 +436,8 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     tot_MLP_latency += single_store_MLP_latency + (num_batches-1)*nothing_MLP_latency
     MLP_transfer_energy += single_store_MLP_transfer_energy + (num_batches-1)*nothing_MLP_transfer_energy
     MLP_active_energy += single_store_MLP_active_energy + (num_batches-1)*nothing_MLP_component_breakdown
-    MLP_transfer_latency += single_store_MLP_component_breakdown + (num_batches-1)*nothing_MLP_transfer_latency
-    MLP_component_breakdown += single_store_MLP_transfer_latency + (num_batches-1)*nothing_MLP_transfer_latency
+    MLP_transfer_latency += single_store_MLP_transfer_latency + (num_batches-1)*nothing_MLP_transfer_latency
+    MLP_component_breakdown += single_store_MLP_component_breakdown + (num_batches-1)*nothing_MLP_component_breakdown
 
     total_transfer_energy = input_transfer_energy + MHA_transfer_energy + MLP_transfer_energy + output_transfer_energy
     total_active_energy = input_active_energy + MHA_active_energy + MLP_active_energy + output_active_energy
