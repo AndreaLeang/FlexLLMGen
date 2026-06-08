@@ -454,6 +454,9 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     print(f"energies: ")
     print(f"input_active_energy: {input_active_energy}, MHA_transfer_energy: {MHA_transfer_energy}")
     print(f"MLP_transfer_energy: {MLP_transfer_energy}, output_transfer_energy: {output_transfer_energy}")
+    print("output: ")
+    print(f"input_energy: {input_energy}, input_latency: {input_latency}, output_energy: {output_energy}, output_latency: {output_latency}, tot_MHA_energy: {tot_MHA_energy}, tot_MHA_latency: {tot_MHA_latency}, tot_MLP_energy: {tot_MLP_energy}"
+    print(f"tot_MLP_latency: {tot_MLP_latency}, total_transfer_energy: {total_transfer_energy}, total_active_energy: {total_active_energy}, total_transfer_latency: {total_transfer_latency}, total_component_breakdown: {total_component_breakdown}")
 
     return input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, total_transfer_energy, total_active_energy, total_transfer_latency, total_component_breakdown
 
