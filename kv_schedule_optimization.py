@@ -185,7 +185,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     tot_transfer_energy = 0.0
     tot_active_energy = 0.0
     tot_transfer_latency = 0.0
-    tot_component_breakdown = (0.0,0.0,0.0,0.0,0.0,0.0,0.0)
+    tot_component_breakdown = [0.0,0.0,0.0,0.0,0.0,0.0,0.0]
     avg_energy_per_layer = {"input": (0.0, 0), "output": (0.0, 0), "MHA": (0.0, 0), "MLP": (0.0, 0)} # (tot, num of occurances)
     avg_latency_per_layer = {"input": (0.0, 0), "output": (0.0, 0), "MHA": (0.0, 0), "MLP": (0.0, 0)}
     
@@ -302,7 +302,7 @@ def first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     total_transfer_energy = num_batches*(input_transfer_energy + MHA_transfer_energy + MLP_transfer_energy + output_transfer_energy)
     total_active_energy = num_batches*(input_active_energy + MHA_active_energy + MLP_active_energy + output_active_energy)
     total_transfer_latency = num_batches*(input_transfer_latency + MHA_transfer_latency + MLP_transfer_latency + output_transfer_latency) 
-    component_breakdown = (0.0,0.0,0.0,0.0,0.0,0.0,0.0)
+    component_breakdown = [0.0,0.0,0.0,0.0,0.0,0.0,0.0]
     return num_batches*input_energy, num_batches*input_latency, num_batches*output_energy, num_batches*output_latency, num_batches*tot_MHA_energy, num_batches*tot_MHA_latency, num_batches*tot_MLP_energy, num_batches*tot_MLP_latency, total_transfer_energy, total_active_energy, total_transfer_latency, component_breakdown
 
 
@@ -470,7 +470,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
     # Return: Tot Energy, Tot Latency, Energy for Data Transfer, Energy for Active GPU , Latency for Data Transfer
     #layer type determines the actual recomputation time + compute layer time
     # print(f"layer info: layer_type: {layer_type}, gen_len: {gen_len}, load or store: {is_load_store}, recomp_len: {recomp_len}")
-    component_breakdown = (0.0,0.0,0.0,0.0,0.0,0.0,0.0)
+    component_breakdown = [0.0,0.0,0.0,0.0,0.0,0.0,0.0]
     layer_calc_energy, layer_calc_latency, fir_token_after_KV_energy, fir_token_after_KV_latency = layer_calc_pred(opt_config, prompt_len, gen_len, batch_size, hardware_config, gpu_estimator, layer_type, first_token)
     
     if first_token:
