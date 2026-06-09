@@ -373,8 +373,6 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     input_transfer_latency = (num_batches-1)*load_input_transfer_latency + no_load_input_transfer_latency
     load_input_component_breakdown = [x * (num_batches-1) for x in load_input_component_breakdown]
     input_component_breakdown = [sum(elements) for elements in zip(load_input_component_breakdown, no_load_input_component_breakdown)]
-    print(f"load input breakdown: {load_input_component_breakdown}")
-    print(f"no load input breakdown: {no_load_input_component_breakdown}")
 
     # output: store + nothing*(num_batches -1) 
     no_store_output_energy, no_store_output_latency, no_store_output_transfer_energy, no_store_output_active_energy, no_store_output_transfer_latency, no_store_output_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
@@ -477,6 +475,7 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
 
     print(f"lat breakdown: ")
     print(f"input lat: {input_latency}, MLP lat: {tot_MLP_latency}, MHA lat: {tot_MHA_latency}, output lat: {output_latency}")
+    print(f"input comp: {sum(input_component_breakdown)}, MLP comp: {sum(MLP_component_breakdown)}, MHA comp: {sum(MHA_component_breakdown)}, output comp: {sum(output_component_breakdown)}")
     return input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, total_transfer_energy, total_active_energy, total_transfer_latency, total_component_breakdown
 
 
