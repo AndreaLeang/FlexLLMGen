@@ -365,7 +365,7 @@ def single_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, ha
     
     return input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, total_transfer_energy, total_active_energy, total_transfer_latency, component_breakdown
 
-def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, last_token=False):
+def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, break_MHA, last_token=False):
     # input: nothing*(num_batches -1) + load
     load_input_energy, load_input_latency, load_input_transfer_energy, load_input_active_energy, load_input_transfer_latency, load_input_component_breakdown = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
     no_load_input_energy, no_load_input_latency, no_load_input_transfer_energy, no_load_input_active_energy, no_load_input_transfer_latency, no_load_input_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
