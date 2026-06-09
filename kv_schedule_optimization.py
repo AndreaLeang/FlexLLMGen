@@ -138,7 +138,9 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     other_token_transfer_energy = (gen_len - 1) * cur_transfer_energy
     other_token_active_energy = (gen_len - 1) * cur_active_energy
     other_token_transfer_latency = (gen_len - 1) * cur_transfer_latency
+    print(f"other_token_component_breakdown before: {other_token_component_breakdown}")
     other_token_component_breakdown = [x * (gen_len-1) for x in cur_component_breakdown]
+    print(f"other_token_component_breakdown after * (gen_len-1): {other_token_component_breakdown}")
 
     tot_energy = first_token_energy + other_token_energy
     tot_latency = first_token_latency + other_token_latency
