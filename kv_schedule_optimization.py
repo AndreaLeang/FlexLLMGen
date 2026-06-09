@@ -561,7 +561,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional indicator
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config, gpu_estimator)
         first_half_latency = max(pinned_latency, recomp_transfer_latency)
-        if layer_type == "MHA" or not break_MHA:
+        if (layer_type == "MHA") or (not break_MHA):
             if pinned_latency > recomp_transfer_latency:
                 component_breakdown[0] = pinned_latency
             else: 
@@ -575,7 +575,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
             v_transfer_energy, v_transfer_latency = transfer_pred(kv_load_bytes, hardware_config, gpu_estimator, single_directional = False)
         # print(f"load and store second half: latency is max of pinned + layer calc: {pinned_latency  + recomp_calc_latency + layer_calc_latency} and transfer: {k_transfer_latency + v_transfer_latency}")
         second_half_latency = max(pinned_latency + recomp_calc_latency + layer_calc_latency, k_transfer_latency + v_transfer_latency)
-        if layer_type == "MHA" or not break_MHA:
+        if (layer_type == "MHA") or (not break_MHA):
             if pinned_latency + recomp_calc_latency+ layer_calc_latency > k_transfer_latency + v_transfer_latency:
                 component_breakdown[1] = pinned_latency
                 component_breakdown[3] = recomp_calc_latency
