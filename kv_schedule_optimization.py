@@ -371,8 +371,8 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     input_transfer_energy = (num_batches-1)*load_input_transfer_energy + no_load_input_transfer_energy 
     input_active_energy = (num_batches-1)*load_input_active_energy + no_load_input_active_energy 
     input_transfer_latency = (num_batches-1)*load_input_transfer_latency + no_load_input_transfer_latency
-    load_input_component_breakdown = [x * (num_batches-1) for x in load_input_component_breakdown]
-    input_component_breakdown = [sum(elements) for elements in zip(load_input_component_breakdown, no_load_input_component_breakdown)]
+    no_load_input_component_breakdown = [x * (num_batches-1) for x in no_load_input_component_breakdown]
+    input_component_breakdown = [sum(elements) for elements in zip(no_load_input_component_breakdown, load_input_component_breakdown)]
 
     # output: store + nothing*(num_batches -1) 
     no_store_output_energy, no_store_output_latency, no_store_output_transfer_energy, no_store_output_active_energy, no_store_output_transfer_latency, no_store_output_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
