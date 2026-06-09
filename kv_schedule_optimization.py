@@ -218,6 +218,7 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
                 cur_transfer_energy = 0.0
                 cur_active_energy = 0.0
                 cur_transfer_latency = 0.0
+                cur_component_breakdown = [0.0,0.0,0.0,0.0,0.0,0.0,0.0]
             else:
                 input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, cur_transfer_energy, cur_active_energy, cur_transfer_latency, cur_component_breakdown = first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, break_MHA)
         elif num_batches == 1:
