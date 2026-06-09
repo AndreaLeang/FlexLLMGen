@@ -138,10 +138,7 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     other_token_transfer_energy = (gen_len - 1) * cur_transfer_energy
     other_token_active_energy = (gen_len - 1) * cur_active_energy
     other_token_transfer_latency = (gen_len - 1) * cur_transfer_latency
-    print(f"other_token_component_breakdown before: {cur_component_breakdown}")
-    print(f"tot decode latency: {other_token_latency}")
     other_token_component_breakdown = [x * (gen_len-1) for x in cur_component_breakdown]
-    print(f"other_token_component_breakdown after * (gen_len-1): {other_token_component_breakdown}")
 
     tot_energy = first_token_energy + other_token_energy
     tot_latency = first_token_latency + other_token_latency
@@ -273,13 +270,13 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
     percent_latency_transfer = tot_transfer_latency / tot_latency * 100
 
     # Total Time For Each Component 
-    PtP_1 = 0.0
-    PtP_2 = 0.0
-    Recomp_transfer_3 = 0.0
-    Recomp_comp_4 = 0.0
-    Layer_comp_5 = 0.0
-    KV_transfer_6 = 0.0
-    KV_transfer_7 = 0.0
+    # PtP_1 = 0.0
+    # PtP_2 = 0.0
+    # Recomp_transfer_3 = 0.0
+    # Recomp_comp_4 = 0.0
+    # Layer_comp_5 = 0.0
+    # KV_transfer_6 = 0.0
+    # KV_transfer_7 = 0.0
 
     component_breakdown = [element/ (tot_latency - time_to_first_token) * 100 for element in tot_component_breakdown]
 
@@ -460,22 +457,22 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     total_transfer_latency = input_transfer_latency + MHA_transfer_latency + MLP_transfer_latency + output_transfer_latency 
     total_component_breakdown = [sum(elements) for elements in zip(input_component_breakdown, output_component_breakdown, MHA_component_breakdown, MLP_component_breakdown)]
 
-    print(f"energies: ")
-    print(f"input_active_energy: {input_active_energy}, MHA_transfer_energy: {MHA_transfer_energy}")
-    print(f"MLP_transfer_energy: {MLP_transfer_energy}, output_transfer_energy: {output_transfer_energy}")
-    print("output: ")
-    print(f"input_energy: {input_energy}, input_latency: {input_latency}, output_energy: {output_energy}, output_latency: {output_latency}, tot_MHA_energy: {tot_MHA_energy}, tot_MHA_latency: {tot_MHA_latency}, tot_MLP_energy: {tot_MLP_energy}")
-    print(f"tot_MLP_latency: {tot_MLP_latency}, total_transfer_energy: {total_transfer_energy}, total_active_energy: {total_active_energy}, total_transfer_latency: {total_transfer_latency}, total_component_breakdown: {total_component_breakdown}")
-    print(f"all breakdowns: ")
-    print(f"input_component_breakdown: {input_component_breakdown}")
-    print(f"MHA_component_breakdown: {MHA_component_breakdown}")
-    print(f"MLP_component_breakdown: {MLP_component_breakdown}")
-    print(f"output_component_breakdown: {output_component_breakdown}")
-    print(f"total_component_breakdown: {total_component_breakdown}")
+    # print(f"energies: ")
+    # print(f"input_active_energy: {input_active_energy}, MHA_transfer_energy: {MHA_transfer_energy}")
+    # print(f"MLP_transfer_energy: {MLP_transfer_energy}, output_transfer_energy: {output_transfer_energy}")
+    # print("output: ")
+    # print(f"input_energy: {input_energy}, input_latency: {input_latency}, output_energy: {output_energy}, output_latency: {output_latency}, tot_MHA_energy: {tot_MHA_energy}, tot_MHA_latency: {tot_MHA_latency}, tot_MLP_energy: {tot_MLP_energy}")
+    # print(f"tot_MLP_latency: {tot_MLP_latency}, total_transfer_energy: {total_transfer_energy}, total_active_energy: {total_active_energy}, total_transfer_latency: {total_transfer_latency}, total_component_breakdown: {total_component_breakdown}")
+    # print(f"all breakdowns: ")
+    # print(f"input_component_breakdown: {input_component_breakdown}")
+    # print(f"MHA_component_breakdown: {MHA_component_breakdown}")
+    # print(f"MLP_component_breakdown: {MLP_component_breakdown}")
+    # print(f"output_component_breakdown: {output_component_breakdown}")
+    # print(f"total_component_breakdown: {total_component_breakdown}")
 
-    print(f"lat breakdown: ")
-    print(f"input lat: {input_latency}, MLP lat: {tot_MLP_latency}, MHA lat: {tot_MHA_latency}, output lat: {output_latency}")
-    print(f"input comp: {sum(input_component_breakdown)}, MLP comp: {sum(MLP_component_breakdown)}, MHA comp: {sum(MHA_component_breakdown)}, output comp: {sum(output_component_breakdown)}")
+    # print(f"lat breakdown: ")
+    # print(f"input lat: {input_latency}, MLP lat: {tot_MLP_latency}, MHA lat: {tot_MHA_latency}, output lat: {output_latency}")
+    # print(f"input comp: {sum(input_component_breakdown)}, MLP comp: {sum(MLP_component_breakdown)}, MHA comp: {sum(MHA_component_breakdown)}, output comp: {sum(output_component_breakdown)}")
     return input_energy, input_latency, output_energy, output_latency, tot_MHA_energy, tot_MHA_latency, tot_MLP_energy, tot_MLP_latency, total_transfer_energy, total_active_energy, total_transfer_latency, total_component_breakdown
 
 
