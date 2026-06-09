@@ -517,6 +517,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
 
     if layer_type == "MHA" and recomp_len > 0:
         recomp_calc_energy, recomp_calc_latency = recomp_calc_pred(opt_config, batch_size, prompt_len, gen_len, recomp_len, gpu_estimator, hardware_config)
+        recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
         recomp_transfer_energy, recomp_transfer_latency = transfer_pred(recomp_bytes, hardware_config, gpu_estimator)
     else:
         recomp_calc_energy = 0.0
@@ -543,9 +544,6 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         active_energy = recomp_calc_energy+layer_calc_energy+transfer_energy
         return tot_energy, tot_latency, transfer_energy, active_energy, transfer_latency, component_breakdown
     else:
-        recomp_bytes, kv_load_bytes = get_bytes_to_load(opt_config, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len)
-        # print(f"recomp_bytes: {recomp_bytes}, kv_load_bytes: {kv_load_bytes}")
-        
         #recomp transfer & first kv load are always single directional. the second kv load uses single_directional indicator
         pinned_energy, pinned_latency = pinned_pred(kv_load_bytes, hardware_config, gpu_estimator)
         first_half_latency = max(pinned_latency, recomp_transfer_latency)
