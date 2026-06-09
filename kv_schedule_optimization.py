@@ -162,13 +162,13 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     percent_latency_transfer = tot_transfer_latency / tot_latency * 100
 
     # Total Time For Each Component 
-    PtP_1 = 0.0
-    PtP_2 = 0.0
-    Recomp_transfer_3 = 0.0
-    Recomp_comp_4 = 0.0
-    Layer_comp_5 = 0.0
-    KV_transfer_6 = 0.0
-    KV_transfer_7 = 0.0
+    # PtP_1 = 0.0
+    # PtP_2 = 0.0
+    # Recomp_transfer_3 = 0.0
+    # Recomp_comp_4 = 0.0
+    # Layer_comp_5 = 0.0
+    # KV_transfer_6 = 0.0
+    # KV_transfer_7 = 0.0
     if break_MHA:
         component_breakdown = [element/ sum(other_token_component_breakdown) * 100 for element in other_token_component_breakdown]
     else:
@@ -475,12 +475,12 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     # print("output: ")
     # print(f"input_energy: {input_energy}, input_latency: {input_latency}, output_energy: {output_energy}, output_latency: {output_latency}, tot_MHA_energy: {tot_MHA_energy}, tot_MHA_latency: {tot_MHA_latency}, tot_MLP_energy: {tot_MLP_energy}")
     # print(f"tot_MLP_latency: {tot_MLP_latency}, total_transfer_energy: {total_transfer_energy}, total_active_energy: {total_active_energy}, total_transfer_latency: {total_transfer_latency}, total_component_breakdown: {total_component_breakdown}")
-    # print(f"all breakdowns: ")
-    # print(f"input_component_breakdown: {input_component_breakdown}")
-    # print(f"MHA_component_breakdown: {MHA_component_breakdown}")
-    # print(f"MLP_component_breakdown: {MLP_component_breakdown}")
-    # print(f"output_component_breakdown: {output_component_breakdown}")
-    # print(f"total_component_breakdown: {total_component_breakdown}")
+    print(f"all breakdowns: ")
+    print(f"input_component_breakdown: {input_component_breakdown}")
+    print(f"MHA_component_breakdown: {MHA_component_breakdown}")
+    print(f"MLP_component_breakdown: {MLP_component_breakdown}")
+    print(f"output_component_breakdown: {output_component_breakdown}")
+    print(f"total_component_breakdown: {total_component_breakdown}")
 
     # print(f"lat breakdown: ")
     # print(f"input lat: {input_latency}, MLP lat: {tot_MLP_latency}, MHA lat: {tot_MHA_latency}, output lat: {output_latency}")
