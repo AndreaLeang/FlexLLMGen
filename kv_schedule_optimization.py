@@ -291,19 +291,19 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
 
 
 def first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers):
-    
-    input_energy, input_latency, input_transfer_energy, input_active_energy, input_transfer_latency, input_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input", True)
-    output_energy, output_latency, output_transfer_energy, output_active_energy, output_transfer_latency, output_component_breakdown  = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output", True)
+    break_MHA = False
+    input_energy, input_latency, input_transfer_energy, input_active_energy, input_transfer_latency, input_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "input", True)
+    output_energy, output_latency, output_transfer_energy, output_active_energy, output_transfer_latency, output_component_breakdown  = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "output", True)
   
     # MHA: compute, MLP: load + store unless last layer. then just store
-    tot_MHA_energy, tot_MHA_latency, MHA_transfer_energy, MHA_active_energy, MHA_transfer_latency, MHA_component_breakdown  =layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA", True)
+    tot_MHA_energy, tot_MHA_latency, MHA_transfer_energy, MHA_active_energy, MHA_transfer_latency, MHA_component_breakdown  =layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "MHA", True)
     # print(f"Single MHA latency: {tot_MHA_latency}")
     tot_MHA_energy *= num_hidden_layers
     tot_MHA_latency *= num_hidden_layers
     MHA_transfer_energy *= num_hidden_layers
     MHA_active_energy *= num_hidden_layers
 
-    tot_MLP_energy, tot_MLP_latency, MLP_transfer_energy, MLP_active_energy, MLP_transfer_latency, MLP_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP", True)
+    tot_MLP_energy, tot_MLP_latency, MLP_transfer_energy, MLP_active_energy, MLP_transfer_latency, MLP_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "MLP", True)
     # print(f"Single MLP latency: {tot_MLP_latency}")
     tot_MLP_energy *= num_hidden_layers
     tot_MLP_latency *= num_hidden_layers
@@ -320,16 +320,16 @@ def first_token_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
 
 def single_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, break_MHA, last_token=False):
     # input: nothing*(num_batches -1) + load
-    input_energy, input_latency, input_transfer_energy, input_active_energy, input_transfer_latency, input_component_breakdown = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
+    input_energy, input_latency, input_transfer_energy, input_active_energy, input_transfer_latency, input_component_breakdown = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "input")
 
     #output
     if last_token:
-        output_energy, output_latency, output_transfer_energy, output_active_energy, output_transfer_latency, output_component_breakdown  = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
+        output_energy, output_latency, output_transfer_energy, output_active_energy, output_transfer_latency, output_component_breakdown  = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "output")
     else: 
-        output_energy, output_latency, output_transfer_energy, output_active_energy, output_transfer_latency, output_component_breakdown  = layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
+        output_energy, output_latency, output_transfer_energy, output_active_energy, output_transfer_latency, output_component_breakdown  = layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "output")
   
     # MHA: compute, MLP: load + store unless last layer. then just store
-    tot_MHA_energy, tot_MHA_latency, MHA_transfer_energy, MHA_active_energy, MHA_transfer_latency, MHA_component_breakdown  =layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
+    tot_MHA_energy, tot_MHA_latency, MHA_transfer_energy, MHA_active_energy, MHA_transfer_latency, MHA_component_breakdown  =layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "MHA")
     tot_MHA_energy *= num_hidden_layers
     tot_MHA_latency *= num_hidden_layers
     MHA_transfer_energy *= num_hidden_layers
@@ -341,7 +341,7 @@ def single_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, ha
     will_load = 3
     if last_token:
         will_load = 1 # no storing for last pass
-    tot_MLP_energy, tot_MLP_latency, MLP_transfer_energy, MLP_active_energy, MLP_transfer_latency, MLP_component_breakdown = layer_prediction(model, will_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+    tot_MLP_energy, tot_MLP_latency, MLP_transfer_energy, MLP_active_energy, MLP_transfer_latency, MLP_component_breakdown = layer_prediction(model, will_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "MLP")
     tot_MLP_energy *= (num_hidden_layers-1)
     tot_MLP_latency *= (num_hidden_layers-1)
     MLP_transfer_energy *= (num_hidden_layers-1)
@@ -367,8 +367,8 @@ def single_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, ha
 
 def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, hardware_config, recomp_len, offload_percent, batch_size, num_batches, gpu_estimator, num_hidden_layers, break_MHA, last_token=False):
     # input: nothing*(num_batches -1) + load
-    load_input_energy, load_input_latency, load_input_transfer_energy, load_input_active_energy, load_input_transfer_latency, load_input_component_breakdown = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
-    no_load_input_energy, no_load_input_latency, no_load_input_transfer_energy, no_load_input_active_energy, no_load_input_transfer_latency, no_load_input_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "input")
+    load_input_energy, load_input_latency, load_input_transfer_energy, load_input_active_energy, load_input_transfer_latency, load_input_component_breakdown = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "input")
+    no_load_input_energy, no_load_input_latency, no_load_input_transfer_energy, no_load_input_active_energy, no_load_input_transfer_latency, no_load_input_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "input")
     # print(f"load input: {load_input_latency}")
     # print(f"no load input: {no_load_input_latency}")
     input_energy = (num_batches-1)*no_load_input_energy + load_input_energy 
@@ -380,7 +380,7 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     input_component_breakdown = [sum(elements) for elements in zip(no_load_input_component_breakdown, load_input_component_breakdown)]
 
     # output: store + nothing*(num_batches -1) 
-    no_store_output_energy, no_store_output_latency, no_store_output_transfer_energy, no_store_output_active_energy, no_store_output_transfer_latency, no_store_output_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
+    no_store_output_energy, no_store_output_latency, no_store_output_transfer_energy, no_store_output_active_energy, no_store_output_transfer_latency, no_store_output_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "output")
     default_output_energy = (num_batches-1)*no_store_output_energy
     default_output_latency = (num_batches-1)*no_store_output_latency
     default_output_transfer_energy = (num_batches-1)*no_store_output_transfer_energy
@@ -396,7 +396,7 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
         output_transfer_latency = default_output_transfer_latency + no_store_output_transfer_latency
         output_component_breakdown = default_output_component_breakdown + no_store_output_component_breakdown
     else: 
-        store_output_energy, store_output_latency, store_output_transfer_energy, store_output_active_energy, store_output_transfer_latency, store_output_component_breakdown =  layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "output")
+        store_output_energy, store_output_latency, store_output_transfer_energy, store_output_active_energy, store_output_transfer_latency, store_output_component_breakdown =  layer_prediction(model, 2, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "output")
         output_energy = default_output_energy + store_output_energy
         output_latency = default_output_latency + store_output_latency
         output_transfer_energy = default_output_transfer_energy + store_output_transfer_energy
@@ -410,9 +410,9 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     if last_token:
         will_store = 0 # no storing for last forward pass
         bi_load = 1
-    single_load_MHA_energy, single_load_MHA_latency, single_load_MHA_transfer_energy, single_load_MHA_active_energy, single_load_MHA_transfer_latency, single_load_MHA_component_breakdown = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
-    single_store_MHA_energy, single_store_MHA_latency, single_store_MHA_transfer_energy, single_store_MHA_active_energy, single_store_MHA_transfer_latency, single_store_MHA_component_breakdown = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA") 
-    bi_dir_MHA_energy, bi_dir_MHA_latency, bi_dir_MHA_transfer_energy, bi_dir_MHA_active_energy, bi_dir_MHA_transfer_latency, bi_dir_MHA_component_breakdown = layer_prediction(model, bi_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MHA")
+    single_load_MHA_energy, single_load_MHA_latency, single_load_MHA_transfer_energy, single_load_MHA_active_energy, single_load_MHA_transfer_latency, single_load_MHA_component_breakdown = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "MHA") 
+    single_store_MHA_energy, single_store_MHA_latency, single_store_MHA_transfer_energy, single_store_MHA_active_energy, single_store_MHA_transfer_latency, single_store_MHA_component_breakdown = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "MHA") 
+    bi_dir_MHA_energy, bi_dir_MHA_latency, bi_dir_MHA_transfer_energy, bi_dir_MHA_active_energy, bi_dir_MHA_transfer_latency, bi_dir_MHA_component_breakdown = layer_prediction(model, bi_load, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "MHA")
 
     tot_MHA_energy = single_load_MHA_energy + (num_batches-2)*bi_dir_MHA_energy + single_store_MHA_energy
     tot_MHA_latency = single_load_MHA_latency + (num_batches-2)*bi_dir_MHA_latency + single_store_MHA_latency
@@ -433,9 +433,9 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
         MHA_component_breakdown = [x * (num_batches-2) * (num_hidden_layers) for x in bi_dir_MHA_component_breakdown]
   
 
-    single_store_energy, single_store_MLP_latency, single_store_MLP_transfer_energy, single_store_MLP_active_energy, single_store_MLP_transfer_latency, single_store_MLP_component_breakdown = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
-    single_load_MLP_energy, single_load_MLP_latency, single_load_MLP_transfer_energy, single_load_MLP_active_energy, single_load_MLP_transfer_latency, single_load_MLP_component_breakdown = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP") 
-    nothing_MLP_energy, nothing_MLP_latency, nothing_MLP_transfer_energy, nothing_MLP_active_energy, nothing_MLP_transfer_latency, nothing_MLP_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, "MLP")
+    single_store_energy, single_store_MLP_latency, single_store_MLP_transfer_energy, single_store_MLP_active_energy, single_store_MLP_transfer_latency, single_store_MLP_component_breakdown = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator,break_MHA,  "MLP") 
+    single_load_MLP_energy, single_load_MLP_latency, single_load_MLP_transfer_energy, single_load_MLP_active_energy, single_load_MLP_transfer_latency, single_load_MLP_component_breakdown = layer_prediction(model, 1, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "MLP") 
+    nothing_MLP_energy, nothing_MLP_latency, nothing_MLP_transfer_energy, nothing_MLP_active_energy, nothing_MLP_transfer_latency, nothing_MLP_component_breakdown = layer_prediction(model, 0, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator, break_MHA, "MLP")
 
     tot_MLP_energy = single_store_energy + (num_batches-2)*nothing_MLP_energy + single_load_MLP_energy
     tot_MLP_latency = single_store_MLP_latency + (num_batches-2)*nothing_MLP_latency + single_load_MLP_latency
@@ -507,7 +507,7 @@ def get_bytes_to_store(batch_size, prompt_len=0, recomp_len=0, first_token=False
     return kv_store_bytes
 
 
-def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, layer_type="MHA", first_token=False):
+def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, hardware_config, gpu_estimator, break_MHA=False, layer_type="MHA", first_token=False):
     # Return: Tot Energy, Tot Latency, Energy for Data Transfer, Energy for Active GPU , Latency for Data Transfer
     #layer type determines the actual recomputation time + compute layer time
     # print(f"layer info: layer_type: {layer_type}, gen_len: {gen_len}, load or store: {is_load_store}, recomp_len: {recomp_len}")
@@ -542,15 +542,17 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         energy_transfer = 0.0
         energy_active = layer_calc_energy
         latency_transfer = 0.0
-        component_breakdown[4] = layer_calc_latency.item()
+        if not break_MHA:
+            component_breakdown[4] = layer_calc_latency.item()
         return layer_calc_energy, layer_calc_latency, energy_transfer, energy_active, latency_transfer, component_breakdown
     elif is_load_store == 2:
         # store only --> single directional
         transfer_energy, transfer_latency = transfer_pred(get_bytes_to_store(batch_size), hardware_config, gpu_estimator)
-        component_breakdown[2] = recomp_transfer_latency
-        if recomp_calc_latency+layer_calc_latency > transfer_latency:
-            component_breakdown[3] = recomp_calc_latency
-            component_breakdown[4] = layer_calc_latency.item()
+        if not break_MHA:
+            component_breakdown[2] = recomp_transfer_latency
+            if recomp_calc_latency+layer_calc_latency > transfer_latency:
+                component_breakdown[3] = recomp_calc_latency
+                component_breakdown[4] = layer_calc_latency.item()
         tot_latency = recomp_transfer_latency+max(recomp_calc_latency+layer_calc_latency, transfer_latency)
         tot_energy = recomp_transfer_energy+recomp_calc_energy+layer_calc_energy+transfer_energy
         active_energy = recomp_calc_energy+layer_calc_energy+transfer_energy
