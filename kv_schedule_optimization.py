@@ -460,7 +460,7 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     total_transfer_energy = input_transfer_energy + MHA_transfer_energy + MLP_transfer_energy + output_transfer_energy
     total_active_energy = input_active_energy + MHA_active_energy + MLP_active_energy + output_active_energy
     total_transfer_latency = input_transfer_latency + MHA_transfer_latency + MLP_transfer_latency + output_transfer_latency 
-    total_component_breakdown = input_component_breakdown + MHA_component_breakdown + MLP_component_breakdown + output_component_breakdown
+    total_component_breakdown = [sum(elements) for elements in zip(input_component_breakdown, output_component_breakdown, MHA_component_breakdown, MLP_component_breakdown)]
 
     print(f"energies: ")
     print(f"input_active_energy: {input_active_energy}, MHA_transfer_energy: {MHA_transfer_energy}")
@@ -473,6 +473,7 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     print(f"MHA_component_breakdown: {MHA_component_breakdown}")
     print(f"MLP_component_breakdown: {MLP_component_breakdown}")
     print(f"output_component_breakdown: {output_component_breakdown}")
+    print(f"total_component_breakdown: {total_component_breakdown}")
 
     print(f"lat breakdown: ")
     print(f"input lat: {input_latency}, MLP lat: {tot_MLP_latency}, MHA lat: {tot_MHA_latency}, output lat: {output_latency}")
