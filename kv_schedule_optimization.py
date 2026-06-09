@@ -542,7 +542,10 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         latency_transfer = 0.0
         if (not break_MHA) or (batch_size == 16): # single block --> MHA only when no load or store
             component_breakdown[3] = recomp_calc_latency
-            component_breakdown[4] = layer_calc_latency.item()
+            if isinstance(layer_calc_latency, np.floating):
+                component_breakdown[4] = layer_calc_latency.item()
+            else:
+                component_breakdown[4] = layer_calc_latency
         return recomp_calc_energy+layer_calc_energy, recomp_calc_latency + layer_calc_latency, energy_transfer, energy_active, latency_transfer, component_breakdown
     elif is_load_store == 2:
         # store only --> single directional
@@ -551,7 +554,10 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
             component_breakdown[2] = recomp_transfer_latency
             if recomp_calc_latency+layer_calc_latency > transfer_latency:
                 component_breakdown[3] = recomp_calc_latency
-                component_breakdown[4] = layer_calc_latency.item()
+                if isinstance(layer_calc_latency, np.floating):
+                    component_breakdown[4] = layer_calc_latency.item()
+                else:
+                    component_breakdown[4] = layer_calc_latency
         tot_latency = recomp_transfer_latency+max(recomp_calc_latency+layer_calc_latency, transfer_latency)
         tot_energy = recomp_transfer_energy+recomp_calc_energy+layer_calc_energy+transfer_energy
         active_energy = recomp_calc_energy+layer_calc_energy+transfer_energy
@@ -578,7 +584,10 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
             if pinned_latency + recomp_calc_latency+ layer_calc_latency > k_transfer_latency + v_transfer_latency:
                 component_breakdown[1] = pinned_latency
                 component_breakdown[3] = recomp_calc_latency
-                component_breakdown[4] = layer_calc_latency.item()
+                if isinstance(layer_calc_latency, np.floating):
+                    component_breakdown[4] = layer_calc_latency.item()
+                else:
+                    component_breakdown[4] = layer_calc_latency
             else: 
                 component_breakdown[5] = k_transfer_latency
                 component_breakdown[6] = v_transfer_latency
