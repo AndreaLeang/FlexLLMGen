@@ -336,7 +336,6 @@ def single_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, ha
     MHA_active_energy *= num_hidden_layers
     MHA_transfer_latency *= num_hidden_layers
     MHA_component_breakdown = [x * (num_hidden_layers) for x in MHA_component_breakdown]
-    
   
     will_load = 3
     if last_token:
@@ -429,8 +428,6 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
     MHA_active_energy *= num_hidden_layers  
     MHA_transfer_latency *= num_hidden_layers  
     MHA_component_breakdown = [x * (num_hidden_layers) for x in MHA_component_breakdown]
-    if break_MHA:
-        MHA_component_breakdown = [x * (num_batches-2) * (num_hidden_layers) for x in bi_dir_MHA_component_breakdown]
   
 
     single_store_energy, single_store_MLP_latency, single_store_MLP_transfer_energy, single_store_MLP_active_energy, single_store_MLP_transfer_latency, single_store_MLP_component_breakdown = layer_prediction(model, will_store, batch_size, num_batches, offload_percent, recomp_len, prompt_len, cur_gen_len, hardware_config, gpu_estimator,break_MHA,  "MLP") 
@@ -540,11 +537,12 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
     if is_load_store == 0:
         #no load or store, just the layer computations
         energy_transfer = 0.0
-        energy_active = layer_calc_energy
+        energy_active = recomp_calc_energy + layer_calc_energy
         latency_transfer = 0.0
-        if not break_MHA:
+        if (not break_MHA) or (batch_size == 16): # single block --> MHA only when no load or store
+            component_breakdown[3] = recomp_calc_latency
             component_breakdown[4] = layer_calc_latency.item()
-        return layer_calc_energy, layer_calc_latency, energy_transfer, energy_active, latency_transfer, component_breakdown
+        return recomp_calc_energy+layer_calc_energy, recomp_calc_latency + layer_calc_latency, energy_transfer, energy_active, latency_transfer, component_breakdown
     elif is_load_store == 2:
         # store only --> single directional
         transfer_energy, transfer_latency = transfer_pred(get_bytes_to_store(batch_size), hardware_config, gpu_estimator)
