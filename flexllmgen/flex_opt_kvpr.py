@@ -725,8 +725,8 @@ class MLP:
 
 
 class TransformerLayer:
-    def __init__(self, config, env, policy, i):
-        self.attention = SelfAttention(config, env, policy, i)
+    def __init__(self, config, env, policy, i, recompute_len, cpu_gpu_compute):
+        self.attention = SelfAttention(config, env, policy, i, recompute_len, cpu_gpu_compute)
         self.mlp = MLP(config, env, policy, i)
         self.policy = policy
         self.compute = self.attention.compute
@@ -773,7 +773,7 @@ class TransformerLayer:
 
         self.attention.forward(hidden, cache_read_buf, read_buf1, attention_mask,
                                cache_write_buf, i, k, hidden_compute, cpu_cache_read_buf)
-        self.mlp.forward(hidden, None, read_buf2, attention_mask, None, i, k)
+        self.mlp.forward(hidden, None, read_buf2, attention_mask, None, i, k, hidden_compute, cpu_cache_read_buf)
 
 
 class OptLM:
@@ -801,7 +801,7 @@ class OptLM:
                 layers.append(SelfAttention(self.config, self.env, self.policy, i, self.recompute_len, self.cpu_gpu_compute))
                 layers.append(MLP(self.config, self.env, self.policy, i))
             else:
-                layers.append(TransformerLayer(self.config, self.env, self.policy, i))
+                layers.append(TransformerLayer(self.config, self.env, self.policy, i, self.recompute_len, self.cpu_gpu_compute))
         layers.append(OutputEmbed(self.config, self.env, self.policy))
         self.layers = layers
         self.num_layers = len(layers)
@@ -1724,7 +1724,8 @@ def run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len,
                 debug_mode=args.debug_mode, cut_gen_len=cut_gen_len, verbose=args.verbose)
         
         costs = timers("generate").costs
-        filename = get_filename(args) + ".json"
+        filename = args.save_to + "/" + get_filename(args) + ".json"
+        print(filename)
         prof.export_chrome_trace(filename)
         
     finally:
@@ -1770,7 +1771,7 @@ def add_parser_arguments(parser):
     parser.add_argument("--compress-cache", action="store_true",
         help="Whether to compress cache.")
 
-
+    parser.add_argument("--save-to", type=str, default='./')
     parser.add_argument("--log-file", type=str, default="auto")
     parser.add_argument("--no-log", action="store_true")
     parser.add_argument("--verbose", type=int, default=2)
@@ -1821,6 +1822,9 @@ if __name__ == "__main__":
     add_parser_arguments(parser)
 
     args = parser.parse_args()
+
+    if not os.path.exists(args.save_to):
+        os.makedirs(args.save_to, exist_ok=True)
 
     assert len(args.percent) == 6, "need 6 arguments in percent"
     print("got args")

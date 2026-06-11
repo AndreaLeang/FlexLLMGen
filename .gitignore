@@ -33,3 +33,9 @@ flexllmgen/apps/data_wrangle/core
 
 # tmp scripts
 today_job.sh
+
+# test files and traces
+traces/
+*.csv
+*.png
+*.json

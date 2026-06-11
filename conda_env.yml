@@ -1,0 +1,23 @@
+name: flexgen_env
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - numpy
+      - pandas
+      - pynvml
+      - pyyaml
+      - scipy
+      - torch==2.7.1
+      - torchaudio
+      - torchvision
+      - torchlens
+      - pulp
+      - nvidia-ml-py
+      - psutil
+      - transformers
+      - sniffio
+      - matplotlib
+      - scikit-learn
+      - cvxpy
+      - opt_einsum

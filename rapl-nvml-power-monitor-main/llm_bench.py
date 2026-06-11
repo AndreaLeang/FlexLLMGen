@@ -13,7 +13,7 @@ fast phases (tokenize, detokenize) accumulate enough samples.
 
 import time, json
 import sys
-sys.path.append( '/home/akleang/akleang/FlexLLMGen/') # to be able to find felxllmgen
+sys.path.append( '/home/kyungmi/FlexLLMGen/') # to be able to find felxllmgen
 from dataclasses import dataclass, field, asdict
 from typing import List, Dict, Optional
 

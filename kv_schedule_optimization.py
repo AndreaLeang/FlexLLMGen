@@ -16,7 +16,7 @@ from flexllmgen.opt_config import get_opt_config
 # from flexllmgen.flex_opt import Policy
 from flexllmgen.utils import GB, T
 
-sys.path.append( '/home/akleang/akleang/energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
+sys.path.append( '/home/kyungmi/energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
 from gee.gee_utils import get_gee
 
 alpha_g = 0.8
@@ -58,9 +58,9 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_p
     batch_size_to_distinct_offloadings = {
         1:[0, 100],
         2:[0, 50, 100],
-        4:[0, 20, 50, 70, 100],
-        8:[0, 10, 20, 30, 50, 60, 70, 80, 100],
-        16:[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100],
+        4:[0, 25, 50, 75, 100],
+        8:[i * (1./8.) for i in range(0, 9)],
+        16:[i * (1./16.) for i in range(0, 17)],
     }
 
     feasible_strategies = {}
@@ -1274,12 +1274,12 @@ if __name__ == "__main__":
 
     #TODO: specify hardware config
     print("currently getting gpu estimator")
-    gpu_estimator = get_gee(gpu_yaml_path="/home/akleang/akleang/energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
-                        lut_yaml_path="/home/akleang/akleang/energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
+    gpu_estimator = get_gee(gpu_yaml_path="/home/kyungmi/energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
+                        lut_yaml_path="/home/kyungmi/energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
                         dvfs_aware=True, dvfs_inference_mode='all', 
-                        dvfs_supply_voltage_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
-                        dvfs_idle_power_json="/home/akleang/akleang/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
-                        lut_folder_abs_path="/home/akleang/akleang/energaizer-ispass26-artifact/database/data")
+                        dvfs_supply_voltage_json="/home/kyungmi/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
+                        dvfs_idle_power_json="/home/kyungmi/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
+                        lut_folder_abs_path="/home/kyungmi/energaizer-ispass26-artifact/database/data")
     if args.s:
         single_strat_pred(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.gbs, args.off_per, args.recomp_len, args.fast, gpu_estimator, args.d, args.break_MHA ,var_to_min = args.var_to_min)
     else: 
