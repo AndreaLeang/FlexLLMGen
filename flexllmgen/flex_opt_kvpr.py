@@ -759,7 +759,7 @@ class TransformerLayer:
         self.attention.load_cache(cache_home, cache_read_buf, i, cpu_cache_read_buf, KVLoadTimer=KVLoadTimer)
 
     def load_hidden_compute(self, hidden_compute_home, hidden_compute_read_buf, i):
-        pass
+        self.attention.load_hidden_compute(hidden_compute_home, hidden_compute_read_buf, i)
 
     def store_cache(self, cache_home, cache_write_buf, i, KVStoreTimer=None):
         self.attention.store_cache(cache_home, cache_write_buf, i, KVStoreTimer=KVStoreTimer)
