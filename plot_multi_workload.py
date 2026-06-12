@@ -158,22 +158,34 @@ def build_segments_nosep(row):
 # Folder scanning
 # ---------------------------------------------------------------------------
 
-SUBDIR_PATTERN = re.compile(
-    r"^prompt_(\d+)(?:_bs(\d+))?$", re.IGNORECASE
-)
+# Base pattern: prompt_{N} followed by any combination of _bs{B} and _recompute_{R}
+# in any order (e.g. prompt_2048_bs4_recompute_512 or prompt_2048_recompute_512_bs4)
+SUBDIR_PATTERN  = re.compile(r"^prompt_(\d+)((?:_(?:bs\d+|recompute_\d+))*)$", re.IGNORECASE)
+BS_PATTERN      = re.compile(r"_bs(\d+)", re.IGNORECASE)
+RECOMPUTE_PATTERN = re.compile(r"_recompute_(\d+)", re.IGNORECASE)
 
 
 def parse_subdir(name):
     """
-    Parse a subdir name like 'prompt_2048' or 'prompt_2048_bs4'.
-    Returns (prompt_length, batch_size) or None if no match.
+    Parse a subdir name such as:
+        prompt_2048
+        prompt_2048_bs4
+        prompt_2048_recompute_512
+        prompt_2048_bs4_recompute_512
+        prompt_2048_recompute_512_bs4
+    Returns (prompt_length, batch_size, recompute_length) or None if no match.
+    recompute_length is None when not present; batch_size defaults to 1.
     """
     m = SUBDIR_PATTERN.match(name)
     if not m:
         return None
     prompt_len = int(m.group(1))
-    batch_size = int(m.group(2)) if m.group(2) else 1
-    return prompt_len, batch_size
+    rest = m.group(2)
+    bs_m = BS_PATTERN.search(rest)
+    rc_m = RECOMPUTE_PATTERN.search(rest)
+    batch_size = int(bs_m.group(1)) if bs_m else 1
+    recompute  = int(rc_m.group(1)) if rc_m else None
+    return prompt_len, batch_size, recompute
 
 
 def find_summary_csv(subdir: Path):
@@ -192,11 +204,26 @@ def load_first_row(csv_path: Path):
     return None, []
 
 
+def make_label(prompt_len, batch_size, recompute):
+    """
+    Build a multi-line x-tick label showing all non-default dimensions.
+      prompt length always shown as p{N}
+      batch size shown as bs{B} only if > 1
+      recompute shown as rc{R} only if present
+    """
+    parts = [f"p{prompt_len}"]
+    if batch_size != 1:
+        parts.append(f"bs{batch_size}")
+    if recompute is not None:
+        parts.append(f"rc{recompute}")
+    return "\n".join(parts)
+
+
 def scan_folder(folder: Path):
     """
     Scan folder for prompt_* subdirs, return list of:
-      (label, prompt_len, batch_size, row, cols, nosep)
-    sorted by (prompt_len, batch_size).
+      (label, prompt_len, batch_size, recompute, row, cols, nosep)
+    sorted by (prompt_len, batch_size, recompute).
     """
     entries = []
     for subdir in sorted(folder.iterdir()):
@@ -206,7 +233,7 @@ def scan_folder(folder: Path):
         if parsed is None:
             print(f"  Skipping '{subdir.name}' (no match)", file=sys.stderr)
             continue
-        prompt_len, batch_size = parsed
+        prompt_len, batch_size, recompute = parsed
         csv_path = find_summary_csv(subdir)
         if csv_path is None:
             print(f"  No *_summary.csv in '{subdir.name}', skipping", file=sys.stderr)
@@ -216,13 +243,14 @@ def scan_folder(folder: Path):
             print(f"  Empty CSV in '{subdir.name}', skipping", file=sys.stderr)
             continue
         nosep = detect_nosep(cols)
-        # Build x-axis label
-        label = f"p{prompt_len}" if batch_size == 1 else f"p{prompt_len}\nbs{batch_size}"
-        entries.append((label, prompt_len, batch_size, row, cols, nosep))
-        print(f"  '{subdir.name}' -> {'nosep' if nosep else 'sep'}  csv={csv_path.name}",
+        label = make_label(prompt_len, batch_size, recompute)
+        entries.append((label, prompt_len, batch_size, recompute, row, cols, nosep))
+        rc_str = f"  recompute={recompute}" if recompute is not None else ""
+        print(f"  '{subdir.name}' -> {'nosep' if nosep else 'sep'}{rc_str}  csv={csv_path.name}",
               file=sys.stderr)
 
-    entries.sort(key=lambda e: (e[1], e[2]))  # sort by (prompt_len, batch_size)
+    # Sort by (prompt_len, batch_size, recompute) — None sorts before any int
+    entries.sort(key=lambda e: (e[1], e[2], e[3] if e[3] is not None else -1))
     return entries
 
 
@@ -244,7 +272,7 @@ def plot(folder, out_path=None, dpi=150, show=False):
         sys.exit(1)
 
     # Check if all entries are same mode; warn if mixed
-    modes = set(e[5] for e in entries)
+    modes = set(e[6] for e in entries)
     if len(modes) > 1:
         print("Warning: mixed sep and nosep subdirectories — using per-entry mode.",
               file=sys.stderr)
@@ -252,7 +280,7 @@ def plot(folder, out_path=None, dpi=150, show=False):
     # Build segments per entry
     labels   = []
     all_segs = []
-    for label, _, _, row, cols, nosep in entries:
+    for label, _, _, _, row, cols, nosep in entries:
         labels.append(label)
         if nosep:
             all_segs.append(build_segments_nosep(row))
@@ -260,7 +288,7 @@ def plot(folder, out_path=None, dpi=150, show=False):
             all_segs.append(build_segments_sep(row))
 
     # Legend order: use nosep order if any nosep, else sep
-    any_nosep = any(e[5] for e in entries)
+    any_nosep = any(e[6] for e in entries)
     legend_order = NOSEP_LEGEND_ORDER if any_nosep else SEP_LEGEND_ORDER
     # If mixed, include both orders (deduped)
     if len(modes) > 1:
@@ -329,7 +357,7 @@ def plot(folder, out_path=None, dpi=150, show=False):
         plt.show()
 
     # Sanity check
-    for (label, _, _, row, cols, nosep), segs in zip(entries, all_segs):
+    for (label, _, _, _, row, cols, nosep), segs in zip(entries, all_segs):
         seg_total = sum(segs.values())
         if nosep:
             ref = fv(row, "sum-all")
