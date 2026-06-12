@@ -2,20 +2,21 @@
 """
 Torch profile trace analyzer for FlexLLMGen / flex_opt_kvpr traces.
 
-Each output row is a supergroup = consecutive mha_gen -> mlp pair from decode.
-Supergroup 0 (warm-up) and all prefill groups (token 0) are skipped.
+Two modes:
 
-mha_gen compute CUDA ops are tagged by origin via cpu_op attribution:
-  - "mha_gen"     : cpu_op dispatching the kernel falls within mha_gen's Python window
-  - "fwd_pre_mha" : cpu_op falls within forward() but before mha_gen
-  - "no_cpu_op"   : no cuda_runtime record (cutlass cudaLaunchKernelEx path);
-                    these are classified fwd_pre_mha based on GPU execution time
-                    (they execute before mha_gen starts)
-Both are included in the CSV as mha-gen-compute-cuda-N, with a separate
-mha-gen-compute-cuda-N-origin column recording the tag.
+--sep (default):
+  Each output row is a supergroup = consecutive mha_gen -> mlp pair from decode.
+  Supergroup 0 (warm-up) and all prefill groups (token 0) are skipped.
+  mha_gen compute CUDA ops tagged 'mha_gen' or 'fwd_pre_mha' by cpu_op attribution.
+
+--nosep:
+  Each output row is a single nosep group from decode (token >= 1).
+  Group 0 (warm-up) is skipped.
+  compute_layer contains both mha_gen and mlp in one forward pass.
+  CUDA ops tagged: 'fwd_pre' (before mha_gen in forward), 'mha_gen', or 'mlp'.
 
 Usage:
-    python analyze_trace.py <trace.json> [--max-groups N] [--out output.csv]
+    python analyze_trace.py <trace.json> [--max-groups N] [--out output.csv] [--nosep]
 
 All durations in microseconds (us).
 """
@@ -69,7 +70,7 @@ def detect_main_tid(events):
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Common helpers
 # ---------------------------------------------------------------------------
 
 OP8_NAMES = {
@@ -83,7 +84,93 @@ def is_op8(event):
     return any(op in event.get("name", "") for op in OP8_NAMES)
 
 
-def get_compute_layer_type(cl_event, parent_to_children):
+def get_cuda_rt_in_window(events, ts_start, ts_end, main_tid):
+    return [
+        e for e in events
+        if e.get("cat") == "cuda_runtime"
+        and e.get("tid") == main_tid
+        and ts_start <= e["ts"] <= ts_end
+    ]
+
+
+def get_gpu_events_in_window(events, ts_start, ts_end, main_tid, corr_to_gpu,
+                              filter_names=None):
+    results = []
+    for cr in get_cuda_rt_in_window(events, ts_start, ts_end, main_tid):
+        if filter_names and cr.get("name") not in filter_names:
+            continue
+        corr = cr.get("args", {}).get("correlation")
+        if corr is None:
+            continue
+        gpu_ev = corr_to_gpu.get(corr)
+        if gpu_ev is not None:
+            results.append(gpu_ev)
+    return results
+
+
+def get_gpu_events_via_cpu_chain(events, pyfn_event, cl_ts_s, cl_ts_e,
+                                  main_tid, corr_to_gpu, ext_id_to_cpu_ops,
+                                  exclude_cats=None):
+    """GPU events whose originating cpu_op falls within pyfn_event's window."""
+    exclude_cats = exclude_cats or set()
+    pyfn_ts_s = pyfn_event["ts"]
+    pyfn_ts_e = pyfn_ts_s + pyfn_event["dur"]
+    results = []
+    for cr in get_cuda_rt_in_window(events, cl_ts_s, cl_ts_e, main_tid):
+        ext_id = cr.get("args", {}).get("External id")
+        corr = cr.get("args", {}).get("correlation")
+        gpu_ev = corr_to_gpu.get(corr)
+        if gpu_ev is None or gpu_ev.get("cat") in exclude_cats:
+            continue
+        cpu_ops = ext_id_to_cpu_ops.get(ext_id, [])
+        if not cpu_ops:
+            continue
+        cpu_op = min(cpu_ops, key=lambda e: abs(e["ts"] - cr["ts"]))
+        if pyfn_ts_s <= cpu_op["ts"] <= pyfn_ts_e:
+            results.append(gpu_ev)
+    return results
+
+
+def get_pin_memory_events_in_window(events, ts_start, ts_end):
+    return sorted(
+        [e for e in events
+         if e.get("name") == "aten::pin_memory"
+         and e.get("cat") == "cpu_op"
+         and ts_start <= e["ts"] <= ts_end],
+        key=lambda e: e["ts"],
+    )
+
+
+def get_token_boundaries(events):
+    timer_starts = sorted(
+        [e for e in events if e.get("name") == "timer.py(20): start"],
+        key=lambda e: e["ts"],
+    )
+    timer_stops = sorted(
+        [e for e in events if e.get("name") == "timer.py(31): stop"],
+        key=lambda e: e["ts"],
+    )
+    return list(zip([t["ts"] for t in timer_starts], [t["ts"] for t in timer_stops]))
+
+
+def get_gen_children(events, parent_to_children):
+    gen_loop = next(
+        (e for e in events
+         if "generation_loop_overlap_single_batch" in e.get("name", "")
+         and e.get("cat") == "python_function"),
+        None
+    )
+    if gen_loop is None:
+        raise RuntimeError("Could not find generation_loop_overlap_single_batch.")
+    gen_loop_id = gen_loop["args"]["Python id"]
+    return sorted(parent_to_children.get(gen_loop_id, []), key=lambda e: e["ts"])
+
+
+# ---------------------------------------------------------------------------
+# SEP mode helpers
+# ---------------------------------------------------------------------------
+
+def get_compute_layer_type_sep(cl_event, parent_to_children):
     cl_id = cl_event["args"]["Python id"]
     for fc in parent_to_children.get(cl_id, []):
         if "forward" not in fc.get("name", ""):
@@ -118,32 +205,13 @@ def get_inner_pyfn(cl_event, parent_to_children, name_check):
     return None
 
 
-def get_cuda_rt_in_window(events, ts_start, ts_end, main_tid):
-    return [
-        e for e in events
-        if e.get("cat") == "cuda_runtime"
-        and e.get("tid") == main_tid
-        and ts_start <= e["ts"] <= ts_end
-    ]
-
-
-def get_gpu_events_in_forward(events, cl_event, parent_to_children,
-                               main_tid, corr_to_gpu, ext_id_to_cpu_ops,
-                               corrs_with_cpu_rt):
+def get_gpu_events_in_forward_sep(events, cl_event, parent_to_children,
+                                   main_tid, corr_to_gpu, ext_id_to_cpu_ops,
+                                   corrs_with_cpu_rt):
     """
-    All GPU events for mha_gen compute_layer -> forward(), tagged by origin.
-
+    SEP mode: all GPU events for compute_layer -> forward(), tagged by origin.
     Returns list of (gpu_event, origin_tag) sorted by GPU timestamp.
-
-    Origin tagging uses cpu_op attribution (authoritative):
-      - For ops with a cuda_runtime record: check whether the originating
-        cpu_op's timestamp falls within mha_gen's Python window.
-      - For ops with no cuda_runtime record (cutlass cudaLaunchKernelEx):
-        tagged fwd_pre_mha since they execute before mha_gen starts on GPU.
-
-    Origin values:
-      'mha_gen'     - dispatched from within mha_gen Python function
-      'fwd_pre_mha' - dispatched from forward() before mha_gen
+    Origins: 'mha_gen', 'fwd_pre_mha'
     """
     fwd_fn = get_forward_pyfn(cl_event, parent_to_children)
     if fwd_fn is None:
@@ -156,7 +224,6 @@ def get_gpu_events_in_forward(events, cl_event, parent_to_children,
     mhag_ts_s = mhag_fn["ts"] if mhag_fn else float("inf")
     mhag_ts_e = (mhag_fn["ts"] + mhag_fn["dur"]) if mhag_fn else float("inf")
 
-    # Method 1: cpu_op -> cuda_rt -> GPU within forward CPU window
     cuda_rt_in_fwd = get_cuda_rt_in_window(
         events, fwd_fn["ts"], fwd_fn["ts"] + fwd_fn["dur"], main_tid
     )
@@ -170,20 +237,17 @@ def get_gpu_events_in_forward(events, cl_event, parent_to_children,
         gpu_ev = corr_to_gpu.get(corr)
         if gpu_ev is None:
             continue
-
-        # Determine origin via cpu_op timestamp
         cpu_ops = ext_id_to_cpu_ops.get(ext_id, [])
         if cpu_ops:
             cpu_op = min(cpu_ops, key=lambda e: abs(e["ts"] - cr["ts"]))
             in_mha = mhag_ts_s <= cpu_op["ts"] <= mhag_ts_e
             origin = "mha_gen" if in_mha else "fwd_pre_mha"
         else:
-            origin = "fwd_pre_mha"  # no cpu_op = fwd_pre_mha by convention
-
+            origin = "fwd_pre_mha"
         results.append((gpu_ev, origin))
         found_corrs.add(corr)
 
-    # Method 2: GPU-side window fallback for cutlass kernels (no cuda_runtime record)
+    # Cutlass kernels with no cuda_runtime record
     if results:
         gpu_ts_min = min(r[0]["ts"] for r in results)
         gpu_ts_max = max(r[0]["ts"] + r[0]["dur"] for r in results)
@@ -195,12 +259,9 @@ def get_gpu_events_in_forward(events, cl_event, parent_to_children,
         if e.get("cat") not in ("kernel", "gpu_memcpy", "gpu_memset"):
             continue
         corr = e.get("args", {}).get("correlation")
-        if corr is None or corr in found_corrs:
-            continue
-        if corr in corrs_with_cpu_rt:
+        if corr is None or corr in found_corrs or corr in corrs_with_cpu_rt:
             continue
         if gpu_ts_min <= e["ts"] <= gpu_ts_max + 100:
-            # These have no cuda_runtime record; they execute before mha_gen starts
             origin = "fwd_pre_mha"
             results.append((e, origin))
             found_corrs.add(corr)
@@ -209,105 +270,20 @@ def get_gpu_events_in_forward(events, cl_event, parent_to_children,
     return results
 
 
-def get_gpu_events_via_cpu_chain(events, pyfn_event, cl_ts_s, cl_ts_e,
-                                  main_tid, corr_to_gpu, ext_id_to_cpu_ops,
-                                  exclude_cats=None):
-    exclude_cats = exclude_cats or set()
-    pyfn_ts_s = pyfn_event["ts"]
-    pyfn_ts_e = pyfn_ts_s + pyfn_event["dur"]
-
-    results = []
-    for cr in get_cuda_rt_in_window(events, cl_ts_s, cl_ts_e, main_tid):
-        ext_id = cr.get("args", {}).get("External id")
-        corr = cr.get("args", {}).get("correlation")
-        gpu_ev = corr_to_gpu.get(corr)
-        if gpu_ev is None or gpu_ev.get("cat") in exclude_cats:
-            continue
-        cpu_ops = ext_id_to_cpu_ops.get(ext_id, [])
-        if not cpu_ops:
-            continue
-        cpu_op = min(cpu_ops, key=lambda e: abs(e["ts"] - cr["ts"]))
-        if pyfn_ts_s <= cpu_op["ts"] <= pyfn_ts_e:
-            results.append(gpu_ev)
-
-    return results
-
-
-def get_gpu_events_in_window(events, ts_start, ts_end, main_tid, corr_to_gpu,
-                              filter_names=None):
-    results = []
-    for cr in get_cuda_rt_in_window(events, ts_start, ts_end, main_tid):
-        if filter_names and cr.get("name") not in filter_names:
-            continue
-        corr = cr.get("args", {}).get("correlation")
-        if corr is None:
-            continue
-        gpu_ev = corr_to_gpu.get(corr)
-        if gpu_ev is not None:
-            results.append(gpu_ev)
-    return results
-
-
-def get_pin_memory_events_in_window(events, ts_start, ts_end):
-    return sorted(
-        [e for e in events
-         if e.get("name") == "aten::pin_memory"
-         and e.get("cat") == "cpu_op"
-         and ts_start <= e["ts"] <= ts_end],
-        key=lambda e: e["ts"],
-    )
-
-
-# ---------------------------------------------------------------------------
-# Token boundaries and supergroup identification
-# ---------------------------------------------------------------------------
-
-def get_token_boundaries(events):
-    timer_starts = sorted(
-        [e for e in events if e.get("name") == "timer.py(20): start"],
-        key=lambda e: e["ts"],
-    )
-    timer_stops = sorted(
-        [e for e in events if e.get("name") == "timer.py(31): stop"],
-        key=lambda e: e["ts"],
-    )
-    return list(zip([t["ts"] for t in timer_starts], [t["ts"] for t in timer_stops]))
-
-
-def identify_supergroups(events, parent_to_children, token_boundaries):
-    """
-    Identify consecutive mha_gen -> mlp pairs (supergroups) from decode tokens.
-    Skips all prefill (token 0) groups and the first decode pair (warm-up).
-    """
-    gen_loop_candidates = [
-        e for e in events
-        if "generation_loop_overlap_single_batch" in e.get("name", "")
-        and e.get("cat") == "python_function"
-    ]
-    if not gen_loop_candidates:
-        raise RuntimeError("Could not find generation_loop_overlap_single_batch event.")
-    gen_loop_id = gen_loop_candidates[0]["args"]["Python id"]
-
-    gen_children = sorted(
-        parent_to_children.get(gen_loop_id, []), key=lambda e: e["ts"]
-    )
-
+def identify_supergroups_sep(events, parent_to_children, token_boundaries):
+    """SEP mode: find consecutive mha_gen->mlp pairs, skip warm-up."""
+    gen_children = get_gen_children(events, parent_to_children)
     all_groups = []
     for ti, (ts_start, ts_end) in enumerate(token_boundaries):
-        token_8ops = [
-            e for e in gen_children
-            if is_op8(e) and ts_start <= e["ts"] <= ts_end
-        ]
+        token_8ops = [e for e in gen_children
+                      if is_op8(e) and ts_start <= e["ts"] <= ts_end]
         i = 0
         while i + 7 < len(token_8ops):
             grp = token_8ops[i:i + 8]
             cl = next((e for e in grp if "compute_layer" in e.get("name", "")), None)
             if cl is not None:
-                ftype = get_compute_layer_type(cl, parent_to_children)
-                all_groups.append({
-                    "token": ti, "type": ftype,
-                    "events": grp, "cl": cl
-                })
+                ftype = get_compute_layer_type_sep(cl, parent_to_children)
+                all_groups.append({"token": ti, "type": ftype, "events": grp, "cl": cl})
             i += 8
 
     decode_groups = [g for g in all_groups if g["token"] >= 1]
@@ -320,28 +296,155 @@ def identify_supergroups(events, parent_to_children, token_boundaries):
             i += 2
         else:
             i += 1
-
-    return supergroups[1:]  # skip warm-up pair
+    return supergroups[1:]  # skip warm-up
 
 
 # ---------------------------------------------------------------------------
-# Per-group metric extraction
+# NOSEP mode helpers
 # ---------------------------------------------------------------------------
 
-def extract_mha_gen_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
-                             corrs_with_cpu_rt, parent_to_children, main_tid):
+def get_nosep_pyfns(cl_event, parent_to_children):
+    """
+    NOSEP: compute_layer -> forward -> [forward(mha), forward(mlp)]
+    Returns (mha_fwd, mhag_fn, mlp_fwd, mlp_fn) or all None if not nosep.
+    """
+    cl_id = cl_event["args"]["Python id"]
+    for fc in parent_to_children.get(cl_id, []):
+        if "forward" not in fc.get("name", ""):
+            continue
+        fwd_id = fc["args"]["Python id"]
+        fwd_ch = sorted(parent_to_children.get(fwd_id, []), key=lambda e: e["ts"])
+        sub_fwds = [c for c in fwd_ch if "forward" in c.get("name", "")]
+        if len(sub_fwds) == 2:
+            mha_fwd, mlp_fwd = sub_fwds[0], sub_fwds[1]
+            mhag_fn = next(
+                (c for c in parent_to_children.get(mha_fwd["args"]["Python id"], [])
+                 if "mha_gen" in c.get("name", "")),
+                None
+            )
+            mlp_fn = next(
+                (c for c in parent_to_children.get(mlp_fwd["args"]["Python id"], [])
+                 if "mlp" in c.get("name", "") and "pytorch_backend" in c.get("name", "")),
+                None
+            )
+            return mha_fwd, mhag_fn, mlp_fwd, mlp_fn
+    return None, None, None, None
+
+
+def is_nosep_group(cl_event, parent_to_children):
+    mha_fwd, _, _, _ = get_nosep_pyfns(cl_event, parent_to_children)
+    return mha_fwd is not None
+
+
+def get_gpu_events_in_forward_nosep(events, cl_event, parent_to_children,
+                                     main_tid, corr_to_gpu, ext_id_to_cpu_ops,
+                                     corrs_with_cpu_rt):
+    """
+    NOSEP mode: GPU events for compute_layer with 3-way origin tagging.
+    Origins: 'fwd_pre' (before mha_gen), 'mha_gen', 'mlp'
+    Uses cpu_op attribution where available, GPU timestamp for cutlass kernels.
+    """
+    mha_fwd, mhag_fn, mlp_fwd, mlp_fn = get_nosep_pyfns(cl_event, parent_to_children)
+    if mha_fwd is None:
+        return []
+
+    cl_ts_s = cl_event["ts"]
+    cl_ts_e = cl_ts_s + cl_event["dur"]
+
+    mhag_ts_s = mhag_fn["ts"] if mhag_fn else float("inf")
+    mhag_ts_e = (mhag_fn["ts"] + mhag_fn["dur"]) if mhag_fn else float("inf")
+    mlp_ts_s  = mlp_fn["ts"] if mlp_fn else float("inf")
+    mlp_ts_e  = (mlp_fn["ts"] + mlp_fn["dur"]) if mlp_fn else float("inf")
+
+    cuda_rt_in_cl = get_cuda_rt_in_window(events, cl_ts_s, cl_ts_e, main_tid)
+    results = []
+    found_corrs = set()
+
+    for cr in sorted(cuda_rt_in_cl, key=lambda e: e["ts"]):
+        ext_id = cr.get("args", {}).get("External id")
+        corr = cr.get("args", {}).get("correlation")
+        gpu_ev = corr_to_gpu.get(corr)
+        if gpu_ev is None:
+            continue
+        cpu_ops = ext_id_to_cpu_ops.get(ext_id, [])
+        if cpu_ops:
+            cpu_op = min(cpu_ops, key=lambda e: abs(e["ts"] - cr["ts"]))
+            cpu_ts = cpu_op["ts"]
+            if mhag_ts_s <= cpu_ts <= mhag_ts_e:
+                origin = "mha_gen"
+            elif mlp_ts_s <= cpu_ts <= mlp_ts_e:
+                origin = "mlp"
+            else:
+                origin = "fwd_pre"
+        else:
+            origin = "fwd_pre"
+        results.append((gpu_ev, origin))
+        found_corrs.add(corr)
+
+    # Cutlass kernels with no cuda_runtime record (classified by GPU timestamp)
+    if results:
+        gpu_ts_min = min(r[0]["ts"] for r in results)
+        gpu_ts_max = max(r[0]["ts"] + r[0]["dur"] for r in results)
+    else:
+        gpu_ts_min = cl_ts_s
+        gpu_ts_max = cl_ts_e
+
+    for e in events:
+        if e.get("cat") not in ("kernel", "gpu_memcpy", "gpu_memset"):
+            continue
+        corr = e.get("args", {}).get("correlation")
+        if corr is None or corr in found_corrs or corr in corrs_with_cpu_rt:
+            continue
+        if gpu_ts_min <= e["ts"] <= gpu_ts_max + 100:
+            gts = e["ts"]
+            if mhag_ts_s <= gts <= mhag_ts_e + 500:
+                origin = "mha_gen"
+            elif mlp_ts_s <= gts <= mlp_ts_e + 500:
+                origin = "mlp"
+            else:
+                origin = "fwd_pre"
+            results.append((e, origin))
+            found_corrs.add(corr)
+
+    results.sort(key=lambda x: x[0]["ts"])
+    return results
+
+
+def identify_nosep_groups(events, parent_to_children, token_boundaries):
+    """NOSEP mode: find all nosep groups from decode tokens, skip group 0."""
+    gen_children = get_gen_children(events, parent_to_children)
+    nosep_groups = []
+    for ti, (ts_start, ts_end) in enumerate(token_boundaries):
+        if ti == 0:
+            continue  # skip prefill
+        token_8ops = [e for e in gen_children
+                      if is_op8(e) and ts_start <= e["ts"] <= ts_end]
+        i = 0
+        while i + 7 < len(token_8ops):
+            grp = token_8ops[i:i + 8]
+            cl = next((e for e in grp if "compute_layer" in e.get("name", "")), None)
+            if cl is not None and is_nosep_group(cl, parent_to_children):
+                nosep_groups.append({"token": ti, "events": grp, "cl": cl})
+            i += 8
+    return nosep_groups[1:]  # skip warm-up (first nosep group)
+
+
+# ---------------------------------------------------------------------------
+# SEP metric extraction
+# ---------------------------------------------------------------------------
+
+def extract_mha_gen_metrics_sep(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
+                                 corrs_with_cpu_rt, parent_to_children, main_tid):
     evts = {e["name"].split(": ")[-1]: e for e in grp["events"]}
-
     def dur(key):
         e = evts.get(key)
         return round(e["dur"], 3) if e else None
 
     cl = grp["cl"]
-    tagged_gpu_ops = get_gpu_events_in_forward(
+    tagged_gpu_ops = get_gpu_events_in_forward_sep(
         events, cl, parent_to_children,
         main_tid, corr_to_gpu, ext_id_to_cpu_ops, corrs_with_cpu_rt
     )
-
     metrics = {
         "mha-gen_load_weight":         dur("load_weight"),
         "mha-gen_load_hidden_compute":  dur("load_hidden_compute"),
@@ -355,21 +458,18 @@ def extract_mha_gen_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
     for idx, (gpu_ev, origin) in enumerate(tagged_gpu_ops, 1):
         metrics[f"mha-gen-compute-cuda-{idx}"] = round(gpu_ev["dur"], 3)
         metrics[f"mha-gen-compute-cuda-{idx}-origin"] = origin
-
     return metrics
 
 
-def extract_mlp_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
-                        parent_to_children, main_tid):
+def extract_mlp_metrics_sep(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
+                              parent_to_children, main_tid):
     evts = {e["name"].split(": ")[-1]: e for e in grp["events"]}
-
     def dur(key):
         e = evts.get(key)
         return round(e["dur"], 3) if e else None
 
     cl = grp["cl"]
     cl_ts_s, cl_ts_e = cl["ts"], cl["ts"] + cl["dur"]
-
     mlp_fn = get_inner_pyfn(
         cl, parent_to_children,
         lambda n: "mlp" in n and "pytorch_backend" in n
@@ -439,6 +539,86 @@ def extract_mlp_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
     }
     for idx, gpu_ev in enumerate(cl_gpu_events, 1):
         metrics[f"mlp-compute-cuda-{idx}"] = round(gpu_ev["dur"], 3)
+    return metrics
+
+
+# ---------------------------------------------------------------------------
+# NOSEP metric extraction
+# ---------------------------------------------------------------------------
+
+def extract_nosep_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
+                           corrs_with_cpu_rt, parent_to_children, main_tid):
+    evts = {e["name"].split(": ")[-1]: e for e in grp["events"]}
+    def dur(key):
+        e = evts.get(key)
+        return round(e["dur"], 3) if e else None
+
+    cl = grp["cl"]
+    cl_ts_s, cl_ts_e = cl["ts"], cl["ts"] + cl["dur"]
+
+    # --- load_hidden_compute cuda memcpy ---
+    lhc = evts.get("load_hidden_compute")
+    lhc_memcpy_dur = None
+    if lhc:
+        lhc_gpu = get_gpu_events_in_window(
+            events, lhc["ts"], lhc["ts"] + lhc["dur"],
+            main_tid, corr_to_gpu, filter_names={"cudaMemcpyAsync"}
+        )
+        if lhc_gpu:
+            lhc_memcpy_dur = round(lhc_gpu[0]["dur"], 3)
+
+    # --- load_cache: pin_memory x2, cudaMemcpyAsync x2 ---
+    lc = evts.get("load_cache")
+    pm1, pm2, lc_mc1, lc_mc2 = None, None, None, None
+    if lc:
+        lc_ts_s, lc_ts_e = lc["ts"], lc["ts"] + lc["dur"]
+        pins = get_pin_memory_events_in_window(events, lc_ts_s, lc_ts_e)
+        if len(pins) > 0: pm1 = round(pins[0]["dur"], 3)
+        if len(pins) > 1: pm2 = round(pins[1]["dur"], 3)
+        lc_gpu = get_gpu_events_in_window(
+            events, lc_ts_s, lc_ts_e, main_tid, corr_to_gpu,
+            filter_names={"cudaMemcpyAsync"}
+        )
+        if len(lc_gpu) > 0: lc_mc1 = round(lc_gpu[0]["dur"], 3)
+        if len(lc_gpu) > 1: lc_mc2 = round(lc_gpu[1]["dur"], 3)
+
+    # --- compute_layer: 3-way tagged GPU ops ---
+    tagged_gpu_ops = get_gpu_events_in_forward_nosep(
+        events, cl, parent_to_children,
+        main_tid, corr_to_gpu, ext_id_to_cpu_ops, corrs_with_cpu_rt
+    )
+
+    # --- store_cache: cudaMemcpyAsync x2 ---
+    sc = evts.get("store_cache")
+    sc_mc1, sc_mc2 = None, None
+    if sc:
+        sc_gpu = get_gpu_events_in_window(
+            events, sc["ts"], sc["ts"] + sc["dur"],
+            main_tid, corr_to_gpu, filter_names={"cudaMemcpyAsync"}
+        )
+        if len(sc_gpu) > 0: sc_mc1 = round(sc_gpu[0]["dur"], 3)
+        if len(sc_gpu) > 1: sc_mc2 = round(sc_gpu[1]["dur"], 3)
+
+    metrics = {
+        "load_weight":                    dur("load_weight"),
+        "load_hidden_compute":             dur("load_hidden_compute"),
+        "load-hidden-compute-cudamemcpy":  lhc_memcpy_dur,
+        "load_cache":                      dur("load_cache"),
+        "pin-memory-1":                    pm1,
+        "pin-memory-2":                    pm2,
+        "load-cache-cudamemcpy-1":         lc_mc1,
+        "load-cache-cudamemcpy-2":         lc_mc2,
+        "load_hidden":                     dur("load_hidden"),
+        "compute_layer":                   dur("compute_layer"),
+        "store_cache":                     dur("store_cache"),
+        "store-cache-cudamemcpy-1":        sc_mc1,
+        "store-cache-cudamemcpy-2":        sc_mc2,
+        "store_hidden":                    dur("store_hidden"),
+        "sync":                            dur("sync"),
+    }
+    for idx, (gpu_ev, origin) in enumerate(tagged_gpu_ops, 1):
+        metrics[f"compute-cuda-{idx}"] = round(gpu_ev["dur"], 3)
+        metrics[f"compute-cuda-{idx}-origin"] = origin
 
     return metrics
 
@@ -447,7 +627,7 @@ def extract_mlp_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
 # Main analysis
 # ---------------------------------------------------------------------------
 
-def analyze_trace(trace_path, max_groups=None, output_path=None):
+def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False):
     print(f"Loading trace: {trace_path}", file=sys.stderr)
     with open(trace_path) as f:
         data = json.load(f)
@@ -464,36 +644,50 @@ def analyze_trace(trace_path, max_groups=None, output_path=None):
     token_boundaries = get_token_boundaries(events)
     print(f"  {len(token_boundaries)} tokens found.", file=sys.stderr)
 
-    print("Identifying mha_gen->mlp supergroups...", file=sys.stderr)
-    supergroups = identify_supergroups(events, parent_to_children, token_boundaries)
-    print(f"  {len(supergroups)} supergroups (warm-up skipped).", file=sys.stderr)
-
-    if max_groups is not None:
-        supergroups = supergroups[:max_groups]
-        print(f"  Limiting to first {max_groups} supergroups.", file=sys.stderr)
-
     rows = []
-    for sg_num, sg in enumerate(supergroups, 1):
-        mha_metrics = extract_mha_gen_metrics(
-            sg["mha_gen"], events, corr_to_gpu, ext_id_to_cpu_ops,
-            corrs_with_cpu_rt, parent_to_children, main_tid
-        )
-        mlp_metrics = extract_mlp_metrics(
-            sg["mlp"], events, corr_to_gpu, ext_id_to_cpu_ops,
-            parent_to_children, main_tid
-        )
-        rows.append({
-            "supergroup": sg_num,
-            "token": sg["token"],
-            **mha_metrics,
-            **mlp_metrics,
-        })
+
+    if nosep:
+        print("Mode: NOSEP — identifying merged mha+mlp groups...", file=sys.stderr)
+        groups = identify_nosep_groups(events, parent_to_children, token_boundaries)
+        print(f"  {len(groups)} nosep groups (warm-up skipped).", file=sys.stderr)
+        if max_groups is not None:
+            groups = groups[:max_groups]
+            print(f"  Limiting to first {max_groups} groups.", file=sys.stderr)
+
+        for group_num, grp in enumerate(groups, 1):
+            metrics = extract_nosep_metrics(
+                grp, events, corr_to_gpu, ext_id_to_cpu_ops,
+                corrs_with_cpu_rt, parent_to_children, main_tid
+            )
+            rows.append({"group": group_num, "token": grp["token"], **metrics})
+
+    else:
+        print("Mode: SEP — identifying mha_gen->mlp supergroups...", file=sys.stderr)
+        supergroups = identify_supergroups_sep(events, parent_to_children, token_boundaries)
+        print(f"  {len(supergroups)} supergroups (warm-up skipped).", file=sys.stderr)
+        if max_groups is not None:
+            supergroups = supergroups[:max_groups]
+            print(f"  Limiting to first {max_groups} supergroups.", file=sys.stderr)
+
+        for sg_num, sg in enumerate(supergroups, 1):
+            mha_metrics = extract_mha_gen_metrics_sep(
+                sg["mha_gen"], events, corr_to_gpu, ext_id_to_cpu_ops,
+                corrs_with_cpu_rt, parent_to_children, main_tid
+            )
+            mlp_metrics = extract_mlp_metrics_sep(
+                sg["mlp"], events, corr_to_gpu, ext_id_to_cpu_ops,
+                parent_to_children, main_tid
+            )
+            rows.append({
+                "supergroup": sg_num, "token": sg["token"],
+                **mha_metrics, **mlp_metrics,
+            })
 
     if not rows:
         print("No rows to write.", file=sys.stderr)
         return rows
 
-    fixed_cols = ["supergroup", "token"]
+    fixed_cols = list(rows[0].keys())[:2]  # group/supergroup + token
     seen = set(fixed_cols)
     dynamic_cols = []
     for row in rows:
@@ -504,7 +698,8 @@ def analyze_trace(trace_path, max_groups=None, output_path=None):
     all_cols = fixed_cols + dynamic_cols
 
     if output_path is None:
-        output_path = Path(trace_path).stem + "_analysis.csv"
+        suffix = "_nosep_analysis.csv" if nosep else "_analysis.csv"
+        output_path = Path(trace_path).stem + suffix
     output_path = Path(output_path)
 
     with open(output_path, "w", newline="") as f:
@@ -523,19 +718,24 @@ def analyze_trace(trace_path, max_groups=None, output_path=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Analyze torch profile trace — mha_gen/mlp supergroup latencies."
+        description="Analyze torch profile trace — mha_gen/mlp latencies."
     )
     parser.add_argument("trace", help="Path to the torch profile JSON trace file.")
     parser.add_argument(
         "--max-groups", type=int, default=None, metavar="N",
-        help="Limit to first N supergroups (default: all).",
+        help="Limit to first N groups/supergroups (default: all).",
     )
     parser.add_argument(
         "--out", default=None, metavar="OUTPUT.csv",
-        help="Output CSV path (default: <trace_stem>_analysis.csv).",
+        help="Output CSV path.",
+    )
+    parser.add_argument(
+        "--nosep", action="store_true",
+        help="Use nosep mode: merged mha+mlp compute_layer.",
     )
     args = parser.parse_args()
-    analyze_trace(args.trace, max_groups=args.max_groups, output_path=args.out)
+    analyze_trace(args.trace, max_groups=args.max_groups,
+                  output_path=args.out, nosep=args.nosep)
 
 
 if __name__ == "__main__":

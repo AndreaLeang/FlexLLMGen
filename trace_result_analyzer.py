@@ -1,27 +1,39 @@
 #!/usr/bin/env python3
 """
-Second-pass analysis of the supergroup CSV produced by analyze_trace.py.
+Second-pass analysis of the trace CSV produced by analyze_trace.py.
 
-For each supergroup row, computes:
+Supports both sep and nosep CSVs (auto-detected by column names, or use --nosep).
 
-mha-gen:
+SEP mode (original behavior, unchanged):
   mha-gen-sum            : sum of all 8 mha-gen op durations
   mha-gen-compute-cuda-sum : sum of ALL mha-gen-compute-cuda-N durations
   mha-gen-recompute-cuda : sum of mha-gen-compute-cuda-N where origin == fwd_pre_mha
-
-mlp:
   mlp-sum                : sum of all 8 mlp op durations
   mlp-phase-1            : max(load-hidden-compute-cudamemcpy, pin-memory-1)
   mlp-phase-1-winner     : which operand was the max
-  mlp-compute-cuda-sum   : sum of all mlp-compute-cuda-N durations  (renamed from mla)
-  mlp-phase-2            : max of three groups:
-                             A = mlp-compute-cuda-sum + pin-memory-2
-                             B = load-cache-cudamemcpy-1 + load-cache-cudamemcpy-2
-                             C = store-cache-cudamemcpy-1 + store-cache-cudamemcpy-2
-  mlp-phase-2-winner     : which group (A/B/C) was the max
+  mlp-compute-cuda-sum   : sum of all mlp-compute-cuda-N durations
+  mlp-phase-2            : max of A = mlp-compute-cuda-sum + pin-memory-2,
+                                   B = load-cache-cudamemcpy-1+2,
+                                   C = store-cache-cudamemcpy-1+2
+  mlp-phase-2-winner     : "mlp-compute-cuda-sum+pin-memory-2",
+                            "load-cache-cudamemcpy-1+2", or
+                            "store-cache-cudamemcpy-1+2"
+
+NOSEP mode (--nosep flag or auto-detected):
+  sum-all                : sum of all 8 op durations
+  compute-cuda-sum       : sum of all compute-cuda-N durations
+  phase-1                : max(pin-memory-1, load-hidden-compute-cudamemcpy)
+  phase-1-winner         : which operand was the max
+  phase-2                : max of A = compute-cuda-sum + pin-memory-2,
+                                   B = load-cache-cudamemcpy-1+2,
+                                   C = store-cache-cudamemcpy-1+2
+  phase-2-winner         : "pin-memory-2+compute-cuda-sum",
+                            "load-cache-cudamemcpy-1+2", or
+                            "store-cache-cudamemcpy-1+2"
+  misc-cpu               : sum-all - phase-1 - phase-2
 
 Usage:
-    python analyze_csv.py <input.csv> [--out output.csv]
+    python analyze_csv.py <input.csv> [--out output.csv] [--nosep]
 """
 
 import csv
@@ -31,7 +43,6 @@ from pathlib import Path
 
 
 def safe_float(val):
-    """Return float or None for empty/missing values."""
     try:
         return float(val) if val not in (None, "", "None") else None
     except (ValueError, TypeError):
@@ -39,7 +50,6 @@ def safe_float(val):
 
 
 def sum_cols(row, col_names):
-    """Sum the values of named columns, treating missing/empty as 0."""
     total = 0.0
     for c in col_names:
         v = safe_float(row.get(c))
@@ -48,12 +58,17 @@ def sum_cols(row, col_names):
     return round(total, 3)
 
 
-def analyze_row(row, all_cols):
-    result = dict(row)  # carry through all original columns
+def detect_nosep(all_cols):
+    return "load_weight" in all_cols and "mha-gen_load_weight" not in all_cols
 
-    # ------------------------------------------------------------------ #
-    # mha-gen
-    # ------------------------------------------------------------------ #
+
+# ---------------------------------------------------------------------------
+# SEP row analysis (original logic, unchanged)
+# ---------------------------------------------------------------------------
+
+def analyze_row_sep(row, all_cols):
+    result = dict(row)
+
     MHA_OPS = [
         "mha-gen_load_weight", "mha-gen_load_hidden_compute",
         "mha-gen_load_cache", "mha-gen_load_hidden",
@@ -62,7 +77,6 @@ def analyze_row(row, all_cols):
     ]
     result["mha-gen-sum"] = sum_cols(row, MHA_OPS)
 
-    # Collect all mha-gen-compute-cuda-N columns (not origin columns)
     cuda_cols = sorted(
         [c for c in all_cols if c.startswith("mha-gen-compute-cuda-")
          and not c.endswith("-origin")],
@@ -70,7 +84,6 @@ def analyze_row(row, all_cols):
     )
     result["mha-gen-compute-cuda-sum"] = sum_cols(row, cuda_cols)
 
-    # Sum only fwd_pre_mha ops
     recompute_total = 0.0
     for c in cuda_cols:
         origin_col = c + "-origin"
@@ -80,9 +93,6 @@ def analyze_row(row, all_cols):
                 recompute_total += v
     result["mha-gen-recompute-cuda"] = round(recompute_total, 3)
 
-    # ------------------------------------------------------------------ #
-    # mlp
-    # ------------------------------------------------------------------ #
     MLP_OPS = [
         "mlp_load_weight", "mlp_load_hidden_compute",
         "mlp_load_cache", "mlp_load_hidden",
@@ -91,7 +101,6 @@ def analyze_row(row, all_cols):
     ]
     result["mlp-sum"] = sum_cols(row, MLP_OPS)
 
-    # Phase 1: max(load-hidden-compute-cudamemcpy, pin-memory-1)
     lhc_memcpy = safe_float(row.get("load-hidden-compute-cudamemcpy"))
     pm1        = safe_float(row.get("pin-memory-1"))
     if lhc_memcpy is not None and pm1 is not None:
@@ -111,7 +120,6 @@ def analyze_row(row, all_cols):
         result["mlp-phase-1"] = None
         result["mlp-phase-1-winner"] = None
 
-    # mlp compute cuda sum
     mlp_cuda_cols = sorted(
         [c for c in all_cols if c.startswith("mlp-compute-cuda-")],
         key=lambda c: int(c.split("-")[-1])
@@ -119,7 +127,6 @@ def analyze_row(row, all_cols):
     mlp_cuda_sum = sum_cols(row, mlp_cuda_cols)
     result["mlp-compute-cuda-sum"] = mlp_cuda_sum
 
-    # Phase 2: max of A, B, C
     pm2    = safe_float(row.get("pin-memory-2")) or 0.0
     lc_mc1 = safe_float(row.get("load-cache-cudamemcpy-1")) or 0.0
     lc_mc2 = safe_float(row.get("load-cache-cudamemcpy-2")) or 0.0
@@ -130,9 +137,9 @@ def analyze_row(row, all_cols):
     B = round(lc_mc1 + lc_mc2, 3)
     C = round(sc_mc1 + sc_mc2, 3)
 
-    result["mlp-phase-2-A"] = A  # mlp-compute-cuda-sum + pin-memory-2
-    result["mlp-phase-2-B"] = B  # load-cache-cudamemcpy-1 + load-cache-cudamemcpy-2
-    result["mlp-phase-2-C"] = C  # store-cache-cudamemcpy-1 + store-cache-cudamemcpy-2
+    result["mlp-phase-2-A"] = A
+    result["mlp-phase-2-B"] = B
+    result["mlp-phase-2-C"] = C
 
     max_val = max(A, B, C)
     result["mlp-phase-2"] = max_val
@@ -146,7 +153,70 @@ def analyze_row(row, all_cols):
     return result
 
 
-def analyze_csv(input_path, output_path=None):
+# ---------------------------------------------------------------------------
+# NOSEP row analysis
+# ---------------------------------------------------------------------------
+
+def analyze_row_nosep(row, all_cols):
+    result = dict(row)
+
+    OPS_8 = [
+        "load_weight", "load_hidden_compute", "load_cache", "load_hidden",
+        "compute_layer", "store_cache", "store_hidden", "sync",
+    ]
+    total = sum_cols(row, OPS_8)
+    result["sum-all"] = total
+
+    cuda_cols = sorted(
+        [c for c in all_cols if c.startswith("compute-cuda-")
+         and not c.endswith("-origin")],
+        key=lambda c: int(c.split("-")[-1])
+    )
+    compute_cuda_sum = sum_cols(row, cuda_cols)
+    result["compute-cuda-sum"] = compute_cuda_sum
+
+    lhc_memcpy = safe_float(row.get("load-hidden-compute-cudamemcpy")) or 0.0
+    pm1  = safe_float(row.get("pin-memory-1")) or 0.0
+    pm2  = safe_float(row.get("pin-memory-2")) or 0.0
+    lc1  = safe_float(row.get("load-cache-cudamemcpy-1")) or 0.0
+    lc2  = safe_float(row.get("load-cache-cudamemcpy-2")) or 0.0
+    sc1  = safe_float(row.get("store-cache-cudamemcpy-1")) or 0.0
+    sc2  = safe_float(row.get("store-cache-cudamemcpy-2")) or 0.0
+
+    if pm1 >= lhc_memcpy:
+        result["phase-1"] = round(pm1, 3)
+        result["phase-1-winner"] = "pin-memory-1"
+    else:
+        result["phase-1"] = round(lhc_memcpy, 3)
+        result["phase-1-winner"] = "load-hidden-compute-cudamemcpy"
+
+    A = round(compute_cuda_sum + pm2, 3)
+    B = round(lc1 + lc2, 3)
+    C = round(sc1 + sc2, 3)
+
+    result["phase-2-A"] = A
+    result["phase-2-B"] = B
+    result["phase-2-C"] = C
+
+    max_val = max(A, B, C)
+    result["phase-2"] = max_val
+    if max_val == A:
+        result["phase-2-winner"] = "pin-memory-2+compute-cuda-sum"
+    elif max_val == B:
+        result["phase-2-winner"] = "load-cache-cudamemcpy-1+2"
+    else:
+        result["phase-2-winner"] = "store-cache-cudamemcpy-1+2"
+
+    result["misc-cpu"] = round(total - result["phase-1"] - result["phase-2"], 3)
+
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
+def analyze_csv(input_path, output_path=None, nosep=None):
     input_path = Path(input_path)
 
     with open(input_path, newline="") as f:
@@ -156,17 +226,31 @@ def analyze_csv(input_path, output_path=None):
 
     print(f"Loaded {len(rows)} rows, {len(all_cols)} columns.", file=sys.stderr)
 
-    results = [analyze_row(row, all_cols) for row in rows]
+    if nosep is None:
+        nosep = detect_nosep(all_cols)
+    mode = "nosep" if nosep else "sep"
+    print(f"Mode: {mode}", file=sys.stderr)
 
-    # Build output column order: original cols first, then derived cols appended
-    derived_cols = [
-        "mha-gen-sum", "mha-gen-compute-cuda-sum", "mha-gen-recompute-cuda",
-        "mlp-sum",
-        "mlp-phase-1", "mlp-phase-1-winner",
-        "mlp-compute-cuda-sum",
-        "mlp-phase-2-A", "mlp-phase-2-B", "mlp-phase-2-C",
-        "mlp-phase-2", "mlp-phase-2-winner",
-    ]
+    if nosep:
+        results = [analyze_row_nosep(row, all_cols) for row in rows]
+        derived_cols = [
+            "sum-all", "compute-cuda-sum",
+            "phase-1", "phase-1-winner",
+            "phase-2-A", "phase-2-B", "phase-2-C",
+            "phase-2", "phase-2-winner",
+            "misc-cpu",
+        ]
+    else:
+        results = [analyze_row_sep(row, all_cols) for row in rows]
+        derived_cols = [
+            "mha-gen-sum", "mha-gen-compute-cuda-sum", "mha-gen-recompute-cuda",
+            "mlp-sum",
+            "mlp-phase-1", "mlp-phase-1-winner",
+            "mlp-compute-cuda-sum",
+            "mlp-phase-2-A", "mlp-phase-2-B", "mlp-phase-2-C",
+            "mlp-phase-2", "mlp-phase-2-winner",
+        ]
+
     out_cols = list(all_cols) + [c for c in derived_cols if c not in all_cols]
 
     if output_path is None:
@@ -185,12 +269,17 @@ def analyze_csv(input_path, output_path=None):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Summarize supergroup CSV with derived latency metrics."
+        description="Summarize trace CSV with derived latency phase metrics."
     )
     parser.add_argument("input", help="Input CSV from analyze_trace.py.")
     parser.add_argument("--out", default=None, metavar="OUTPUT.csv")
+    parser.add_argument(
+        "--nosep", action="store_true",
+        help="Force nosep mode (auto-detected if omitted).",
+    )
     args = parser.parse_args()
-    analyze_csv(args.input, output_path=args.out)
+    analyze_csv(args.input, output_path=args.out,
+                nosep=args.nosep if args.nosep else None)
 
 
 if __name__ == "__main__":
