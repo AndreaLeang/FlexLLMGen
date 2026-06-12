@@ -156,12 +156,13 @@ def get_token_boundaries(events):
 def get_gen_children(events, parent_to_children):
     gen_loop = next(
         (e for e in events
-         if "generation_loop_overlap_single_batch" in e.get("name", "")
-         and e.get("cat") == "python_function"),
+         if ("generation_loop_overlap_single_batch" in e.get("name", "")
+         and e.get("cat") == "python_function") or 
+         ("generation_loop_overlap_multi_batch" in e.get("name", "") and e.get("cat") == "python_function")),
         None
     )
     if gen_loop is None:
-        raise RuntimeError("Could not find generation_loop_overlap_single_batch.")
+        raise RuntimeError("Could not find generation_loop_overlap_single_batch or generation_loop_overlap_multi_batch.")
     gen_loop_id = gen_loop["args"]["Python id"]
     return sorted(parent_to_children.get(gen_loop_id, []), key=lambda e: e["ts"])
 
