@@ -25,6 +25,12 @@ Segments — nosep mode (bottom to top):
 
 Usage:
     python plot_multi_workload.py <folder> [--out output.png] [--dpi 150] [--show]
+                                           [--avg | --avg-n N]
+
+Averaging options (mutually exclusive):
+    (default)   Use only the first complete row from each summary CSV.
+    --avg       Average all complete rows (rows with any empty numeric column dropped).
+    --avg-n N   Average the first N complete rows.
 """
 
 import argparse
@@ -194,14 +200,61 @@ def find_summary_csv(subdir: Path):
     return candidates[0] if candidates else None
 
 
-def load_first_row(csv_path: Path):
-    """Load only the first data row from a summary CSV."""
+def load_averaged_row(csv_path: Path, max_rows: int = None):
+    """
+    Load rows from a summary CSV and return a single averaged row.
+
+    Only rows where every numeric column is non-empty are included
+    (string columns such as *-winner and *-origin are excluded from
+    the completeness check and are carried over from the first valid row).
+
+    max_rows: if given, consider at most this many complete rows.
+              None means use all complete rows.
+
+    Returns (averaged_row_dict, cols, n_used) or (None, [], 0) if no rows qualify.
+    """
     with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)
         cols = reader.fieldnames or []
-        for row in reader:
-            return row, cols
-    return None, []
+        all_rows = list(reader)
+
+    if not all_rows:
+        return None, [], 0
+
+    # Identify numeric columns (those that can be float-parsed on the first row)
+    first = all_rows[0]
+    numeric_cols = []
+    string_cols  = []
+    for c in cols:
+        v = first.get(c, "")
+        try:
+            float(v)
+            numeric_cols.append(c)
+        except (ValueError, TypeError):
+            string_cols.append(c)
+
+    # Keep only rows where all numeric columns are non-empty
+    complete_rows = [
+        r for r in all_rows
+        if all(r.get(c, "") not in ("", None) for c in numeric_cols)
+    ]
+
+    if not complete_rows:
+        return None, [], 0
+
+    if max_rows is not None:
+        complete_rows = complete_rows[:max_rows]
+
+    n = len(complete_rows)
+
+    # Average numeric columns; take values from the first complete row for string cols
+    averaged = {}
+    for c in numeric_cols:
+        averaged[c] = str(round(sum(float(r[c]) for r in complete_rows) / n, 6))
+    for c in string_cols:
+        averaged[c] = complete_rows[0].get(c, "")
+
+    return averaged, cols, n
 
 
 def make_label(prompt_len, batch_size, recompute):
@@ -219,11 +272,15 @@ def make_label(prompt_len, batch_size, recompute):
     return "\n".join(parts)
 
 
-def scan_folder(folder: Path):
+def scan_folder(folder: Path, avg_n: int = None):
     """
     Scan folder for prompt_* subdirs, return list of:
       (label, prompt_len, batch_size, recompute, row, cols, nosep)
     sorted by (prompt_len, batch_size, recompute).
+
+    avg_n: number of complete rows to average per CSV.
+           None means average all complete rows.
+           Pass 1 to reproduce the old single-row behaviour.
     """
     entries = []
     for subdir in sorted(folder.iterdir()):
@@ -238,16 +295,17 @@ def scan_folder(folder: Path):
         if csv_path is None:
             print(f"  No *_summary.csv in '{subdir.name}', skipping", file=sys.stderr)
             continue
-        row, cols = load_first_row(csv_path)
+        row, cols, n_used = load_averaged_row(csv_path, max_rows=avg_n)
         if row is None:
-            print(f"  Empty CSV in '{subdir.name}', skipping", file=sys.stderr)
+            print(f"  No complete rows in '{subdir.name}', skipping", file=sys.stderr)
             continue
         nosep = detect_nosep(cols)
         label = make_label(prompt_len, batch_size, recompute)
         entries.append((label, prompt_len, batch_size, recompute, row, cols, nosep))
-        rc_str = f"  recompute={recompute}" if recompute is not None else ""
-        print(f"  '{subdir.name}' -> {'nosep' if nosep else 'sep'}{rc_str}  csv={csv_path.name}",
-              file=sys.stderr)
+        rc_str  = f"  recompute={recompute}" if recompute is not None else ""
+        avg_str = f"avg over {n_used} rows" if avg_n is None else f"avg over first {n_used} rows"
+        print(f"  '{subdir.name}' -> {'nosep' if nosep else 'sep'}{rc_str}  "
+              f"{avg_str}  csv={csv_path.name}", file=sys.stderr)
 
     # Sort by (prompt_len, batch_size, recompute) — None sorts before any int
     entries.sort(key=lambda e: (e[1], e[2], e[3] if e[3] is not None else -1))
@@ -258,14 +316,15 @@ def scan_folder(folder: Path):
 # Plot
 # ---------------------------------------------------------------------------
 
-def plot(folder, out_path=None, dpi=150, show=False):
+def plot(folder, out_path=None, dpi=150, show=False, avg_n=None):
     folder = Path(folder)
     if not folder.is_dir():
         print(f"Error: '{folder}' is not a directory.", file=sys.stderr)
         sys.exit(1)
 
-    print(f"Scanning '{folder}' ...", file=sys.stderr)
-    entries = scan_folder(folder)
+    avg_desc = "all complete rows" if avg_n is None else f"first {avg_n} complete rows"
+    print(f"Scanning '{folder}' (averaging over {avg_desc}) ...", file=sys.stderr)
+    entries = scan_folder(folder, avg_n=avg_n)
 
     if not entries:
         print("No valid workload subdirectories found.", file=sys.stderr)
@@ -390,10 +449,32 @@ def main():
     parser.add_argument("--dpi", type=int, default=150)
     parser.add_argument("--show", action="store_true",
                         help="Call plt.show() for interactive display.")
+
+    avg_group = parser.add_mutually_exclusive_group()
+    avg_group.add_argument(
+        "--avg", action="store_true",
+        help="Average all complete rows in each summary CSV (default: use first row only).",
+    )
+    avg_group.add_argument(
+        "--avg-n", type=int, default=None, metavar="N",
+        help="Average the first N complete rows in each summary CSV.",
+    )
+
     args = parser.parse_args()
 
+    # Resolve averaging mode:
+    #   --avg      -> avg_n = None (all complete rows)
+    #   --avg-n N  -> avg_n = N
+    #   neither    -> avg_n = 1   (first row only, original behaviour)
+    if args.avg:
+        avg_n = None
+    elif args.avg_n is not None:
+        avg_n = args.avg_n
+    else:
+        avg_n = 1
+
     out = args.out or (Path(args.folder).name + "_multi.png")
-    plot(args.folder, out_path=out, dpi=args.dpi, show=args.show)
+    plot(args.folder, out_path=out, dpi=args.dpi, show=args.show, avg_n=avg_n)
 
 
 if __name__ == "__main__":
