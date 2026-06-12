@@ -21,6 +21,7 @@ Usage:
 All durations in microseconds (us).
 """
 
+import bisect
 import json
 import csv
 import argparse
@@ -40,25 +41,51 @@ def build_indices(events):
     ext_id_to_cpu_ops = {}
     corrs_with_cpu_rt = set()
 
+    # Pre-filtered lists for fast time-window queries (populated below, sorted after)
+    cuda_rt_by_tid = {}   # tid -> [event, ...]  (cuda_runtime events only)
+    pin_mem_list   = []   # aten::pin_memory cpu_op events
+    gpu_event_list = []   # kernel/gpu_memcpy/gpu_memset events (for cutlass fallback)
+
     for e in events:
-        args = e.get("args", {})
-        py_id = args.get("Python id")
+        args = e.get("args") or {}
+        cat  = e.get("cat")
+        py_id     = args.get("Python id")
         parent_id = args.get("Python parent id")
-        corr = args.get("correlation")
-        ext_id = args.get("External id")
+        corr      = args.get("correlation")
+        ext_id    = args.get("External id")
 
         if py_id is not None:
             py_id_map[py_id] = e
         if parent_id is not None:
             parent_to_children.setdefault(parent_id, []).append(e)
-        if corr is not None and e.get("cat") in ("kernel", "gpu_memcpy", "gpu_memset"):
+        if corr is not None and cat in ("kernel", "gpu_memcpy", "gpu_memset"):
             corr_to_gpu[corr] = e
-        if ext_id is not None and e.get("cat") == "cpu_op":
+            gpu_event_list.append(e)
+        if ext_id is not None and cat == "cpu_op":
             ext_id_to_cpu_ops.setdefault(ext_id, []).append(e)
-        if corr is not None and e.get("cat") == "cuda_runtime":
+            if e.get("name") == "aten::pin_memory":
+                pin_mem_list.append(e)
+        if corr is not None and cat == "cuda_runtime":
             corrs_with_cpu_rt.add(corr)
+            cuda_rt_by_tid.setdefault(e["tid"], []).append(e)
 
-    return parent_to_children, py_id_map, corr_to_gpu, ext_id_to_cpu_ops, corrs_with_cpu_rt
+    # Sort each pre-filtered list once by timestamp
+    for lst in cuda_rt_by_tid.values():
+        lst.sort(key=lambda e: e["ts"])
+    pin_mem_list.sort(key=lambda e: e["ts"])
+    gpu_event_list.sort(key=lambda e: e["ts"])
+
+    # Pre-compute timestamp key arrays for bisect
+    cuda_rt_ts_by_tid = {tid: [e["ts"] for e in lst]
+                         for tid, lst in cuda_rt_by_tid.items()}
+    pin_mem_ts   = [e["ts"] for e in pin_mem_list]
+    gpu_event_ts = [e["ts"] for e in gpu_event_list]
+
+    return (parent_to_children, py_id_map, corr_to_gpu, ext_id_to_cpu_ops,
+            corrs_with_cpu_rt,
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            pin_mem_list, pin_mem_ts,
+            gpu_event_list, gpu_event_ts)
 
 
 def detect_main_tid(events):
@@ -84,22 +111,25 @@ def is_op8(event):
     return any(op in event.get("name", "") for op in OP8_NAMES)
 
 
-def get_cuda_rt_in_window(events, ts_start, ts_end, main_tid):
-    return [
-        e for e in events
-        if e.get("cat") == "cuda_runtime"
-        and e.get("tid") == main_tid
-        and ts_start <= e["ts"] <= ts_end
-    ]
+def get_cuda_rt_in_window(cuda_rt_by_tid, cuda_rt_ts_by_tid, ts_start, ts_end, main_tid):
+    """Return cuda_runtime events for main_tid in [ts_start, ts_end] using bisect."""
+    lst = cuda_rt_by_tid.get(main_tid)
+    if not lst:
+        return []
+    ts_keys = cuda_rt_ts_by_tid[main_tid]
+    lo = bisect.bisect_left(ts_keys, ts_start)
+    hi = bisect.bisect_right(ts_keys, ts_end)
+    return lst[lo:hi]
 
 
-def get_gpu_events_in_window(events, ts_start, ts_end, main_tid, corr_to_gpu,
-                              filter_names=None):
+def get_gpu_events_in_window(cuda_rt_by_tid, cuda_rt_ts_by_tid, ts_start, ts_end,
+                              main_tid, corr_to_gpu, filter_names=None):
     results = []
-    for cr in get_cuda_rt_in_window(events, ts_start, ts_end, main_tid):
+    for cr in get_cuda_rt_in_window(cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                                     ts_start, ts_end, main_tid):
         if filter_names and cr.get("name") not in filter_names:
             continue
-        corr = cr.get("args", {}).get("correlation")
+        corr = (cr.get("args") or {}).get("correlation")
         if corr is None:
             continue
         gpu_ev = corr_to_gpu.get(corr)
@@ -108,17 +138,19 @@ def get_gpu_events_in_window(events, ts_start, ts_end, main_tid, corr_to_gpu,
     return results
 
 
-def get_gpu_events_via_cpu_chain(events, pyfn_event, cl_ts_s, cl_ts_e,
-                                  main_tid, corr_to_gpu, ext_id_to_cpu_ops,
-                                  exclude_cats=None):
+def get_gpu_events_via_cpu_chain(cuda_rt_by_tid, cuda_rt_ts_by_tid, pyfn_event,
+                                  cl_ts_s, cl_ts_e, main_tid, corr_to_gpu,
+                                  ext_id_to_cpu_ops, exclude_cats=None):
     """GPU events whose originating cpu_op falls within pyfn_event's window."""
     exclude_cats = exclude_cats or set()
     pyfn_ts_s = pyfn_event["ts"]
     pyfn_ts_e = pyfn_ts_s + pyfn_event["dur"]
     results = []
-    for cr in get_cuda_rt_in_window(events, cl_ts_s, cl_ts_e, main_tid):
-        ext_id = cr.get("args", {}).get("External id")
-        corr = cr.get("args", {}).get("correlation")
+    for cr in get_cuda_rt_in_window(cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                                     cl_ts_s, cl_ts_e, main_tid):
+        args   = cr.get("args") or {}
+        ext_id = args.get("External id")
+        corr   = args.get("correlation")
         gpu_ev = corr_to_gpu.get(corr)
         if gpu_ev is None or gpu_ev.get("cat") in exclude_cats:
             continue
@@ -131,14 +163,11 @@ def get_gpu_events_via_cpu_chain(events, pyfn_event, cl_ts_s, cl_ts_e,
     return results
 
 
-def get_pin_memory_events_in_window(events, ts_start, ts_end):
-    return sorted(
-        [e for e in events
-         if e.get("name") == "aten::pin_memory"
-         and e.get("cat") == "cpu_op"
-         and ts_start <= e["ts"] <= ts_end],
-        key=lambda e: e["ts"],
-    )
+def get_pin_memory_events_in_window(pin_mem_list, pin_mem_ts, ts_start, ts_end):
+    """Return aten::pin_memory events in [ts_start, ts_end] using bisect."""
+    lo = bisect.bisect_left(pin_mem_ts, ts_start)
+    hi = bisect.bisect_right(pin_mem_ts, ts_end)
+    return pin_mem_list[lo:hi]
 
 
 def get_token_boundaries(events):
@@ -206,7 +235,9 @@ def get_inner_pyfn(cl_event, parent_to_children, name_check):
     return None
 
 
-def get_gpu_events_in_forward_sep(events, cl_event, parent_to_children,
+def get_gpu_events_in_forward_sep(cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                                   gpu_event_list, gpu_event_ts,
+                                   cl_event, parent_to_children,
                                    main_tid, corr_to_gpu, ext_id_to_cpu_ops,
                                    corrs_with_cpu_rt):
     """
@@ -226,13 +257,15 @@ def get_gpu_events_in_forward_sep(events, cl_event, parent_to_children,
     mhag_ts_e = (mhag_fn["ts"] + mhag_fn["dur"]) if mhag_fn else float("inf")
 
     cuda_rt_in_fwd = get_cuda_rt_in_window(
-        events, fwd_fn["ts"], fwd_fn["ts"] + fwd_fn["dur"], main_tid
+        cuda_rt_by_tid, cuda_rt_ts_by_tid,
+        fwd_fn["ts"], fwd_fn["ts"] + fwd_fn["dur"], main_tid
     )
     results = []
     found_corrs = set()
     for cr in cuda_rt_in_fwd:
-        corr = cr.get("args", {}).get("correlation")
-        ext_id = cr.get("args", {}).get("External id")
+        args   = cr.get("args") or {}
+        corr   = args.get("correlation")
+        ext_id = args.get("External id")
         if corr is None:
             continue
         gpu_ev = corr_to_gpu.get(corr)
@@ -248,7 +281,7 @@ def get_gpu_events_in_forward_sep(events, cl_event, parent_to_children,
         results.append((gpu_ev, origin))
         found_corrs.add(corr)
 
-    # Cutlass kernels with no cuda_runtime record
+    # Cutlass kernels with no cuda_runtime record — use gpu_event_list + bisect
     if results:
         gpu_ts_min = min(r[0]["ts"] for r in results)
         gpu_ts_max = max(r[0]["ts"] + r[0]["dur"] for r in results)
@@ -256,16 +289,15 @@ def get_gpu_events_in_forward_sep(events, cl_event, parent_to_children,
         gpu_ts_min = fwd_fn["ts"]
         gpu_ts_max = fwd_fn["ts"] + fwd_fn["dur"]
 
-    for e in events:
-        if e.get("cat") not in ("kernel", "gpu_memcpy", "gpu_memset"):
-            continue
-        corr = e.get("args", {}).get("correlation")
+    lo = bisect.bisect_left(gpu_event_ts, gpu_ts_min)
+    hi = bisect.bisect_right(gpu_event_ts, gpu_ts_max + 100)
+    for e in gpu_event_list[lo:hi]:
+        corr = (e.get("args") or {}).get("correlation")
         if corr is None or corr in found_corrs or corr in corrs_with_cpu_rt:
             continue
-        if gpu_ts_min <= e["ts"] <= gpu_ts_max + 100:
-            origin = "fwd_pre_mha"
-            results.append((e, origin))
-            found_corrs.add(corr)
+        origin = "fwd_pre_mha"
+        results.append((e, origin))
+        found_corrs.add(corr)
 
     results.sort(key=lambda x: x[0]["ts"])
     return results
@@ -337,7 +369,9 @@ def is_nosep_group(cl_event, parent_to_children):
     return mha_fwd is not None
 
 
-def get_gpu_events_in_forward_nosep(events, cl_event, parent_to_children,
+def get_gpu_events_in_forward_nosep(cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                                     gpu_event_list, gpu_event_ts,
+                                     cl_event, parent_to_children,
                                      main_tid, corr_to_gpu, ext_id_to_cpu_ops,
                                      corrs_with_cpu_rt):
     """
@@ -357,13 +391,16 @@ def get_gpu_events_in_forward_nosep(events, cl_event, parent_to_children,
     mlp_ts_s  = mlp_fn["ts"] if mlp_fn else float("inf")
     mlp_ts_e  = (mlp_fn["ts"] + mlp_fn["dur"]) if mlp_fn else float("inf")
 
-    cuda_rt_in_cl = get_cuda_rt_in_window(events, cl_ts_s, cl_ts_e, main_tid)
+    cuda_rt_in_cl = get_cuda_rt_in_window(
+        cuda_rt_by_tid, cuda_rt_ts_by_tid, cl_ts_s, cl_ts_e, main_tid
+    )
     results = []
     found_corrs = set()
 
     for cr in sorted(cuda_rt_in_cl, key=lambda e: e["ts"]):
-        ext_id = cr.get("args", {}).get("External id")
-        corr = cr.get("args", {}).get("correlation")
+        args   = cr.get("args") or {}
+        ext_id = args.get("External id")
+        corr   = args.get("correlation")
         gpu_ev = corr_to_gpu.get(corr)
         if gpu_ev is None:
             continue
@@ -382,7 +419,7 @@ def get_gpu_events_in_forward_nosep(events, cl_event, parent_to_children,
         results.append((gpu_ev, origin))
         found_corrs.add(corr)
 
-    # Cutlass kernels with no cuda_runtime record (classified by GPU timestamp)
+    # Cutlass kernels with no cuda_runtime record — use gpu_event_list + bisect
     if results:
         gpu_ts_min = min(r[0]["ts"] for r in results)
         gpu_ts_max = max(r[0]["ts"] + r[0]["dur"] for r in results)
@@ -390,22 +427,21 @@ def get_gpu_events_in_forward_nosep(events, cl_event, parent_to_children,
         gpu_ts_min = cl_ts_s
         gpu_ts_max = cl_ts_e
 
-    for e in events:
-        if e.get("cat") not in ("kernel", "gpu_memcpy", "gpu_memset"):
-            continue
-        corr = e.get("args", {}).get("correlation")
+    lo = bisect.bisect_left(gpu_event_ts, gpu_ts_min)
+    hi = bisect.bisect_right(gpu_event_ts, gpu_ts_max + 100)
+    for e in gpu_event_list[lo:hi]:
+        corr = (e.get("args") or {}).get("correlation")
         if corr is None or corr in found_corrs or corr in corrs_with_cpu_rt:
             continue
-        if gpu_ts_min <= e["ts"] <= gpu_ts_max + 100:
-            gts = e["ts"]
-            if mhag_ts_s <= gts <= mhag_ts_e + 500:
-                origin = "mha_gen"
-            elif mlp_ts_s <= gts <= mlp_ts_e + 500:
-                origin = "mlp"
-            else:
-                origin = "fwd_pre"
-            results.append((e, origin))
-            found_corrs.add(corr)
+        gts = e["ts"]
+        if mhag_ts_s <= gts <= mhag_ts_e + 500:
+            origin = "mha_gen"
+        elif mlp_ts_s <= gts <= mlp_ts_e + 500:
+            origin = "mlp"
+        else:
+            origin = "fwd_pre"
+        results.append((e, origin))
+        found_corrs.add(corr)
 
     results.sort(key=lambda x: x[0]["ts"])
     return results
@@ -434,7 +470,9 @@ def identify_nosep_groups(events, parent_to_children, token_boundaries):
 # SEP metric extraction
 # ---------------------------------------------------------------------------
 
-def extract_mha_gen_metrics_sep(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
+def extract_mha_gen_metrics_sep(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                                 gpu_event_list, gpu_event_ts,
+                                 corr_to_gpu, ext_id_to_cpu_ops,
                                  corrs_with_cpu_rt, parent_to_children, main_tid):
     evts = {e["name"].split(": ")[-1]: e for e in grp["events"]}
     def dur(key):
@@ -443,7 +481,9 @@ def extract_mha_gen_metrics_sep(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
 
     cl = grp["cl"]
     tagged_gpu_ops = get_gpu_events_in_forward_sep(
-        events, cl, parent_to_children,
+        cuda_rt_by_tid, cuda_rt_ts_by_tid,
+        gpu_event_list, gpu_event_ts,
+        cl, parent_to_children,
         main_tid, corr_to_gpu, ext_id_to_cpu_ops, corrs_with_cpu_rt
     )
     metrics = {
@@ -462,7 +502,9 @@ def extract_mha_gen_metrics_sep(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
     return metrics
 
 
-def extract_mlp_metrics_sep(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
+def extract_mlp_metrics_sep(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                              corr_to_gpu, ext_id_to_cpu_ops,
+                              pin_mem_list, pin_mem_ts,
                               parent_to_children, main_tid):
     evts = {e["name"].split(": ")[-1]: e for e in grp["events"]}
     def dur(key):
@@ -480,7 +522,8 @@ def extract_mlp_metrics_sep(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
     lhc_memcpy_dur = None
     if lhc:
         lhc_gpu = get_gpu_events_in_window(
-            events, lhc["ts"], lhc["ts"] + lhc["dur"],
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            lhc["ts"], lhc["ts"] + lhc["dur"],
             main_tid, corr_to_gpu, filter_names={"cudaMemcpyAsync"}
         )
         if lhc_gpu:
@@ -490,11 +533,13 @@ def extract_mlp_metrics_sep(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
     pm1, pm2, lc_mc1, lc_mc2 = None, None, None, None
     if lc:
         lc_ts_s, lc_ts_e = lc["ts"], lc["ts"] + lc["dur"]
-        pins = get_pin_memory_events_in_window(events, lc_ts_s, lc_ts_e)
+        pins = get_pin_memory_events_in_window(pin_mem_list, pin_mem_ts,
+                                               lc_ts_s, lc_ts_e)
         if len(pins) > 0: pm1 = round(pins[0]["dur"], 3)
         if len(pins) > 1: pm2 = round(pins[1]["dur"], 3)
         lc_gpu = get_gpu_events_in_window(
-            events, lc_ts_s, lc_ts_e, main_tid, corr_to_gpu,
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            lc_ts_s, lc_ts_e, main_tid, corr_to_gpu,
             filter_names={"cudaMemcpyAsync"}
         )
         if len(lc_gpu) > 0: lc_mc1 = round(lc_gpu[0]["dur"], 3)
@@ -502,20 +547,22 @@ def extract_mlp_metrics_sep(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
 
     if mlp_fn is not None:
         cl_gpu_events = get_gpu_events_via_cpu_chain(
-            events, mlp_fn, cl_ts_s, cl_ts_e,
-            main_tid, corr_to_gpu, ext_id_to_cpu_ops,
+            cuda_rt_by_tid, cuda_rt_ts_by_tid, mlp_fn,
+            cl_ts_s, cl_ts_e, main_tid, corr_to_gpu, ext_id_to_cpu_ops,
             exclude_cats={"gpu_memset"}
         )
     else:
         cl_gpu_events = get_gpu_events_in_window(
-            events, cl_ts_s, cl_ts_e, main_tid, corr_to_gpu
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            cl_ts_s, cl_ts_e, main_tid, corr_to_gpu
         )
 
     sc = evts.get("store_cache")
     sc_mc1, sc_mc2 = None, None
     if sc:
         sc_gpu = get_gpu_events_in_window(
-            events, sc["ts"], sc["ts"] + sc["dur"],
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            sc["ts"], sc["ts"] + sc["dur"],
             main_tid, corr_to_gpu, filter_names={"cudaMemcpyAsync"}
         )
         if len(sc_gpu) > 0: sc_mc1 = round(sc_gpu[0]["dur"], 3)
@@ -547,8 +594,12 @@ def extract_mlp_metrics_sep(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
 # NOSEP metric extraction
 # ---------------------------------------------------------------------------
 
-def extract_nosep_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
-                           corrs_with_cpu_rt, parent_to_children, main_tid):
+def extract_nosep_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                           gpu_event_list, gpu_event_ts,
+                           corr_to_gpu, ext_id_to_cpu_ops,
+                           corrs_with_cpu_rt,
+                           pin_mem_list, pin_mem_ts,
+                           parent_to_children, main_tid):
     evts = {e["name"].split(": ")[-1]: e for e in grp["events"]}
     def dur(key):
         e = evts.get(key)
@@ -562,7 +613,8 @@ def extract_nosep_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
     lhc_memcpy_dur = None
     if lhc:
         lhc_gpu = get_gpu_events_in_window(
-            events, lhc["ts"], lhc["ts"] + lhc["dur"],
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            lhc["ts"], lhc["ts"] + lhc["dur"],
             main_tid, corr_to_gpu, filter_names={"cudaMemcpyAsync"}
         )
         if lhc_gpu:
@@ -573,11 +625,13 @@ def extract_nosep_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
     pm1, pm2, lc_mc1, lc_mc2 = None, None, None, None
     if lc:
         lc_ts_s, lc_ts_e = lc["ts"], lc["ts"] + lc["dur"]
-        pins = get_pin_memory_events_in_window(events, lc_ts_s, lc_ts_e)
+        pins = get_pin_memory_events_in_window(pin_mem_list, pin_mem_ts,
+                                               lc_ts_s, lc_ts_e)
         if len(pins) > 0: pm1 = round(pins[0]["dur"], 3)
         if len(pins) > 1: pm2 = round(pins[1]["dur"], 3)
         lc_gpu = get_gpu_events_in_window(
-            events, lc_ts_s, lc_ts_e, main_tid, corr_to_gpu,
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            lc_ts_s, lc_ts_e, main_tid, corr_to_gpu,
             filter_names={"cudaMemcpyAsync"}
         )
         if len(lc_gpu) > 0: lc_mc1 = round(lc_gpu[0]["dur"], 3)
@@ -585,7 +639,9 @@ def extract_nosep_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
 
     # --- compute_layer: 3-way tagged GPU ops ---
     tagged_gpu_ops = get_gpu_events_in_forward_nosep(
-        events, cl, parent_to_children,
+        cuda_rt_by_tid, cuda_rt_ts_by_tid,
+        gpu_event_list, gpu_event_ts,
+        cl, parent_to_children,
         main_tid, corr_to_gpu, ext_id_to_cpu_ops, corrs_with_cpu_rt
     )
 
@@ -594,7 +650,8 @@ def extract_nosep_metrics(grp, events, corr_to_gpu, ext_id_to_cpu_ops,
     sc_mc1, sc_mc2 = None, None
     if sc:
         sc_gpu = get_gpu_events_in_window(
-            events, sc["ts"], sc["ts"] + sc["dur"],
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            sc["ts"], sc["ts"] + sc["dur"],
             main_tid, corr_to_gpu, filter_names={"cudaMemcpyAsync"}
         )
         if len(sc_gpu) > 0: sc_mc1 = round(sc_gpu[0]["dur"], 3)
@@ -636,8 +693,11 @@ def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False):
     print(f"  {len(events)} events loaded.", file=sys.stderr)
 
     print("Building indices...", file=sys.stderr)
-    parent_to_children, py_id_map, corr_to_gpu, ext_id_to_cpu_ops, corrs_with_cpu_rt = \
-        build_indices(events)
+    (parent_to_children, py_id_map, corr_to_gpu, ext_id_to_cpu_ops,
+     corrs_with_cpu_rt,
+     cuda_rt_by_tid, cuda_rt_ts_by_tid,
+     pin_mem_list, pin_mem_ts,
+     gpu_event_list, gpu_event_ts) = build_indices(events)
     main_tid = detect_main_tid(events)
     print(f"  Main thread TID: {main_tid}", file=sys.stderr)
 
@@ -657,8 +717,12 @@ def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False):
 
         for group_num, grp in enumerate(groups, 1):
             metrics = extract_nosep_metrics(
-                grp, events, corr_to_gpu, ext_id_to_cpu_ops,
-                corrs_with_cpu_rt, parent_to_children, main_tid
+                grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                gpu_event_list, gpu_event_ts,
+                corr_to_gpu, ext_id_to_cpu_ops,
+                corrs_with_cpu_rt,
+                pin_mem_list, pin_mem_ts,
+                parent_to_children, main_tid
             )
             rows.append({"group": group_num, "token": grp["token"], **metrics})
 
@@ -672,11 +736,15 @@ def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False):
 
         for sg_num, sg in enumerate(supergroups, 1):
             mha_metrics = extract_mha_gen_metrics_sep(
-                sg["mha_gen"], events, corr_to_gpu, ext_id_to_cpu_ops,
+                sg["mha_gen"], cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                gpu_event_list, gpu_event_ts,
+                corr_to_gpu, ext_id_to_cpu_ops,
                 corrs_with_cpu_rt, parent_to_children, main_tid
             )
             mlp_metrics = extract_mlp_metrics_sep(
-                sg["mlp"], events, corr_to_gpu, ext_id_to_cpu_ops,
+                sg["mlp"], cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                corr_to_gpu, ext_id_to_cpu_ops,
+                pin_mem_list, pin_mem_ts,
                 parent_to_children, main_tid
             )
             rows.append({

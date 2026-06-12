@@ -14,7 +14,7 @@ if [ ! -d "$OUTPUT_DIR" ]; then
     exit 1
 fi
 
-for SUBDIR in "${OUTPUT_DIR}"/prompt_*_bs*/; do
+for SUBDIR in "${OUTPUT_DIR}"/prompt_*/; do
     if [ ! -d "$SUBDIR" ]; then
         continue
     fi
@@ -40,7 +40,6 @@ for SUBDIR in "${OUTPUT_DIR}"/prompt_*_bs*/; do
         fi
 
         echo "  Analyzing results: ${CSV_FILE}"
-        
         SUMMARY_FILE="${SUBDIR}${STEM}_nosep_analysis_summary.csv"
         python3 trace_result_analyzer.py "${CSV_FILE}" --nosep --out ${SUMMARY_FILE}
 
