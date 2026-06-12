@@ -175,6 +175,16 @@ def analyze_row_nosep(row, all_cols):
     compute_cuda_sum = sum_cols(row, cuda_cols)
     result["compute-cuda-sum"] = compute_cuda_sum
 
+    # recompute-cuda: sum of ops whose origin is fwd_pre (mirrors mha-gen-recompute-cuda in sep)
+    recompute_total = 0.0
+    for c in cuda_cols:
+        origin_col = c + "-origin"
+        if row.get(origin_col) == "fwd_pre":
+            v = safe_float(row.get(c))
+            if v is not None:
+                recompute_total += v
+    result["recompute-cuda"] = round(recompute_total, 3)
+
     lhc_memcpy = safe_float(row.get("load-hidden-compute-cudamemcpy")) or 0.0
     pm1  = safe_float(row.get("pin-memory-1")) or 0.0
     pm2  = safe_float(row.get("pin-memory-2")) or 0.0
@@ -239,6 +249,7 @@ def analyze_csv(input_path, output_path=None, nosep=None):
             "phase-2-A", "phase-2-B", "phase-2-C",
             "phase-2", "phase-2-winner",
             "misc-cpu",
+            "recompute-cuda",
         ]
     else:
         results = [analyze_row_sep(row, all_cols) for row in rows]

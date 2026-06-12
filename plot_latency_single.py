@@ -69,6 +69,7 @@ SEP_LEGEND_ORDER = [
 
 NOSEP_LEGEND_ORDER = [
     "Compute CUDA",
+    "Recompute CUDA",
     "Recompute Load",
     "PinnedMemory CPU",
     "KVCache Load",
@@ -145,6 +146,7 @@ def build_segments_sep(row):
 
 def build_segments_nosep(row):
     compute_cuda_sum = fv(row, "compute-cuda-sum")
+    recompute        = fv(row, "recompute-cuda")
     pin2  = fv(row, "pin-memory-2")
     lc1   = fv(row, "load-cache-cudamemcpy-1")
     lc2   = fv(row, "load-cache-cudamemcpy-2")
@@ -162,7 +164,8 @@ def build_segments_nosep(row):
         segs["PinnedMemory CPU"] = segs.get("PinnedMemory CPU", 0.0) + phase1
 
     if phase2_winner.startswith("pin-memory-2"):           # winner A
-        segs["Compute CUDA"] = compute_cuda_sum
+        segs["Compute CUDA"]   = compute_cuda_sum - recompute
+        segs["Recompute CUDA"] = recompute
         segs["PinnedMemory CPU"] = segs.get("PinnedMemory CPU", 0.0) + pin2
     elif phase2_winner.startswith("load-cache"):            # winner B
         segs["KVCache Load"] = lc1 + lc2
