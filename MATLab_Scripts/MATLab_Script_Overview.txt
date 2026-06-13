@@ -1,0 +1,97 @@
+How to use MATLAB scripts: 
+
+ForcedOffloadingAlongToken_Graphs.m (Effect of KV Cache over Sequence Length)
+- Folder: ForcedOffloadingAlongToken
+- Data: Processes each csv file in folder. 
+- Output: 
+	- -Motivation-ForcedOffloadingAlongToken.png: Bar Graph of Latency, Throughput, Energy over Sequence Length. 3 Graphs are side by side 
+	- -Motivation-MaxKVCacheAlongToken.png: Split Bar Chart of Full GPU Memory Breakdown over Sequence Length. Breakdown includes Model Weights, Hidden Layer Results, Estimated Free Memory Required, KV Cache on GPU, and Offloaded KV Cache
+	- -Motivation-CAL-DecodeThroughput.png: Combined Graph of the previous two. GPU Breakdown on top and 3 graphs on bottom
+
+
+OffloadingPercent.m (Latency Percentage from KV Cache Loading)
+- Folder: OffloadingPercent
+- Data: Processes each csv file in folder. 
+- Output: 
+	- -Motivation-OffloadingPercent.png: Histogram of Percentage of Latency Due to KV Cache Loading
+
+
+Pinned_Modeling.m (Pageable to Pinned Modeling)
+- Folder: PageableToPinned
+- Data: Consolidates and processes csv files in specified subfolder. (i.e. remote) 
+- Output: (in the pngs subfolder) 
+	- remote_pinned.png: Scatter plot of Pageable to Pinned time over Number of Bytes Moved. Quadratic curve is placed on top. Model fit is displayed in MATLAB terminal. 
+	-  PtP-PtPContribution.png: Bar graph of Pageable to Pinned Latency Contribution over Sequence Length
+
+
+Overall_Transfer_BWTrend.m (Bandwidth Modeling)
+- Folder: Transfer_bw
+- Data: Consolidates and processes csv files in specified subfolder. (i.e. bi_remote)
+- Output: 
+	- one_netsres_test.png: Scatter plot of Bandwidth (GB/s) over Number of Bytes Moved. Curve considering fixed overhead per transfer is placed on top. Model fit is displayed in MATLAB terminal.
+
+
+Flops_Modeling.m (FLOPS Modeling)
+- Folder: Flops
+- Data: Consolidates and processes csv files in specified subfolder. (i.e. remote)
+- Output: 
+	- flops_mha.png: Scatter plot of TFOPS over Number of Operations. Curve considering fixed overhead per total function is placed on top. Model fit is displayed in MATLAB terminal.
+
+
+Schedule_Latency_Heatmap.m (Latency Heatmap)
+- Folder: LatencyHeatmap
+- Data: Processes each csv file in folder. 
+- Output: 
+	- _Act_Latency_Heatmap.png: Heatmap of Experienced Latency. Axis are Recomputation Length and Block Size
+	- _Est_Latency_Heatmap.png: Heatmap of Prediction Model Latency.
+	- _Latency_PerDiff_Heatmap.png: Heatmap of Percent Difference of Predicted Latency and Experienced Latency
+	- _Est_Latency_DataTransferPer_Heatmap.png: Heatmap of Percent of Estimated Latency due to Data Transfer
+	- _CAL_Lat_Energy_Heatmap.png: Heatmap of Experienced Latency and Total Energy. Colors are based on Latency
+
+
+Schedule_Energy_heatmap.m (Energy Heatmap)
+- Folder: EnergyPattern
+- Data: Processes each csv file in folder. 
+- Output: 
+	- _GPU_Energy_Heatmap.png: Heatmap of Experienced GPU Energy. Axis are Recomputation Length and Block Size
+	- _CPU_Energy_Heatmap.png: Heatmap of Experienced CPU Energy.
+	- _Tot_Energy_Heatmap.png: Heatmap of Experienced Total Energy. 
+	- _est_GPU_Energy_Heatmap.png: Heatmap of Predicted GPU Energy. 
+
+
+Schedule_Energy_Trends.m (Energy Trends)
+- Folder: EnergyPattern
+- Data: Processes each csv file in folder. 
+- Output: 
+	- _Energy_over_Recomp_All.png: 4 graphs in a 2 x 2 format. Each graph is a double y axis bar chart for CPU and GPU Energy Over Recomputation Length of a Specific Block Size. 
+	- _CPU_Energy_and_Latency.png: 4 graphs in a 2 x 2 format. Each graph is a double y axis bar chart for CPU Energy and Latency Over Recomputation Length of a Specific Block Size.
+	- _GPU_Energy_and_Latency.png: 4 graphs in a 2 x 2 format. Each graph is a double y axis bar chart for GPU Energy and Latency Over Recomputation Length of a Specific Block Size.
+	- _Percent_Breakdown_All.png: 4 graphs in a 2 x 2 format. Each graph is a bar chart for % of Predicted Latency for Active and Transfer GPU operations Over Recomputation Length of a Specific Block Size.
+	- _CPU_Energy_and_Latency_and_GPU_and_Total.png: 4 graphs in a 2 x 2 format. Each graph is a double y axis bar chart for CPU, GPU, Total Energy, and Latency Over Recomputation Length of a Specific Block Size.
+	- _CPU_Energy_and_Latency_and_GPU_and_Total_Single.png: Double y axis bar chart for CPU, GPU, Total Energy, and Latency Over Recomputation Length of a Block Size
+
+
+ComponentComp.m (Ablation Component Heatmaps)
+- Folder: ComponentComp
+- Data: Processes each csv file in folder. 
+- Output: 
+	- *_Lat_Heatmap.png: Heatmap of Predicted Latencies with specified Component missing. (I_BW: ideal bandwidth, nP: no Pageable to Pinned, i_C: ideal Computation, All: All ideal + nP.)
+	- *_Err_Heatmap.png: Heatmap of Predicted Latencies' Error with Experienced Latency with specified Component missing.
+
+
+Optimal_Comparisons.m (Prediction Model and FlexGen/KVPR Comparison Bar Charts) 
+- Folder: OptimalComp
+- Data: Processes each csv file in folder. 
+- Output: 
+	- _all_solution_comp.png: 3 graphs in a 1 x 3 format. Each graph is a bar chart comparing the Total Energy Used of the optimal predicted hybrid KV Cache Strategy over different Sequence Lengths for a Specific Block Size. Each Bar Chart contains FlexGen/KVPR (FR), Prediction Model (L), Predicted GPU Energy Lower Bound (GE).
+
+
+Optimal_Comparisons_Components.m (Prediction Model, FlexGen/KVPR Comparison, Ablation Bar Charts)
+- Folder: OptimalCompComponent
+- Data: Processes each csv file in folder. 
+- Output: 
+	- _all_solution_comp_latency.png: 6 graphs in a 2 x 3 format. Top 3 graphs are a bar chart for the Total Energy Usage of the optimal predicted hybrid KV Cache Strategy over different Sequence Lengths for a Specific Block Size. Bottom 3 graphs are similar bar charts with Latency instead. Each bar chart includes the FlexGen/KVPR optimal strategy (FR), All ideal (ideal bandwidth, no pageable to pinned, ideal computation), Ideal Computation (I_C), Prediction Model (L), 10% less recomputation than the Prediction Model Optimal Strategy (10% R)
+
+
+
+
