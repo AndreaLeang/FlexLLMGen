@@ -45,8 +45,8 @@ import matplotlib.patches as mpatches
 # ---------------------------------------------------------------------------
 
 COLORS = {
-    "MHA CUDA":         "#2196F3",   # blue       (sep only)
-    "Recompute CUDA":   "#90CAF9",   # light blue (sep only)
+    "MHA CUDA":         "#2196F3",   # blue       (sep only, batched path2)
+    "Recompute CUDA":   "#90CAF9",   # light blue (sep, nosep winner-A, batched path2)
     "Compute CUDA":     "#2196F3",   # blue       (nosep winner-A only)
     "Recompute Load":   "#FF9800",   # orange
     "PinnedMemory CPU": "#FFC107",   # amber
@@ -77,6 +77,17 @@ NOSEP_LEGEND_ORDER = [
     "Misc. CPU",
 ]
 
+# Batched: all possible segments across all winner combinations
+BATCHED_LEGEND_ORDER = [
+    "Recompute Load",    # lhc memcpy  (path1/sp3, path2)
+    "Recompute CUDA",    # fwd_pre_mha (path2 only)
+    "MHA CUDA",          # mha_gen     (path2 only)
+    "PinnedMemory CPU",  # pm1+pm2     (path1/sp1, path1/sp2, path3)
+    "KVCache Load",      # lc1+lc2     (path1/sp2, path1/sp3)
+    "KVCache Store",     # sc1+sc2     (path3)
+    "Misc. CPU",
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -92,6 +103,11 @@ def fv(row, key):
 
 def detect_nosep(all_cols):
     return "load_weight" in all_cols and "mha-gen_load_weight" not in all_cols
+
+
+def detect_batched(all_cols, rows=None):
+    """Batched CSVs are identified by the presence of the 'critical-path' column."""
+    return "critical-path" in all_cols
 
 
 # ---------------------------------------------------------------------------
@@ -177,10 +193,77 @@ def build_segments_nosep(row):
 
 
 # ---------------------------------------------------------------------------
+# BATCHED segment builder
+# ---------------------------------------------------------------------------
+
+def build_segments_batched(row):
+    """
+    Segments follow the critical-path winner.
+
+    path1 winner — inner subpath determines segments:
+      subpath1 (pm1+pm2)  -> PinnedMemory CPU (pm1+pm2), KVCache Load (lc2)
+      subpath2 (pm1+lc1)  -> PinnedMemory CPU (pm1),      KVCache Load (lc1+lc2)
+      subpath3 (lhc+lc1)  -> Recompute Load  (lhc),        KVCache Load (lc1+lc2)
+
+    path2 winner (lhc + recompute-cuda + mha-gen-cuda):
+      Recompute Load (lhc), Recompute CUDA (fwd_pre_mha ops), MHA CUDA (mha_gen ops)
+
+    path3 winner (pm1+pm2+sc1+sc2):
+      PinnedMemory CPU (pm1+pm2), KVCache Store (sc1+sc2)
+
+    Misc. CPU = sum-all - critical-path  (always)
+    """
+    crit_winner  = row.get("critical-path-winner", "")
+    inner_winner = row.get("path1-inner-winner", "")
+
+    lhc       = fv(row, "load-hidden-compute-cudamemcpy")
+    pm1       = fv(row, "pin-memory-1")
+    pm2       = fv(row, "pin-memory-2")
+    lc1       = fv(row, "load-cache-cudamemcpy-1")
+    lc2       = fv(row, "load-cache-cudamemcpy-2")
+    sc1       = fv(row, "store-cache-cudamemcpy-1")
+    sc2       = fv(row, "store-cache-cudamemcpy-2")
+    recompute = fv(row, "recompute-cuda")
+    mha_cuda  = fv(row, "mha-gen-cuda")
+    sum_all   = fv(row, "sum-all")
+    crit      = fv(row, "critical-path")
+
+    segs = {}
+
+    if crit_winner == "path1":
+        if inner_winner == "subpath1":
+            # critical = pm1+pm2+lc2
+            segs["PinnedMemory CPU"] = pm1 + pm2
+            segs["KVCache Load"]     = lc2
+        elif inner_winner == "subpath2":
+            # critical = pm1+lc1+lc2
+            segs["PinnedMemory CPU"] = pm1
+            segs["KVCache Load"]     = lc1 + lc2
+        else:  # subpath3
+            # critical = lhc+lc1+lc2
+            segs["Recompute Load"] = lhc
+            segs["KVCache Load"]   = lc1 + lc2
+
+    elif crit_winner == "path2":
+        # critical = lhc + recompute-cuda + mha-gen-cuda
+        segs["Recompute Load"] = lhc
+        segs["Recompute CUDA"] = recompute
+        segs["MHA CUDA"]       = mha_cuda
+
+    else:  # path3
+        # critical = pm1+pm2+sc1+sc2
+        segs["PinnedMemory CPU"] = pm1 + pm2
+        segs["KVCache Store"]    = sc1 + sc2
+
+    segs["Misc. CPU"] = sum_all - crit
+    return segs
+
+
+# ---------------------------------------------------------------------------
 # Plot
 # ---------------------------------------------------------------------------
 
-def plot(csv_path, out_path=None, dpi=150, show=False, nosep=None):
+def plot(csv_path, out_path=None, dpi=150, show=False, nosep=None, batched=False):
     with open(csv_path, newline="") as f:
         reader = csv.DictReader(f)
         all_cols = reader.fieldnames or []
@@ -190,12 +273,25 @@ def plot(csv_path, out_path=None, dpi=150, show=False, nosep=None):
         print("No rows found in CSV.", file=sys.stderr)
         sys.exit(1)
 
-    if nosep is None:
-        nosep = detect_nosep(all_cols)
-    mode = "nosep" if nosep else "sep"
+    # Mode detection: explicit flags first, then auto-detect
+    if batched:
+        mode = "batched"
+    elif nosep is not None:
+        mode = "nosep" if nosep else "sep"
+    elif detect_batched(all_cols, rows):
+        mode = "batched"
+    elif detect_nosep(all_cols):
+        mode = "nosep"
+    else:
+        mode = "sep"
     print(f"Mode: {mode}", file=sys.stderr)
 
-    if nosep:
+    if mode == "batched":
+        id_col = "group"
+        all_segs = [build_segments_batched(r) for r in rows]
+        legend_order = BATCHED_LEGEND_ORDER
+        labels = [f"G{r[id_col]}\n(tok {r['token']})" for r in rows]
+    elif mode == "nosep":
         id_col = "group"
         all_segs = [build_segments_nosep(r) for r in rows]
         legend_order = NOSEP_LEGEND_ORDER
@@ -239,10 +335,9 @@ def plot(csv_path, out_path=None, dpi=150, show=False, nosep=None):
     ax.set_xticklabels(labels, fontsize=10)
     ax.set_xlim(-0.6, n - 0.4)
     ax.set_ylabel("Latency (µs)", fontsize=11)
-    ax.set_title(
-        ("Nosep" if nosep else "mha-gen + mlp") + " Latency Breakdown per Group",
-        fontsize=13, fontweight="bold", pad=12,
-    )
+    titles = {"batched": "Batched mha-gen", "nosep": "Nosep", "sep": "mha-gen + mlp"}
+    ax.set_title(titles[mode] + " Latency Breakdown per Group",
+                 fontsize=13, fontweight="bold", pad=12)
     ax.set_ylim(0, max_total * 1.13)
     ax.yaxis.grid(True, linestyle="--", alpha=0.4)
     ax.set_axisbelow(True)
@@ -267,7 +362,7 @@ def plot(csv_path, out_path=None, dpi=150, show=False, nosep=None):
     # Sanity check
     for row, segs in zip(rows, all_segs):
         seg_total = sum(segs.values())
-        if nosep:
+        if mode in ("batched", "nosep"):
             ref_total = fv(row, "sum-all")
         else:
             ref_total = fv(row, "mha-gen-sum") + fv(row, "mlp-sum")
@@ -287,18 +382,22 @@ def main():
     parser = argparse.ArgumentParser(
         description="Stacked bar plot of latency breakdown."
     )
-    parser.add_argument("csv", help="Summary CSV from analyze_csv.py.")
+    parser.add_argument("csv", help="Summary CSV from trace_result_analyzer.py.")
     parser.add_argument("--out", default=None, metavar="OUTPUT.png")
     parser.add_argument("--dpi", type=int, default=150)
     parser.add_argument("--show", action="store_true",
                         help="Call plt.show() for interactive display.")
-    parser.add_argument("--nosep", action="store_true",
-                        help="Force nosep mode (auto-detected if omitted).")
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument("--nosep", action="store_true",
+                            help="Force nosep mode (auto-detected if omitted).")
+    mode_group.add_argument("--batched", action="store_true",
+                            help="Force batched mode (auto-detected if omitted).")
     args = parser.parse_args()
 
     out = args.out or (Path(args.csv).stem + "_latency.png")
     plot(args.csv, out_path=out, dpi=args.dpi, show=args.show,
-         nosep=args.nosep if args.nosep else None)
+         nosep=args.nosep if args.nosep else None,
+         batched=args.batched)
 
 
 if __name__ == "__main__":

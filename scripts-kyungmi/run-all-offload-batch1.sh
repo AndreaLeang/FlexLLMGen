@@ -17,7 +17,7 @@ mkdir -p "$OUTPUT_DIR"
 for PROMPT_LEN in 1024 2048 3072 4096 5120 6144 7168 8192; do
     echo "=== Running prompt_len=${PROMPT_LEN} ==="
 
-    TRACES_DIR="${OUTPUT_DIR}/prompt_${PROMPT_LEN}"
+    TRACES_DIR="${OUTPUT_DIR}/prompt_${PROMPT_LEN}_nbs2_sep"
     mkdir -p "$TRACES_DIR"
 
     echo "$SUDO_PASS" | sudo -S numactl \
@@ -32,9 +32,9 @@ for PROMPT_LEN in 1024 2048 3072 4096 5120 6144 7168 8192; do
         --model facebook/opt-6.7b \
         --percent 100 0 0 100 100 0 \
         --save-to "${TRACES_DIR}" \
-        --sep-layer false \
+        --sep-layer true \
         --gpu-batch-size 1 \
-        --num-gpu-batches 1
+        --num-gpu-batches 2
 
     if [ $? -ne 0 ]; then
         echo "ERROR: Run failed for prompt_len=${PROMPT_LEN}. Continuing..."

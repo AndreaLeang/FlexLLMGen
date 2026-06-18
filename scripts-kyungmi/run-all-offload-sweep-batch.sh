@@ -17,14 +17,14 @@ NUM_GPU_BATCHES=(16 8  4  2  1)
 
 mkdir -p "$OUTPUT_DIR"
 
-for PROMPT_LEN in 4096; do
+for PROMPT_LEN in 4096 ; do
     for i in "${!GPU_BATCH_SIZES[@]}"; do
         BS="${GPU_BATCH_SIZES[$i]}"
         NB="${NUM_GPU_BATCHES[$i]}"
 
         echo "=== Running prompt_len=${PROMPT_LEN}, gpu_batch_size=${BS}, num_gpu_batches=${NB} ==="
 
-        TRACES_DIR="${OUTPUT_DIR}/prompt_${PROMPT_LEN}_bs${BS}"
+        TRACES_DIR="${OUTPUT_DIR}/prompt_${PROMPT_LEN}_bs${BS}_sep"
         mkdir -p "$TRACES_DIR"
 
         echo "$SUDO_PASS" | sudo -S numactl \
@@ -41,7 +41,7 @@ for PROMPT_LEN in 4096; do
             --model facebook/opt-6.7b \
             --percent 100 0 0 100 100 0 \
             --save-to "${TRACES_DIR}" \
-            --sep-layer false
+            --sep-layer true
 
         if [ $? -ne 0 ]; then
             echo "ERROR: Run failed for prompt_len=${PROMPT_LEN}, bs=${BS}. Continuing..."

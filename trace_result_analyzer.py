@@ -33,7 +33,7 @@ NOSEP mode (--nosep flag or auto-detected):
   misc-cpu               : sum-all - phase-1 - phase-2
 
 Usage:
-    python analyze_csv.py <input.csv> [--out output.csv] [--nosep]
+    python trace_result_analyzer.py <input.csv> [--out output.csv] [--nosep | --batched]
 """
 
 import csv
@@ -49,6 +49,12 @@ def safe_float(val):
         return None
 
 
+def fv(row, key):
+    """Return float value for a CSV cell, defaulting to 0.0."""
+    v = safe_float(row.get(key))
+    return v if v is not None else 0.0
+
+
 def sum_cols(row, col_names):
     total = 0.0
     for c in col_names:
@@ -60,6 +66,15 @@ def sum_cols(row, col_names):
 
 def detect_nosep(all_cols):
     return "load_weight" in all_cols and "mha-gen_load_weight" not in all_cols
+
+
+def detect_batched(all_cols):
+    """
+    Batched CSVs have 'group' and 'load_weight' (like nosep) but their
+    compute-cuda-N-origin tags use 'fwd_pre_mha' (not 'fwd_pre' as in nosep).
+    We detect by checking for at least one fwd_pre_mha origin column.
+    """
+    return any(c.endswith("-origin") and "compute-cuda-" in c for c in all_cols)
 
 
 # ---------------------------------------------------------------------------
@@ -223,10 +238,107 @@ def analyze_row_nosep(row, all_cols):
 
 
 # ---------------------------------------------------------------------------
+# BATCHED row analysis
+# ---------------------------------------------------------------------------
+
+def analyze_row_batched(row, all_cols):
+    """
+    Batched mode analysis. Computes:
+
+    sum-all:
+      Sum of all 8 op durations.
+
+    recompute-cuda:
+      Sum of compute-cuda-N ops whose origin is 'fwd_pre_mha'.
+
+    mha-gen-cuda:
+      Sum of compute-cuda-N ops whose origin is 'mha_gen'.
+
+    Critical path = max(path1, path2, path3):
+
+      path1 = max(subpath1, subpath2, subpath3) + load-cache-cudamemcpy-2
+        subpath1 = pin-memory-1 + pin-memory-2
+        subpath2 = pin-memory-1 + load-cache-cudamemcpy-1
+        subpath3 = load-hidden-compute-cudamemcpy + load-cache-cudamemcpy-1
+
+      path2 = load-hidden-compute-cudamemcpy + recompute-cuda + mha-gen-cuda
+
+      path3 = pin-memory-1 + pin-memory-2
+              + store-cache-cudamemcpy-1 + store-cache-cudamemcpy-2
+    """
+    result = dict(row)
+
+    OPS_8 = [
+        "load_weight", "load_hidden_compute", "load_cache", "load_hidden",
+        "compute_layer", "store_cache", "store_hidden", "sync",
+    ]
+    result["sum-all"] = sum_cols(row, OPS_8)
+
+    # Split compute-cuda ops by origin
+    cuda_cols = sorted(
+        [c for c in all_cols if c.startswith("compute-cuda-")
+         and not c.endswith("-origin")],
+        key=lambda c: int(c.split("-")[-1])
+    )
+    recompute_total = 0.0
+    mha_gen_total   = 0.0
+    for c in cuda_cols:
+        v = safe_float(row.get(c))
+        if v is None:
+            continue
+        origin = row.get(c + "-origin", "")
+        if origin == "fwd_pre_mha":
+            recompute_total += v
+        elif origin == "mha_gen":
+            mha_gen_total += v
+    result["recompute-cuda"] = round(recompute_total, 3)
+    result["mha-gen-cuda"]   = round(mha_gen_total, 3)
+
+    lhc = fv(row, "load-hidden-compute-cudamemcpy")
+    pm1 = fv(row, "pin-memory-1")
+    pm2 = fv(row, "pin-memory-2")
+    lc1 = fv(row, "load-cache-cudamemcpy-1")
+    lc2 = fv(row, "load-cache-cudamemcpy-2")
+    sc1 = fv(row, "store-cache-cudamemcpy-1")
+    sc2 = fv(row, "store-cache-cudamemcpy-2")
+
+    # --- path1 ---
+    sp1 = round(pm1 + pm2, 3)
+    sp2 = round(pm1 + lc1, 3)
+    sp3 = round(lhc + lc1, 3)
+    result["path1-subpath1"] = sp1
+    result["path1-subpath2"] = sp2
+    result["path1-subpath3"] = sp3
+
+    path1_inner     = max(sp1, sp2, sp3)
+    path1_inner_idx = [sp1, sp2, sp3].index(path1_inner) + 1
+    path1           = round(path1_inner + lc2, 3)
+    result["path1-inner"]        = path1_inner
+    result["path1-inner-winner"] = f"subpath{path1_inner_idx}"
+    result["path1"]              = path1
+
+    # --- path2 ---
+    path2 = round(lhc + recompute_total + mha_gen_total, 3)
+    result["path2"] = path2
+
+    # --- path3 ---
+    path3 = round(pm1 + pm2 + sc1 + sc2, 3)
+    result["path3"] = path3
+
+    # --- critical path ---
+    crit = max(path1, path2, path3)
+    crit_idx = [path1, path2, path3].index(crit) + 1
+    result["critical-path"]        = crit
+    result["critical-path-winner"] = f"path{crit_idx}"
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def analyze_csv(input_path, output_path=None, nosep=None):
+def analyze_csv(input_path, output_path=None, nosep=None, batched=False):
     input_path = Path(input_path)
 
     with open(input_path, newline="") as f:
@@ -236,12 +348,37 @@ def analyze_csv(input_path, output_path=None, nosep=None):
 
     print(f"Loaded {len(rows)} rows, {len(all_cols)} columns.", file=sys.stderr)
 
-    if nosep is None:
-        nosep = detect_nosep(all_cols)
-    mode = "nosep" if nosep else "sep"
+    # Mode resolution: explicit flags take priority; otherwise auto-detect
+    if batched:
+        mode = "batched"
+    elif nosep is None:
+        if detect_nosep(all_cols) and detect_batched(all_cols):
+            # Both look like nosep structure — check origin tag values to distinguish
+            # batched uses 'fwd_pre_mha'; nosep uses 'fwd_pre'
+            origin_vals = {row.get(c, "") for row in rows[:5]
+                           for c in all_cols if c.endswith("-origin")}
+            mode = "batched" if "fwd_pre_mha" in origin_vals else "nosep"
+        elif detect_nosep(all_cols):
+            mode = "nosep"
+        else:
+            mode = "sep"
+    else:
+        mode = "nosep" if nosep else "sep"
+
     print(f"Mode: {mode}", file=sys.stderr)
 
-    if nosep:
+    if mode == "batched":
+        results = [analyze_row_batched(row, all_cols) for row in rows]
+        derived_cols = [
+            "sum-all",
+            "recompute-cuda", "mha-gen-cuda",
+            "path1-subpath1", "path1-subpath2", "path1-subpath3",
+            "path1-inner", "path1-inner-winner", "path1",
+            "path2",
+            "path3",
+            "critical-path", "critical-path-winner",
+        ]
+    elif mode == "nosep":
         results = [analyze_row_nosep(row, all_cols) for row in rows]
         derived_cols = [
             "sum-all", "compute-cuda-sum",
@@ -282,15 +419,21 @@ def main():
     parser = argparse.ArgumentParser(
         description="Summarize trace CSV with derived latency phase metrics."
     )
-    parser.add_argument("input", help="Input CSV from analyze_trace.py.")
+    parser.add_argument("input", help="Input CSV from trace_analyzer.py.")
     parser.add_argument("--out", default=None, metavar="OUTPUT.csv")
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--nosep", action="store_true",
         help="Force nosep mode (auto-detected if omitted).",
     )
+    mode_group.add_argument(
+        "--batched", action="store_true",
+        help="Use batched mode: critical-path analysis for consecutive mha_gen groups.",
+    )
     args = parser.parse_args()
     analyze_csv(args.input, output_path=args.out,
-                nosep=args.nosep if args.nosep else None)
+                nosep=args.nosep if args.nosep else None,
+                batched=args.batched)
 
 
 if __name__ == "__main__":

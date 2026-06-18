@@ -2,7 +2,7 @@
 """
 Torch profile trace analyzer for FlexLLMGen / flex_opt_kvpr traces.
 
-Two modes:
+Three modes:
 
 --sep (default):
   Each output row is a supergroup = consecutive mha_gen -> mlp pair from decode.
@@ -15,8 +15,16 @@ Two modes:
   compute_layer contains both mha_gen and mlp in one forward pass.
   CUDA ops tagged: 'fwd_pre' (before mha_gen in forward), 'mha_gen', or 'mlp'.
 
+--batched:
+  Each output row is the FIRST group of a consecutive mha_gen->mha_gen pair
+  from decode (token >= 1). The first such pair (warm-up) is skipped.
+  Reports the same 8 ops as sep mha_gen groups, plus load_cache pin_memory
+  sub-ops and store_cache memcpy sub-ops.
+  compute_layer CUDA ops tagged 'mha_gen' or 'fwd_pre_mha'.
+
 Usage:
-    python analyze_trace.py <trace.json> [--max-groups N] [--out output.csv] [--nosep]
+    python trace_analyzer.py <trace.json> [--max-groups N] [--out output.csv]
+                                          [--nosep | --batched]
 
 All durations in microseconds (us).
 """
@@ -467,6 +475,175 @@ def identify_nosep_groups(events, parent_to_children, token_boundaries):
 
 
 # ---------------------------------------------------------------------------
+# BATCHED mode helpers
+# ---------------------------------------------------------------------------
+
+def identify_batched_groups(events, parent_to_children, token_boundaries):
+    """
+    BATCHED mode: find all 8-op groups that are mha_gen AND whose immediately
+    following 8-op group is also mha_gen (i.e., the first of a consecutive pair).
+    All prefill (token 0) groups are skipped, and the first qualifying pair
+    across all decode tokens is skipped as warm-up.
+
+    Each returned group dict includes 'async_sc_siblings': a sorted list of
+    sibling store_cache python_function events (under the same generation_loop
+    parent) that may be searched with bisect to find the async store_cache
+    dispatcher after sync ends.  Building this once here avoids re-sorting
+    the full sibling list (16 000+ events) on every call to extract_batched_metrics.
+    """
+    gen_children = get_gen_children(events, parent_to_children)
+    all_groups = []
+    # Cache: gen_loop_parent_id -> sorted list of async store_cache siblings
+    _sc_sibling_cache = {}
+
+    for ti, (ts_start, ts_end) in enumerate(token_boundaries):
+        if ti == 0:
+            continue  # skip prefill
+        token_8ops = [e for e in gen_children
+                      if is_op8(e) and ts_start <= e["ts"] <= ts_end]
+        grps = []
+        i = 0
+        while i + 7 < len(token_8ops):
+            grp = token_8ops[i:i + 8]
+            cl = next((e for e in grp if "compute_layer" in e.get("name", "")), None)
+            if cl is not None:
+                ftype = get_compute_layer_type_sep(cl, parent_to_children)
+                grps.append({"token": ti, "type": ftype, "events": grp, "cl": cl})
+            i += 8
+        # Collect the first group of each consecutive mha_gen->mha_gen pair
+        for j in range(len(grps) - 1):
+            if grps[j]["type"] == "mha_gen" and grps[j + 1]["type"] == "mha_gen":
+                g = grps[j]
+                # Build async store_cache sibling list once per gen_loop parent
+                outer_sc = next(
+                    (e for e in g["events"] if "store_cache" in e.get("name", "")),
+                    None
+                )
+                async_sc_siblings = []
+                if outer_sc is not None:
+                    pid = outer_sc["args"].get("Python parent id")
+                    if pid is not None:
+                        if pid not in _sc_sibling_cache:
+                            siblings = parent_to_children.get(pid, [])
+                            tid_val = outer_sc.get("tid")
+                            sc_sib = sorted(
+                                [s for s in siblings
+                                 if "store_cache" in s.get("name", "")
+                                 and s.get("tid") == tid_val],
+                                key=lambda e: e["ts"]
+                            )
+                            _sc_sibling_cache[pid] = sc_sib
+                        async_sc_siblings = _sc_sibling_cache[pid]
+                g["async_sc_siblings"] = async_sc_siblings
+                all_groups.append(g)
+
+    return all_groups[1:]  # skip warm-up (first batched group)
+
+
+def extract_batched_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                             gpu_event_list, gpu_event_ts,
+                             corr_to_gpu, ext_id_to_cpu_ops,
+                             corrs_with_cpu_rt,
+                             pin_mem_list, pin_mem_ts,
+                             parent_to_children, main_tid):
+    """
+    BATCHED mode metric extraction for a single mha_gen group.
+    Reports the 8 ops plus sub-ops for load_hidden_compute, load_cache,
+    store_cache (same as nosep), and compute_layer CUDA ops tagged
+    'mha_gen' or 'fwd_pre_mha' (same as sep mha_gen).
+    """
+    evts = {e["name"].split(": ")[-1]: e for e in grp["events"]}
+    def dur(key):
+        e = evts.get(key)
+        return round(e["dur"], 3) if e else None
+
+    cl = grp["cl"]
+
+    # compute_layer CUDA ops: same tagging as sep mha_gen (fwd_pre_mha / mha_gen)
+    tagged_gpu_ops = get_gpu_events_in_forward_sep(
+        cuda_rt_by_tid, cuda_rt_ts_by_tid,
+        gpu_event_list, gpu_event_ts,
+        cl, parent_to_children,
+        main_tid, corr_to_gpu, ext_id_to_cpu_ops, corrs_with_cpu_rt
+    )
+
+    # load_hidden_compute cudaMemcpyAsync
+    lhc = evts.get("load_hidden_compute")
+    lhc_memcpy_dur = None
+    if lhc:
+        lhc_gpu = get_gpu_events_in_window(
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            lhc["ts"], lhc["ts"] + lhc["dur"],
+            main_tid, corr_to_gpu, filter_names={"cudaMemcpyAsync"}
+        )
+        if lhc_gpu:
+            lhc_memcpy_dur = round(lhc_gpu[0]["dur"], 3)
+
+    # load_cache: pin_memory x2, cudaMemcpyAsync x2
+    lc = evts.get("load_cache")
+    pm1, pm2, lc_mc1, lc_mc2 = None, None, None, None
+    if lc:
+        lc_ts_s, lc_ts_e = lc["ts"], lc["ts"] + lc["dur"]
+        pins = get_pin_memory_events_in_window(pin_mem_list, pin_mem_ts,
+                                               lc_ts_s, lc_ts_e)
+        if len(pins) > 0: pm1 = round(pins[0]["dur"], 3)
+        if len(pins) > 1: pm2 = round(pins[1]["dur"], 3)
+        lc_gpu = get_gpu_events_in_window(
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            lc_ts_s, lc_ts_e, main_tid, corr_to_gpu,
+            filter_names={"cudaMemcpyAsync"}
+        )
+        if len(lc_gpu) > 0: lc_mc1 = round(lc_gpu[0]["dur"], 3)
+        if len(lc_gpu) > 1: lc_mc2 = round(lc_gpu[1]["dur"], 3)
+
+    # store_cache: the 8-op group's store_cache only acquires a CUDA stream and
+    # dispatches no memcpy. The actual DtoH transfers are dispatched by a sibling
+    # store_cache call (flex_opt_kvpr.py(932)) that runs after sync ends, under the
+    # same generation_loop parent. identify_batched_groups pre-builds a sorted list
+    # of these siblings; we bisect to find the first one after sync ends.
+    sync_e = evts.get("sync")
+    sc_mc1, sc_mc2 = None, None
+    if sync_e is not None:
+        sync_end = sync_e["ts"] + sync_e["dur"]
+        async_sc_siblings = grp.get("async_sc_siblings", [])
+        if async_sc_siblings:
+            sc_ts_list = [s["ts"] for s in async_sc_siblings]
+            lo = bisect.bisect_left(sc_ts_list, sync_end)
+            if lo < len(async_sc_siblings):
+                async_sc = async_sc_siblings[lo]
+                sc_gpu = get_gpu_events_in_window(
+                    cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                    async_sc["ts"], async_sc["ts"] + async_sc["dur"],
+                    main_tid, corr_to_gpu, filter_names={"cudaMemcpyAsync"}
+                )
+                if len(sc_gpu) > 0: sc_mc1 = round(sc_gpu[0]["dur"], 3)
+                if len(sc_gpu) > 1: sc_mc2 = round(sc_gpu[1]["dur"], 3)
+
+    metrics = {
+        "load_weight":                    dur("load_weight"),
+        "load_hidden_compute":             dur("load_hidden_compute"),
+        "load-hidden-compute-cudamemcpy":  lhc_memcpy_dur,
+        "load_cache":                      dur("load_cache"),
+        "pin-memory-1":                    pm1,
+        "pin-memory-2":                    pm2,
+        "load-cache-cudamemcpy-1":         lc_mc1,
+        "load-cache-cudamemcpy-2":         lc_mc2,
+        "load_hidden":                     dur("load_hidden"),
+        "compute_layer":                   dur("compute_layer"),
+        "store_cache":                     dur("store_cache"),
+        "store-cache-cudamemcpy-1":        sc_mc1,
+        "store-cache-cudamemcpy-2":        sc_mc2,
+        "store_hidden":                    dur("store_hidden"),
+        "sync":                            dur("sync"),
+    }
+    for idx, (gpu_ev, origin) in enumerate(tagged_gpu_ops, 1):
+        metrics[f"compute-cuda-{idx}"] = round(gpu_ev["dur"], 3)
+        metrics[f"compute-cuda-{idx}-origin"] = origin
+
+    return metrics
+
+
+# ---------------------------------------------------------------------------
 # SEP metric extraction
 # ---------------------------------------------------------------------------
 
@@ -685,7 +862,7 @@ def extract_nosep_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
 # Main analysis
 # ---------------------------------------------------------------------------
 
-def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False):
+def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False, batched=False):
     print(f"Loading trace: {trace_path}", file=sys.stderr)
     with open(trace_path) as f:
         data = json.load(f)
@@ -707,7 +884,27 @@ def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False):
 
     rows = []
 
-    if nosep:
+    if batched:
+        print("Mode: BATCHED — identifying first-of-consecutive-mha_gen groups...",
+              file=sys.stderr)
+        groups = identify_batched_groups(events, parent_to_children, token_boundaries)
+        print(f"  {len(groups)} batched groups (warm-up skipped).", file=sys.stderr)
+        if max_groups is not None:
+            groups = groups[:max_groups]
+            print(f"  Limiting to first {max_groups} groups.", file=sys.stderr)
+
+        for group_num, grp in enumerate(groups, 1):
+            metrics = extract_batched_metrics(
+                grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                gpu_event_list, gpu_event_ts,
+                corr_to_gpu, ext_id_to_cpu_ops,
+                corrs_with_cpu_rt,
+                pin_mem_list, pin_mem_ts,
+                parent_to_children, main_tid
+            )
+            rows.append({"group": group_num, "token": grp["token"], **metrics})
+
+    elif nosep:
         print("Mode: NOSEP — identifying merged mha+mlp groups...", file=sys.stderr)
         groups = identify_nosep_groups(events, parent_to_children, token_boundaries)
         print(f"  {len(groups)} nosep groups (warm-up skipped).", file=sys.stderr)
@@ -767,7 +964,12 @@ def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False):
     all_cols = fixed_cols + dynamic_cols
 
     if output_path is None:
-        suffix = "_nosep_analysis.csv" if nosep else "_analysis.csv"
+        if batched:
+            suffix = "_batched_analysis.csv"
+        elif nosep:
+            suffix = "_nosep_analysis.csv"
+        else:
+            suffix = "_analysis.csv"
         output_path = Path(trace_path).stem + suffix
     output_path = Path(output_path)
 
@@ -798,13 +1000,18 @@ def main():
         "--out", default=None, metavar="OUTPUT.csv",
         help="Output CSV path.",
     )
-    parser.add_argument(
+    mode_group = parser.add_mutually_exclusive_group()
+    mode_group.add_argument(
         "--nosep", action="store_true",
         help="Use nosep mode: merged mha+mlp compute_layer.",
     )
+    mode_group.add_argument(
+        "--batched", action="store_true",
+        help="Use batched mode: first group of each consecutive mha_gen->mha_gen pair.",
+    )
     args = parser.parse_args()
     analyze_trace(args.trace, max_groups=args.max_groups,
-                  output_path=args.out, nosep=args.nosep)
+                  output_path=args.out, nosep=args.nosep, batched=args.batched)
 
 
 if __name__ == "__main__":

@@ -3,34 +3,21 @@
 Multi-workload stacked bar plot.
 
 Scans a folder for subdirectories named:
-    prompt_{prompt_length}
-    prompt_{prompt_length}_bs{batchsize}   (batchsize=1 if omitted)
+    prompt_{N}
+    prompt_{N}_bs{B}
+    prompt_{N}_recompute_{R}
+    prompt_{N}_bs{B}_recompute_{R}
+    prompt_{N}_bs{B}_sep
+    prompt_{N}_bs{B}_recompute_{R}_sep
+    (suffixes _bs{B}, _recompute_{R}, _sep in any order)
 
 In each subdirectory, finds the first file matching *_summary.csv,
-reads only the first group/supergroup row, auto-detects sep vs nosep,
+reads rows (averaged per --avg / --avg-n), auto-detects sep/nosep/batched,
 builds latency segments, and plots all workloads side-by-side.
-
-X-ticks are labeled by subfolder name (prompt length and batch size).
-
-Segments — sep mode (bottom to top):
-  MHA CUDA, Recompute CUDA,
-  Phase-1: Recompute Load or PinnedMemory CPU
-  Phase-2: MLP CUDA + PinnedMemory CPU (A), KVCache Load (B), KVCache Store (C)
-  Misc. CPU
-
-Segments — nosep mode (bottom to top):
-  Phase-1: Recompute Load or PinnedMemory CPU
-  Phase-2: Compute CUDA + PinnedMemory CPU (A), KVCache Load (B), KVCache Store (C)
-  Misc. CPU
 
 Usage:
     python plot_multi_workload.py <folder> [--out output.png] [--dpi 150] [--show]
-                                           [--avg | --avg-n N]
-
-Averaging options (mutually exclusive):
-    (default)   Use only the first complete row from each summary CSV.
-    --avg       Average all complete rows (rows with any empty numeric column dropped).
-    --avg-n N   Average the first N complete rows.
+                                           [--avg | --avg-n N] [--batched]
 """
 
 import argparse
@@ -45,7 +32,7 @@ import matplotlib.patches as mpatches
 
 
 # ---------------------------------------------------------------------------
-# Colors and legend ordering (shared with plot_latency.py)
+# Colors and legend ordering (shared with plot_latency_single.py)
 # ---------------------------------------------------------------------------
 
 COLORS = {
@@ -76,6 +63,16 @@ NOSEP_LEGEND_ORDER = [
     "Misc. CPU",
 ]
 
+BATCHED_LEGEND_ORDER = [
+    "Recompute Load",
+    "Recompute CUDA",
+    "MHA CUDA",
+    "PinnedMemory CPU",
+    "KVCache Load",
+    "KVCache Store",
+    "Misc. CPU",
+]
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -93,8 +90,13 @@ def detect_nosep(all_cols):
     return "load_weight" in all_cols and "mha-gen_load_weight" not in all_cols
 
 
+def detect_batched(all_cols, rows=None):
+    """Batched CSVs are identified by the presence of the 'critical-path' column."""
+    return "critical-path" in all_cols
+
+
 # ---------------------------------------------------------------------------
-# Segment builders (identical logic to plot_latency.py)
+# Segment builders (identical logic to plot_latency_single.py)
 # ---------------------------------------------------------------------------
 
 def build_segments_sep(row):
@@ -166,15 +168,58 @@ def build_segments_nosep(row):
     return segs
 
 
+def build_segments_batched(row):
+    """Identical to plot_latency_single.py's build_segments_batched."""
+    crit_winner  = row.get("critical-path-winner", "")
+    inner_winner = row.get("path1-inner-winner", "")
+
+    lhc       = fv(row, "load-hidden-compute-cudamemcpy")
+    pm1       = fv(row, "pin-memory-1")
+    pm2       = fv(row, "pin-memory-2")
+    lc1       = fv(row, "load-cache-cudamemcpy-1")
+    lc2       = fv(row, "load-cache-cudamemcpy-2")
+    sc1       = fv(row, "store-cache-cudamemcpy-1")
+    sc2       = fv(row, "store-cache-cudamemcpy-2")
+    recompute = fv(row, "recompute-cuda")
+    mha_cuda  = fv(row, "mha-gen-cuda")
+    sum_all   = fv(row, "sum-all")
+    crit      = fv(row, "critical-path")
+
+    segs = {}
+
+    if crit_winner == "path1":
+        if inner_winner == "subpath1":
+            segs["PinnedMemory CPU"] = pm1 + pm2
+            segs["KVCache Load"]     = lc2
+        elif inner_winner == "subpath2":
+            segs["PinnedMemory CPU"] = pm1
+            segs["KVCache Load"]     = lc1 + lc2
+        else:  # subpath3
+            segs["Recompute Load"] = lhc
+            segs["KVCache Load"]   = lc1 + lc2
+    elif crit_winner == "path2":
+        segs["Recompute Load"] = lhc
+        segs["Recompute CUDA"] = recompute
+        segs["MHA CUDA"]       = mha_cuda
+    else:  # path3
+        segs["PinnedMemory CPU"] = pm1 + pm2
+        segs["KVCache Store"]    = sc1 + sc2
+
+    segs["Misc. CPU"] = sum_all - crit
+    return segs
+
+
 # ---------------------------------------------------------------------------
 # Folder scanning
 # ---------------------------------------------------------------------------
 
-# Base pattern: prompt_{N} followed by any combination of _bs{B} and _recompute_{R}
-# in any order (e.g. prompt_2048_bs4_recompute_512 or prompt_2048_recompute_512_bs4)
-SUBDIR_PATTERN  = re.compile(r"^prompt_(\d+)((?:_(?:bs\d+|recompute_\d+))*)$", re.IGNORECASE)
-BS_PATTERN      = re.compile(r"_bs(\d+)", re.IGNORECASE)
+# Base pattern: prompt_{N} followed by any combination of _bs{B}, _nbs{B},
+# _recompute_{R}, _sep in any order.
+SUBDIR_PATTERN    = re.compile(r"^prompt_(\d+)((?:_(?:nbs\d+|bs\d+|recompute_\d+|sep))*)$", re.IGNORECASE)
+BS_PATTERN        = re.compile(r"_bs(\d+)", re.IGNORECASE)
+NBS_PATTERN       = re.compile(r"_nbs(\d+)", re.IGNORECASE)
 RECOMPUTE_PATTERN = re.compile(r"_recompute_(\d+)", re.IGNORECASE)
+SEP_PATTERN       = re.compile(r"_sep(?:_|$)", re.IGNORECASE)
 
 
 def parse_subdir(name):
@@ -182,22 +227,28 @@ def parse_subdir(name):
     Parse a subdir name such as:
         prompt_2048
         prompt_2048_bs4
+        prompt_2048_nbs2
         prompt_2048_recompute_512
         prompt_2048_bs4_recompute_512
-        prompt_2048_recompute_512_bs4
-    Returns (prompt_length, batch_size, recompute_length) or None if no match.
-    recompute_length is None when not present; batch_size defaults to 1.
+        prompt_2048_bs4_sep
+        prompt_2048_nbs2_sep
+        prompt_2048_bs4_recompute_512_sep
+    Returns (prompt_length, batch_size, num_batches, recompute_length, is_sep) or None if no match.
+    batch_size defaults to 1; num_batches defaults to 1; recompute_length is None when absent; is_sep is bool.
     """
     m = SUBDIR_PATTERN.match(name)
     if not m:
         return None
     prompt_len = int(m.group(1))
     rest = m.group(2)
-    bs_m = BS_PATTERN.search(rest)
-    rc_m = RECOMPUTE_PATTERN.search(rest)
-    batch_size = int(bs_m.group(1)) if bs_m else 1
-    recompute  = int(rc_m.group(1)) if rc_m else None
-    return prompt_len, batch_size, recompute
+    bs_m  = BS_PATTERN.search(rest)
+    nbs_m = NBS_PATTERN.search(rest)
+    rc_m  = RECOMPUTE_PATTERN.search(rest)
+    batch_size  = int(bs_m.group(1))  if bs_m  else 1
+    num_batches = int(nbs_m.group(1)) if nbs_m else 1
+    recompute   = int(rc_m.group(1))  if rc_m  else None
+    is_sep      = bool(SEP_PATTERN.search(rest))
+    return prompt_len, batch_size, num_batches, recompute, is_sep
 
 
 def find_summary_csv(subdir: Path):
@@ -227,7 +278,6 @@ def load_averaged_row(csv_path: Path, max_rows: int = None):
     if not all_rows:
         return None, [], 0
 
-    # Identify numeric columns (those that can be float-parsed on the first row)
     first = all_rows[0]
     numeric_cols = []
     string_cols  = []
@@ -239,7 +289,6 @@ def load_averaged_row(csv_path: Path, max_rows: int = None):
         except (ValueError, TypeError):
             string_cols.append(c)
 
-    # Keep only rows where all numeric columns are non-empty
     complete_rows = [
         r for r in all_rows
         if all(r.get(c, "") not in ("", None) for c in numeric_cols)
@@ -253,7 +302,6 @@ def load_averaged_row(csv_path: Path, max_rows: int = None):
 
     n = len(complete_rows)
 
-    # Average numeric columns; take values from the first complete row for string cols
     averaged = {}
     for c in numeric_cols:
         averaged[c] = str(round(sum(float(r[c]) for r in complete_rows) / n, 6))
@@ -263,26 +311,32 @@ def load_averaged_row(csv_path: Path, max_rows: int = None):
     return averaged, cols, n
 
 
-def make_label(prompt_len, batch_size, recompute):
+def make_label(prompt_len, batch_size, num_batches, recompute, is_sep=False):
     """
     Build a multi-line x-tick label showing all non-default dimensions.
       prompt length always shown as p{N}
       batch size shown as bs{B} only if > 1
+      num batches shown as nbs{B} only if > 1
       recompute shown as rc{R} only if present
+      sep shown as 'sep' only if True
     """
     parts = [f"p{prompt_len}"]
     if batch_size != 1:
         parts.append(f"bs{batch_size}")
+    if num_batches != 1:
+        parts.append(f"nbs{num_batches}")
     if recompute is not None:
         parts.append(f"rc{recompute}")
+    if is_sep:
+        parts.append("sep")
     return "\n".join(parts)
 
 
 def scan_folder(folder: Path, avg_n: int = None):
     """
     Scan folder for prompt_* subdirs, return list of:
-      (label, prompt_len, batch_size, recompute, row, cols, nosep)
-    sorted by (prompt_len, batch_size, recompute).
+      (label, prompt_len, batch_size, recompute, is_sep, row, cols, mode_str)
+    sorted by (prompt_len, batch_size, recompute, is_sep).
 
     avg_n: number of complete rows to average per CSV.
            None means average all complete rows.
@@ -296,7 +350,7 @@ def scan_folder(folder: Path, avg_n: int = None):
         if parsed is None:
             print(f"  Skipping '{subdir.name}' (no match)", file=sys.stderr)
             continue
-        prompt_len, batch_size, recompute = parsed
+        prompt_len, batch_size, num_batches, recompute, is_sep = parsed
         csv_path = find_summary_csv(subdir)
         if csv_path is None:
             print(f"  No *_summary.csv in '{subdir.name}', skipping", file=sys.stderr)
@@ -305,16 +359,20 @@ def scan_folder(folder: Path, avg_n: int = None):
         if row is None:
             print(f"  No complete rows in '{subdir.name}', skipping", file=sys.stderr)
             continue
-        nosep = detect_nosep(cols)
-        label = make_label(prompt_len, batch_size, recompute)
-        entries.append((label, prompt_len, batch_size, recompute, row, cols, nosep))
+        is_batched = detect_batched(cols, [row])
+        is_nosep   = detect_nosep(cols)
+        mode_str   = "batched" if is_batched else ("nosep" if is_nosep else "sep")
+        label = make_label(prompt_len, batch_size, num_batches, recompute, is_sep)
+        entries.append((label, prompt_len, batch_size, num_batches, recompute, is_sep, row, cols, mode_str))
         rc_str  = f"  recompute={recompute}" if recompute is not None else ""
+        nbs_str = f"  nbs={num_batches}" if num_batches != 1 else ""
+        sep_str = "  sep" if is_sep else ""
         avg_str = f"avg over {n_used} rows" if avg_n is None else f"avg over first {n_used} rows"
-        print(f"  '{subdir.name}' -> {'nosep' if nosep else 'sep'}{rc_str}  "
+        print(f"  '{subdir.name}' -> {mode_str}{rc_str}{nbs_str}{sep_str}  "
               f"{avg_str}  csv={csv_path.name}", file=sys.stderr)
 
-    # Sort by (prompt_len, batch_size, recompute) — None sorts before any int
-    entries.sort(key=lambda e: (e[1], e[2], e[3] if e[3] is not None else -1))
+    # Sort by (prompt_len, batch_size, num_batches, recompute, is_sep)
+    entries.sort(key=lambda e: (e[1], e[2], e[3], e[4] if e[4] is not None else -1, e[5]))
     return entries
 
 
@@ -322,7 +380,7 @@ def scan_folder(folder: Path, avg_n: int = None):
 # Plot
 # ---------------------------------------------------------------------------
 
-def plot(folder, out_path=None, dpi=150, show=False, avg_n=None):
+def plot(folder, out_path=None, dpi=150, show=False, avg_n=None, batched=False):
     folder = Path(folder)
     if not folder.is_dir():
         print(f"Error: '{folder}' is not a directory.", file=sys.stderr)
@@ -336,30 +394,40 @@ def plot(folder, out_path=None, dpi=150, show=False, avg_n=None):
         print("No valid workload subdirectories found.", file=sys.stderr)
         sys.exit(1)
 
-    # Check if all entries are same mode; warn if mixed
-    modes = set(e[6] for e in entries)
-    if len(modes) > 1:
-        print("Warning: mixed sep and nosep subdirectories — using per-entry mode.",
+    # mode_str per entry is "sep", "nosep", or "batched"
+    # --batched flag forces batched for all entries
+    entry_modes = set(e[8] for e in entries)
+    if len(entry_modes) > 1:
+        print(f"Warning: mixed modes {entry_modes} — using per-entry mode.",
               file=sys.stderr)
 
-    # Build segments per entry
-    labels   = []
-    all_segs = []
-    for label, _, _, _, row, cols, nosep in entries:
+    labels    = []
+    all_segs  = []
+    all_modes = []
+    for label, _, _, _, _, _, row, cols, mode_str in entries:
         labels.append(label)
-        if nosep:
+        m = "batched" if batched else mode_str
+        all_modes.append(m)
+        if m == "batched":
+            all_segs.append(build_segments_batched(row))
+        elif m == "nosep":
             all_segs.append(build_segments_nosep(row))
         else:
             all_segs.append(build_segments_sep(row))
 
-    # Legend order: use nosep order if any nosep, else sep
-    any_nosep = any(e[6] for e in entries)
-    legend_order = NOSEP_LEGEND_ORDER if any_nosep else SEP_LEGEND_ORDER
-    # If mixed, include both orders (deduped)
-    if len(modes) > 1:
+    # Choose legend order based on dominant mode
+    unique_modes = set(all_modes)
+    if "batched" in unique_modes and len(unique_modes) == 1:
+        legend_order = BATCHED_LEGEND_ORDER
+    elif "nosep" in unique_modes and "sep" not in unique_modes and "batched" not in unique_modes:
+        legend_order = NOSEP_LEGEND_ORDER
+    elif "sep" in unique_modes and "nosep" not in unique_modes and "batched" not in unique_modes:
+        legend_order = SEP_LEGEND_ORDER
+    else:
+        # Mixed: union of all legend orders, deduped
         seen = set()
         legend_order = []
-        for l in SEP_LEGEND_ORDER + NOSEP_LEGEND_ORDER:
+        for l in BATCHED_LEGEND_ORDER + SEP_LEGEND_ORDER + NOSEP_LEGEND_ORDER:
             if l not in seen:
                 legend_order.append(l)
                 seen.add(l)
@@ -422,9 +490,9 @@ def plot(folder, out_path=None, dpi=150, show=False, avg_n=None):
         plt.show()
 
     # Sanity check
-    for (label, _, _, _, row, cols, nosep), segs in zip(entries, all_segs):
+    for (label, _, _, _, _, _, row, cols, mode_str), segs, m in zip(entries, all_segs, all_modes):
         seg_total = sum(segs.values())
-        if nosep:
+        if m in ("batched", "nosep"):
             ref = fv(row, "sum-all")
         else:
             ref = fv(row, "mha-gen-sum") + fv(row, "mlp-sum")
@@ -465,13 +533,13 @@ def main():
         "--avg-n", type=int, default=None, metavar="N",
         help="Average the first N complete rows in each summary CSV.",
     )
+    parser.add_argument(
+        "--batched", action="store_true",
+        help="Force batched mode for all entries (auto-detected if omitted).",
+    )
 
     args = parser.parse_args()
 
-    # Resolve averaging mode:
-    #   --avg      -> avg_n = None (all complete rows)
-    #   --avg-n N  -> avg_n = N
-    #   neither    -> avg_n = 1   (first row only, original behaviour)
     if args.avg:
         avg_n = None
     elif args.avg_n is not None:
@@ -480,7 +548,8 @@ def main():
         avg_n = 1
 
     out = args.out or (Path(args.folder).name + "_multi.png")
-    plot(args.folder, out_path=out, dpi=args.dpi, show=args.show, avg_n=avg_n)
+    plot(args.folder, out_path=out, dpi=args.dpi, show=args.show,
+         avg_n=avg_n, batched=args.batched)
 
 
 if __name__ == "__main__":

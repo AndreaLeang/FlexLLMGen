@@ -28,11 +28,11 @@ for SUBDIR in "${OUTPUT_DIR}"/prompt_*/; do
         fi
 
         STEM=$(python3 -c "from pathlib import Path; print(Path('${TRACE}').stem)")
-        CSV_FILE="${SUBDIR}${STEM}_nosep_analysis.csv"
+        CSV_FILE="${SUBDIR}${STEM}_batched_analysis.csv"
 
         echo "  Analyzing trace: ${TRACE}"
         echo "  Saving to: ${CSV_FILE}"
-        python3 trace_analyzer.py "${TRACE}" --nosep --out ${CSV_FILE}
+        python3 trace_analyzer.py "${TRACE}" --batched --out ${CSV_FILE}
 
         if [ $? -ne 0 ]; then
             echo "  ERROR: trace_analyzer.py failed for ${TRACE}. Skipping result analysis."
@@ -40,8 +40,8 @@ for SUBDIR in "${OUTPUT_DIR}"/prompt_*/; do
         fi
 
         echo "  Analyzing results: ${CSV_FILE}"
-        SUMMARY_FILE="${SUBDIR}${STEM}_nosep_analysis_summary.csv"
-        python3 trace_result_analyzer.py "${CSV_FILE}" --nosep --out ${SUMMARY_FILE}
+        SUMMARY_FILE="${SUBDIR}${STEM}_batched_analysis_summary.csv"
+        python3 trace_result_analyzer.py "${CSV_FILE}" --batched --out ${SUMMARY_FILE}
 
         if [ $? -ne 0 ]; then
             echo "  ERROR: trace_result_analyzer.py failed for ${CSV_FILE}."
