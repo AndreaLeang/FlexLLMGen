@@ -1093,7 +1093,7 @@ def main():
     # --- Estimator modes to compare ---
     # Add / remove modes here; each will produce its own column group in the CSV.
     estimator_modes = [
-        EstimatorMode(name="ideal", use_ideal_bw=True, use_ideal_comp=True)
+        EstimatorMode(name="ideal", use_ideal_bw=True, use_ideal_comp=True, use_no_pinned=True)
         # EstimatorMode(name="default"),
         # EstimatorMode(name="ideal_bw",    use_ideal_bw=True),
         # EstimatorMode(name="flex_bw",     use_flex_bw=True),
