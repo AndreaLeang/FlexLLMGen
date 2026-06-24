@@ -97,7 +97,7 @@ try:
 except ImportError:
     TRACE_TOOLS_AVAILABLE = False
 
-sys.path.append( '/home/kyungmi/energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
+sys.path.append( '../energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
 from gee.gee_utils import get_gee
 
 # ===========================================================================
@@ -317,7 +317,7 @@ def get_estimator_breakdown(
         # Middle batch → bidirectional (load + store)
         is_load_store = 3
 
-    _, _, _, _, component_breakdown = layer_prediction(
+    _, _, _, _, _, component_breakdown = layer_prediction(
         opt_config=opt_config,
         is_load_store=is_load_store,
         batch_size=exp.batch_size,
@@ -1093,11 +1093,12 @@ def main():
     # --- Estimator modes to compare ---
     # Add / remove modes here; each will produce its own column group in the CSV.
     estimator_modes = [
-        EstimatorMode(name="default"),
-        EstimatorMode(name="ideal_bw",    use_ideal_bw=True),
-        EstimatorMode(name="flex_bw",     use_flex_bw=True),
-        EstimatorMode(name="no_pinned",   use_no_pinned=True),
-        EstimatorMode(name="ideal_comp",  use_ideal_comp=True),
+        EstimatorMode(name="ideal", use_ideal_bw=True, use_ideal_comp=True)
+        # EstimatorMode(name="default"),
+        # EstimatorMode(name="ideal_bw",    use_ideal_bw=True),
+        # EstimatorMode(name="flex_bw",     use_flex_bw=True),
+        # EstimatorMode(name="no_pinned",   use_no_pinned=True),
+        # EstimatorMode(name="ideal_comp",  use_ideal_comp=True),
     ]
     
     # --- Load opt_config and gpu_estimator ---
@@ -1111,13 +1112,13 @@ def main():
     #       dvfs_aware=True, ...
     #   )
     # gpu_estimator = None
-    gpu_estimator = get_gee(gpu_yaml_path="/home/kyungmi/energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
-                            lut_yaml_path="/home/kyungmi/energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
-                            dvfs_aware=True, dvfs_inference_mode='all', 
-                            dvfs_supply_voltage_json="/home/kyungmi/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
-                            dvfs_idle_power_json="/home/kyungmi/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
-                            lut_folder_abs_path="/home/kyungmi/energaizer-ispass26-artifact/database/data")
-    
+    # print("currently getting gpu estimator")
+    gpu_estimator = get_gee(gpu_yaml_path="../energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
+                        lut_yaml_path="../energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
+                        dvfs_aware=True, dvfs_inference_mode='all', 
+                        dvfs_supply_voltage_json="../energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
+                        dvfs_idle_power_json="../energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
+                        lut_folder_abs_path="../energaizer-ispass26-artifact/database/data")
     
     opt_config = None
     if ESTIMATOR_AVAILABLE:

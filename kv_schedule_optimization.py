@@ -16,7 +16,7 @@ from flexllmgen.opt_config import get_opt_config
 # from flexllmgen.flex_opt import Policy
 from flexllmgen.utils import GB, T
 
-sys.path.append( '/home/kyungmi/energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
+sys.path.append( '../energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
 from gee.gee_utils import get_gee
 
 alpha_g = 0.8
@@ -1274,12 +1274,12 @@ if __name__ == "__main__":
 
     #TODO: specify hardware config
     print("currently getting gpu estimator")
-    gpu_estimator = get_gee(gpu_yaml_path="/home/kyungmi/energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
-                        lut_yaml_path="/home/kyungmi/energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
+    gpu_estimator = get_gee(gpu_yaml_path="../energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
+                        lut_yaml_path="../energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
                         dvfs_aware=True, dvfs_inference_mode='all', 
-                        dvfs_supply_voltage_json="/home/kyungmi/energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
-                        dvfs_idle_power_json="/home/kyungmi/energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
-                        lut_folder_abs_path="/home/kyungmi/energaizer-ispass26-artifact/database/data")
+                        dvfs_supply_voltage_json="../energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
+                        dvfs_idle_power_json="../energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
+                        lut_folder_abs_path="../energaizer-ispass26-artifact/database/data")
     if args.s:
         single_strat_pred(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.gbs, args.off_per, args.recomp_len, args.fast, gpu_estimator, args.d, args.break_MHA ,var_to_min = args.var_to_min)
     else: 

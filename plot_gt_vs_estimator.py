@@ -55,8 +55,7 @@ EST_COLORS = {
     "Recompute Load":            "#FB8C00",   # dark orange
     "Recompute CUDA":            "#64B5F6",   # medium blue
     "MHA CUDA":                  "#1565C0",   # dark blue
-    "KVCache Load K":            "#7B1FA2",   # dark purple
-    "KVCache Load V":            "#CE93D8",   # light purple
+    "KVCache Load":              "#9C27B0",   # purple (matches GT)
 }
 
 # Segment ordering for stacking (bottom → top)
@@ -76,8 +75,7 @@ EST_STACK_ORDER = [
     "MHA CUDA",
     "PinnedMemory CPU (phase1)",
     "PinnedMemory CPU (phase2)",
-    "KVCache Load K",
-    "KVCache Load V",
+    "KVCache Load",
 ]
 
 # Bar appearance
@@ -137,16 +135,14 @@ def get_gt_segments(row: Dict) -> Dict[str, float]:
 
 def get_est_segments(row: Dict, mode: str) -> Dict[str, float]:
     pfx = f"est_{mode}"
-    mapping = {
-        "PinnedMemory CPU (phase1)": f"{pfx}_PinnedMemory_CPU_phase1_us",
-        "PinnedMemory CPU (phase2)": f"{pfx}_PinnedMemory_CPU_phase2_us",
-        "Recompute Load":            f"{pfx}_Recompute_Load_us",
-        "Recompute CUDA":            f"{pfx}_Recompute_CUDA_us",
-        "MHA CUDA":                  f"{pfx}_MHA_CUDA_us",
-        "KVCache Load K":            f"{pfx}_KVCache_Load_K_us",
-        "KVCache Load V":            f"{pfx}_KVCache_Load_V_us",
+    return {
+        "PinnedMemory CPU (phase1)": _fv(row, f"{pfx}_PinnedMemory_CPU_phase1_us"),
+        "PinnedMemory CPU (phase2)": _fv(row, f"{pfx}_PinnedMemory_CPU_phase2_us"),
+        "Recompute Load":            _fv(row, f"{pfx}_Recompute_Load_us"),
+        "Recompute CUDA":            _fv(row, f"{pfx}_Recompute_CUDA_us"),
+        "MHA CUDA":                  _fv(row, f"{pfx}_MHA_CUDA_us"),
+        "KVCache Load":              _fv(row, f"{pfx}_KVCache_Load_K_us") + _fv(row, f"{pfx}_KVCache_Load_V_us"),
     }
-    return {seg: _fv(row, col) for seg, col in mapping.items()}
 
 
 def make_x_label(row: Dict, x_axis: str) -> str:
