@@ -86,7 +86,7 @@ try:
         layer_calc_pred,
     )
     from flexllmgen.opt_config import get_opt_config
-    from flexllmgen.utils import GB
+    from flexllmgen.utils import GB, T
     ESTIMATOR_AVAILABLE = True
 except ImportError:
     ESTIMATOR_AVAILABLE = False
@@ -155,6 +155,8 @@ class HardwareConfig:
     gpu_mem_gb: int = 40            # --gpu-mem
     cpu_mem_gb: int = 200           # --cpu-mem
     gpu_freq: int = 1305            # --gpu-freq
+    gpu_tflop: int = 312            # --gpu-tflop
+    pcie_bw: int = 16               # --pcie-bw
 
     # Bandwidth / compute model flags
     use_ideal_bw: bool = False      # --i-BW
@@ -180,6 +182,8 @@ class HardwareConfig:
         cfg.use_flex_bw = self.use_flex_bw
         cfg.use_no_pinned = self.use_no_pinned
         cfg.use_ideal_comp = self.use_ideal_comp
+        cfg.ideal_mm_flops = self.gpu_tflop * T
+        cfg.ideal_bw = self.pcie_bw
         return cfg
 
 
@@ -1259,6 +1263,8 @@ def main():
         help="Batch size for the recompute-only sweep.")
     parser.add_argument("--gpu-mem", type=int, default=40)
     parser.add_argument("--cpu-mem", type=int, default=200)
+    parser.add_argument("--gpu-tflop", type=int, default=312)
+    parser.add_argument("--pcie-bw", type=int, default=16)
     parser.add_argument("--gpu-freq", type=int, default=1305)
     parser.add_argument("--cpu-bind", default=None)
     parser.add_argument("--gpu-bind", default=None)
@@ -1312,6 +1318,8 @@ def main():
         gpu_mem_gb=args.gpu_mem,
         cpu_mem_gb=args.cpu_mem,
         gpu_freq=args.gpu_freq,
+        gpu_tflop=args.gpu_tflop,
+        pcie_bw = args.pcie_bw,
         cpu_bind=args.cpu_bind,
         gpu_bind=args.gpu_bind,
         sudo_password=args.sudo_password,
