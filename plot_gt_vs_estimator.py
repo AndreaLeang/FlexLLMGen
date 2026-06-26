@@ -147,13 +147,19 @@ def get_est_segments(row: Dict, mode: str) -> Dict[str, float]:
 
 def make_x_label(row: Dict, x_axis: str) -> str:
     if x_axis == "batch_size":
-        bs = row.get("batch_size", "?")
-        nb = row.get("num_batches", "?")
+        bs  = row.get("batch_size", "?")
+        nb  = row.get("num_batches", "?")
         off = row.get("offload_percent", "?")
         return f"bs={bs}\nnb={nb}\noff={float(off):.0f}%"
     elif x_axis == "recompute_len":
         rc = row.get("recompute_len", "?")
         return f"rc={rc}"
+    elif x_axis == "batch_and_recompute":
+        bs  = row.get("batch_size", "?")
+        rc  = row.get("recompute_len", "?")
+        nb  = row.get("num_batches", "?")
+        off = row.get("offload_percent", "?")
+        return f"bs={bs}, rc={rc}\nnb={nb}, off={float(off):.0f}%"
     elif x_axis == "offload_percent":
         return f"off={float(row.get('offload_percent', 0)):.0f}%"
     else:
@@ -172,6 +178,7 @@ def plot_comparison(
     show: bool = False,
     modes_to_plot: Optional[List[str]] = None,
     title: Optional[str] = None,
+    normalize: bool = False,
 ) -> plt.Figure:
     """
     Create the grouped-bar comparison plot.
@@ -186,6 +193,11 @@ def plot_comparison(
     show           Call plt.show().
     modes_to_plot  Subset of estimator mode names to include (None = all).
     title          Figure title override.
+    normalize      If True, multiply every bar's segments by num_batches so the
+                   y-axis shows total latency across all iterations needed to
+                   process the full num_prompts workload.  Useful when comparing
+                   configurations with different batch sizes (e.g. bs=1 × 16
+                   iterations vs bs=8 × 2 iterations) on a fair total-work basis.
     """
     rows, fieldnames, all_modes = load_comparison_csv(csv_path)
     if not rows:
@@ -196,6 +208,13 @@ def plot_comparison(
     if not modes:
         print("No estimator modes found in CSV.", file=sys.stderr)
         sys.exit(1)
+
+    # Per-row scale factor: 1.0 normally, num_batches when normalizing.
+    # num_batches = num_prompts / batch_size (stored in CSV).
+    multipliers = np.array([
+        _fv(r, "num_batches", 1.0) if normalize else 1.0
+        for r in rows
+    ])
 
     # Number of bars per x-tick: 1 (GT) + len(modes)
     n_ticks = len(rows)
@@ -227,7 +246,7 @@ def plot_comparison(
     # ------------------------------------------------------------------ GT --
     gt_bottoms = np.zeros(n_ticks)
     for seg in GT_STACK_ORDER:
-        vals = np.array([get_gt_segments(r).get(seg, 0.0) for r in rows])
+        vals = np.array([get_gt_segments(r).get(seg, 0.0) for r in rows]) * multipliers
         color = GT_COLORS[seg]
         ax.bar(
             x + offsets[0], vals, bar_w,
@@ -268,7 +287,7 @@ def plot_comparison(
         hatch, edge_c = mode_bar_styles[mi % len(mode_bar_styles)]
         est_bottoms = np.zeros(n_ticks)
         for seg in EST_STACK_ORDER:
-            vals = np.array([get_est_segments(r, mode).get(seg, 0.0) for r in rows])
+            vals = np.array([get_est_segments(r, mode).get(seg, 0.0) for r in rows]) * multipliers
             color = EST_COLORS[seg]
             ax.bar(
                 x + offsets[bar_idx], vals, bar_w,
@@ -303,10 +322,24 @@ def plot_comparison(
     ax.set_xlim(-0.65, n_ticks - 0.35)
     ax.set_xticks(x)
     ax.set_xticklabels([make_x_label(r, x_axis) for r in rows], fontsize=9)
-    ax.set_ylabel("Latency (µs)", fontsize=11)
-    ax.set_xlabel(x_axis.replace("_", " ").title(), fontsize=10)
+    ax.set_ylabel(
+        "Total Latency × num_batches (µs)" if normalize else "Latency per iteration (µs)",
+        fontsize=11,
+    )
+    _x_axis_labels = {
+        "batch_size":          "Batch Size",
+        "recompute_len":       "Recompute Length",
+        "batch_and_recompute": "Batch Size × Recompute Length",
+        "offload_percent":     "Offload Percent",
+        "experiment_id":       "Experiment",
+    }
+    ax.set_xlabel(_x_axis_labels.get(x_axis, x_axis), fontsize=10)
 
-    default_title = "Ground Truth vs. Estimator: MHA Latency Breakdown"
+    default_title = (
+        "Ground Truth vs. Estimator: Total MHA Latency (all iterations)"
+        if normalize else
+        "Ground Truth vs. Estimator: MHA Latency Breakdown"
+    )
     ax.set_title(title or default_title, fontsize=13, fontweight="bold", pad=14)
 
     ax.yaxis.grid(True, linestyle="--", alpha=0.4)
@@ -355,20 +388,22 @@ def plot_comparison(
         plt.show()
 
     # Sanity print
-    print("\nSanity check — total latency (µs):")
+    label = "total latency × num_batches (µs)" if normalize else "latency per iteration (µs)"
+    print(f"\nSanity check — {label}:")
     print(f"  {'Experiment':<35} {'GT':>10}", end="")
     for m in modes:
         print(f"  {'Est['+m+']':>15}", end="")
     print()
-    for row, gt_tot, *est_tots in zip(
+    for row, gt_tot, mult, *est_tots in zip(
         rows,
         gt_bottoms,
+        multipliers,
         *[[get_est_segments(r, m) for r in rows] for m in modes],
     ):
         exp_id = row.get("experiment_id", "?")[:35]
         print(f"  {exp_id:<35} {gt_tot:>10.1f}", end="")
         for m, segs in zip(modes, est_tots):
-            tot = sum(segs.values()) if isinstance(segs, dict) else segs
+            tot = (sum(segs.values()) if isinstance(segs, dict) else segs) * mult
             print(f"  {tot:>15.1f}", end="")
         print()
 
@@ -386,9 +421,18 @@ def main():
     parser.add_argument("csv", help="Path to comparison_results.csv")
     parser.add_argument(
         "--x-axis",
-        choices=["batch_size", "recompute_len", "offload_percent", "experiment_id"],
+        choices=["batch_size", "recompute_len", "batch_and_recompute",
+                 "offload_percent", "experiment_id"],
         default="batch_size",
-        help="Which column to use for x-tick labels.",
+        help=(
+            "What to display on the x-axis. "
+            "batch_size: batch size + num_batches + offload%%. "
+            "recompute_len: recompute length only. "
+            "batch_and_recompute: both batch size and recompute length (use "
+            "this when sweeping both dimensions simultaneously). "
+            "offload_percent: offload%% only. "
+            "experiment_id: full experiment ID string."
+        ),
     )
     parser.add_argument("--out", default=None, metavar="OUTPUT.png")
     parser.add_argument("--dpi", type=int, default=150)
@@ -398,6 +442,14 @@ def main():
         help="Subset of estimator mode names to include (default: all).",
     )
     parser.add_argument("--title", default=None)
+    parser.add_argument(
+        "--normalize", action="store_true",
+        help=(
+            "Multiply each bar by num_batches (= num_prompts / batch_size) so the "
+            "y-axis shows total latency across all iterations for the full workload. "
+            "Enables fair comparison across different batch sizes."
+        ),
+    )
     args = parser.parse_args()
 
     out = args.out or (Path(args.csv).stem + "_comparison.png")
@@ -409,6 +461,7 @@ def main():
         show=args.show,
         modes_to_plot=args.modes,
         title=args.title,
+        normalize=args.normalize,
     )
 
 

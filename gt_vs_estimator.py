@@ -61,7 +61,9 @@ import argparse
 import csv
 import dataclasses
 import glob
+import gzip
 import math
+import shutil
 import os
 import subprocess
 import sys
@@ -99,6 +101,49 @@ except ImportError:
 
 sys.path.append( '../energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
 from gee.gee_utils import get_gee
+
+
+# ---------------------------------------------------------------------------
+# OOM handling
+# ---------------------------------------------------------------------------
+
+class OOMError(RuntimeError):
+    """
+    Raised when an experiment cannot run because it exceeds GPU/CPU memory,
+    either analytically (no feasible offloading scheme exists) or at runtime
+    (CUDA out-of-memory during profiling).
+    """
+
+
+_OOM_MARKERS = (
+    "out of memory",
+    "cuda error: out of memory",
+    "outofmemoryerror",
+    "cudaerroroutofmemory",
+    "oom killed",
+)
+
+
+def _is_oom_output(text: str) -> bool:
+    """Return True if subprocess stderr contains a recognisable OOM message."""
+    lower = text.lower()
+    return any(m in lower for m in _OOM_MARKERS)
+
+
+# Status values written to the CSV "status" column.
+STATUS_OK    = "ok"
+STATUS_OOM   = "oom"      # no feasible offload scheme, or CUDA OOM at runtime
+STATUS_ERROR = "error"    # any other failure
+
+
+# ---------------------------------------------------------------------------
+# Trace cleanup constants
+# ---------------------------------------------------------------------------
+
+TRACE_CLEANUP_NONE     = "none"       # keep traces as-is (default)
+TRACE_CLEANUP_COMPRESS = "compress"   # gzip each .json in-place -> .json.gz
+TRACE_CLEANUP_DELETE   = "delete"     # permanently remove each .json
+
 
 # ===========================================================================
 # Section 1 – Configuration dataclasses
@@ -370,9 +415,9 @@ def get_min_offload_percent(
         min_offloading=True,      # ← stop at first (minimum) feasible entry
     )
     if exp.batch_size not in feasible or not feasible[exp.batch_size]:
-        raise ValueError(
+        raise OOMError(
             f"No feasible offloading strategy for batch_size={exp.batch_size} "
-            f"with current hardware config. The model+KV may exceed GPU memory."
+            f"— model+KV cache exceeds available GPU/CPU memory."
         )
     return float(feasible[exp.batch_size][0])
 
@@ -449,6 +494,7 @@ def run_flexllm_profile(
     hw: HardwareConfig,
     trace_dir: str,
     dry_run: bool = False,
+    _generated_traces: Optional[List[str]] = None,
 ) -> str:
     """
     Run flex_opt_kvpr.py and return the path to the produced JSON trace.
@@ -457,6 +503,12 @@ def run_flexllm_profile(
         fo-{model_size}-gbs{gbs}-ngbs{ngbs}-prompt{p}-gen{g}-percent-{pcts}-[R-{rc}-]gpu-cache.json
 
     We re-derive the expected filename here to locate it after the run.
+
+    _generated_traces : optional list; if provided, the absolute path of
+        the .json is appended when a trace is freshly profiled OR when a
+        compressed .json.gz is decompressed back to .json.  Pre-existing
+        .json files (the [skip] branch) are never recorded here, so the
+        cleanup step will not touch them.
     """
     os.makedirs(trace_dir, exist_ok=True)
 
@@ -482,17 +534,45 @@ def run_flexllm_profile(
         print(f"  [skip] trace already exists: {expected_json}")
         return expected_json
 
+    # Check for a previously compressed version (.json.gz) and decompress
+    # it rather than re-running the expensive profiling step.
+    gz_json = expected_json + ".gz"
+    if os.path.exists(gz_json):
+        print(f"  [decompress] found compressed trace: {gz_json}")
+        if not dry_run:
+            with gzip.open(gz_json, "rb") as f_in, \
+                 open(expected_json, "wb") as f_out:
+                shutil.copyfileobj(f_in, f_out)
+            print(f"  [decompress] restored: {expected_json}")
+            # Decompressed .json is recorded so cleanup can re-compress
+            # or delete it at the end of this run.
+            if _generated_traces is not None:
+                _generated_traces.append(os.path.abspath(expected_json))
+        else:
+            print(f"  [dry_run] would decompress {gz_json} -> {expected_json}")
+        return expected_json
+
     cmd = build_flexllm_command(exp, hw, trace_dir)
     print(f"  [run] flex_opt_kvpr: {' '.join(cmd)}")
     if dry_run:
         print("  [dry_run] would execute the above command.")
         return expected_json
 
-    result = subprocess.run(cmd, capture_output=False, text=True)
+    # Capture stderr to detect CUDA OOM; stdout streams live for progress.
+    result = subprocess.run(cmd, capture_output=False, text=True,
+                            stderr=subprocess.PIPE)
     if result.returncode != 0:
+        stderr_text = result.stderr or ""
+        print(stderr_text, file=sys.stderr, end="")   # surface to user
+        if _is_oom_output(stderr_text):
+            raise OOMError(
+                f"CUDA out-of-memory during profiling for {exp.experiment_id}"
+            )
         raise RuntimeError(
             f"flex_opt_kvpr.py failed (exit {result.returncode}) for {exp.experiment_id}"
         )
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, end="")  # warnings on success
 
     # Verify the file appeared
     if not os.path.exists(expected_json):
@@ -505,6 +585,10 @@ def run_flexllm_profile(
             raise FileNotFoundError(
                 f"Trace JSON not found after run. Expected: {expected_json}"
             )
+
+    # Record newly-profiled trace for optional cleanup at run end.
+    if _generated_traces is not None:
+        _generated_traces.append(os.path.abspath(expected_json))
 
     return expected_json
 
@@ -671,7 +755,11 @@ def sweep_batch_size(
     experiments = []
     for bs in batch_sizes:
         exp = dataclasses.replace(base, batch_size=bs, recompute_len=0)
-        min_off = get_min_offload_percent(exp, hw, opt_config)
+        try:
+            min_off = get_min_offload_percent(exp, hw, opt_config)
+        except OOMError as e:
+            print(f"  [OOM] sweep_batch_size: bs={bs} skipped — {e}")
+            continue
         exp = dataclasses.replace(exp, offload_percent=min_off)
         print(
             f"  sweep_batch_size: bs={bs}, num_batches={exp.num_batches}, "
@@ -696,7 +784,11 @@ def sweep_recompute(
     experiments = []
     for rc in recompute_lens:
         exp = dataclasses.replace(base, recompute_len=rc)
-        min_off = get_min_offload_percent(exp, hw, opt_config)
+        try:
+            min_off = get_min_offload_percent(exp, hw, opt_config)
+        except OOMError as e:
+            print(f"  [OOM] sweep_recompute: rc={rc} skipped — {e}")
+            continue
         exp = dataclasses.replace(exp, offload_percent=min_off)
         print(
             f"  sweep_recompute: rc={rc}, bs={exp.batch_size}, "
@@ -721,7 +813,11 @@ def sweep_batch_and_recompute(
     for bs in batch_sizes:
         for rc in recompute_lens:
             exp = dataclasses.replace(base, batch_size=bs, recompute_len=rc)
-            min_off = get_min_offload_percent(exp, hw, opt_config)
+            try:
+                min_off = get_min_offload_percent(exp, hw, opt_config)
+            except OOMError as e:
+                print(f"  [OOM] sweep_batch_and_recompute: bs={bs}, rc={rc} skipped — {e}")
+                continue
             exp = dataclasses.replace(exp, offload_percent=min_off)
             print(
                 f"  sweep_batch_and_recompute: bs={bs}, rc={rc}, "
@@ -746,6 +842,8 @@ META_COLS = [
     "num_batches",
     "recompute_len",
     "offload_percent",   # minimum feasible, as used
+    "status",            # "ok" | "oom" | "error"
+    "skip_reason",       # human-readable explanation when status != "ok"
     "trace_json",
     "summary_csv",
 ]
@@ -774,6 +872,8 @@ def build_csv_row(
     gt_segs: Dict[str, float],
     est_segs_by_mode: Dict[str, Dict[str, float]],  # mode_name → segment dict
     estimator_modes: List[EstimatorMode],
+    status: str = STATUS_OK,
+    skip_reason: str = "",
 ) -> Dict[str, Any]:
     row: Dict[str, Any] = {
         "experiment_id":  exp.experiment_id,
@@ -784,7 +884,9 @@ def build_csv_row(
         "batch_size":     exp.batch_size,
         "num_batches":    exp.num_batches,
         "recompute_len":  exp.recompute_len,
-        "offload_percent": round(exp.offload_percent, 2) if exp.offload_percent is not None else 0,
+        "offload_percent": round(exp.offload_percent, 2) if exp.offload_percent is not None else "",
+        "status":         status,
+        "skip_reason":    skip_reason,
         "trace_json":     exp.trace_json_path or "",
         "summary_csv":    exp.summary_csv_path or "",
     }
@@ -825,6 +927,24 @@ def write_comparison_csv(
 # Section 6 – Main runner
 # ===========================================================================
 
+def _skipped_row(
+    exp: ExperimentConfig,
+    estimator_modes: List[EstimatorMode],
+    status: str,
+    reason: str,
+) -> Dict:
+    """Return a CSV row with all segment values blank and status/reason set."""
+    print(f"  [{status.upper()}] {reason}")
+    return build_csv_row(
+        exp,
+        gt_segs={},
+        est_segs_by_mode={m.name: {} for m in estimator_modes},
+        estimator_modes=estimator_modes,
+        status=status,
+        skip_reason=reason,
+    )
+
+
 def run_experiment(
     exp: ExperimentConfig,
     hw: HardwareConfig,
@@ -833,19 +953,19 @@ def run_experiment(
     opt_config: Any,
     dry_run: bool = False,
     avg_gt_rows: Optional[int] = None,
-) -> Optional[Dict]:
+    _generated_traces: Optional[List[str]] = None,
+) -> Dict:
     """
     Execute the full pipeline for one experiment and return a CSV row dict.
 
-    Steps:
-      1. Determine minimum offload_percent if not set.
-      2. Run flex_opt_kvpr.py with --profile.
-      3. Run trace_analyzer + trace_result_analyzer.
-      4. Parse GT summary CSV.
-      5. Call estimator for each mode.
-      6. Build and return the merged CSV row.
+    Always returns a dict (never None). OOM and other failures produce a row
+    with status="oom" or status="error" and blank segment values, so the CSV
+    remains complete and the sweep continues uninterrupted.
 
-    Returns None if the experiment fails (with a printed error).
+    _generated_traces : optional list passed through to run_flexllm_profile.
+        Paths of .json files that are newly profiled OR decompressed from .gz
+        are appended here, making them eligible for --trace-cleanup at run end.
+        Pre-existing .json files (the [skip] branch) are never appended.
     """
     print(f"\n{'='*60}")
     print(f"Experiment: {exp.experiment_id}")
@@ -855,10 +975,16 @@ def run_experiment(
     if exp.offload_percent is None:
         if ESTIMATOR_AVAILABLE:
             print("  Step 1: computing minimum offload percent...")
-            exp = dataclasses.replace(
-                exp,
-                offload_percent=get_min_offload_percent(exp, hw, opt_config),
-            )
+            try:
+                exp = dataclasses.replace(
+                    exp,
+                    offload_percent=get_min_offload_percent(exp, hw, opt_config),
+                )
+            except OOMError as e:
+                return _skipped_row(exp, estimator_modes, STATUS_OOM, str(e))
+            except Exception as e:
+                return _skipped_row(exp, estimator_modes, STATUS_ERROR,
+                                    f"Step 1 failed: {e}")
         else:
             print("  Step 1: [skip] estimator not available, defaulting to 0% offload")
             exp = dataclasses.replace(exp, offload_percent=0.0)
@@ -876,11 +1002,17 @@ def run_experiment(
         )
         print("  Step 2: running flex_opt_kvpr profiling...")
         try:
-            trace_json = run_flexllm_profile(exp, hw, trace_dir, dry_run=dry_run)
+            trace_json = run_flexllm_profile(
+                exp, hw, trace_dir,
+                dry_run=dry_run,
+                _generated_traces=_generated_traces,
+            )
             exp = dataclasses.replace(exp, trace_json_path=trace_json)
+        except OOMError as e:
+            return _skipped_row(exp, estimator_modes, STATUS_OOM, str(e))
         except Exception as e:
-            print(f"  ERROR in profiling: {e}")
-            return None
+            return _skipped_row(exp, estimator_modes, STATUS_ERROR,
+                                f"Step 2 profiling failed: {e}")
 
     # Step 3: trace analysis (skip if summary_csv_path already provided)
     if exp.summary_csv_path and os.path.isfile(exp.summary_csv_path):
@@ -892,8 +1024,8 @@ def run_experiment(
             summary_csv = run_trace_analysis(trace_json, exp, dry_run=dry_run)
             exp = dataclasses.replace(exp, summary_csv_path=summary_csv)
         except Exception as e:
-            print(f"  ERROR in trace analysis: {e}")
-            return None
+            return _skipped_row(exp, estimator_modes, STATUS_ERROR,
+                                f"Step 3 trace analysis failed: {e}")
 
     # Step 4: parse GT
     print("  Step 4: loading GT breakdown...")
@@ -906,10 +1038,11 @@ def run_experiment(
             for k, v in gt_segs.items():
                 print(f"    {k}: {v:.1f}")
         except Exception as e:
-            print(f"  ERROR loading GT: {e}")
-            return None
+            return _skipped_row(exp, estimator_modes, STATUS_ERROR,
+                                f"Step 4 GT parsing failed: {e}")
 
-    # Step 5: estimator breakdown per mode
+    # Step 5: estimator breakdown per mode (failures here are non-fatal —
+    # GT data is kept; only that mode's columns are blank)
     print("  Step 5: running estimator for each mode...")
     est_segs_by_mode: Dict[str, Dict[str, float]] = {}
     if ESTIMATOR_AVAILABLE and not dry_run:
@@ -933,7 +1066,63 @@ def run_experiment(
             est_segs_by_mode[mode.name] = {}
 
     # Step 6: build row
-    return build_csv_row(exp, gt_segs, est_segs_by_mode, estimator_modes)
+    return build_csv_row(exp, gt_segs, est_segs_by_mode, estimator_modes,
+                         status=STATUS_OK)
+
+
+def cleanup_traces(
+    generated_trace_paths: List[str],
+    mode: str,
+    dry_run: bool = False,
+) -> None:
+    """
+    Compress or delete raw .json trace files generated (or decompressed) in
+    this run.  Only paths recorded in generated_trace_paths are touched;
+    pre-existing .json files that were simply skipped are never included.
+
+    Parameters
+    ----------
+    generated_trace_paths  Absolute paths of .json traces written this run.
+    mode                   TRACE_CLEANUP_COMPRESS | TRACE_CLEANUP_DELETE |
+                           TRACE_CLEANUP_NONE
+    dry_run                If True, print what would happen but do nothing.
+    """
+    if mode == TRACE_CLEANUP_NONE or not generated_trace_paths:
+        return
+
+    print(f"\n\u2500\u2500 Trace cleanup ({mode}) {chr(45)*38}")
+    total_freed = 0.0
+
+    for path in generated_trace_paths:
+        if not os.path.isfile(path):
+            print(f"  [skip] not found: {path}")
+            continue
+        size_mb = os.path.getsize(path) / (1024 ** 2)
+
+        if mode == TRACE_CLEANUP_DELETE:
+            print(f"  [delete] {path}  ({size_mb:.1f} MB)")
+            if not dry_run:
+                os.remove(path)
+            total_freed += size_mb
+
+        elif mode == TRACE_CLEANUP_COMPRESS:
+            gz_path = path + ".gz"
+            print(f"  [compress] {path}  ({size_mb:.1f} MB)  \u2192  {gz_path}")
+            if not dry_run:
+                with open(path, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+                gz_size_mb = os.path.getsize(gz_path) / (1024 ** 2)
+                os.remove(path)
+                saved_mb = size_mb - gz_size_mb
+                print(f"    compressed: {gz_size_mb:.1f} MB  (saved {saved_mb:.1f} MB)")
+                total_freed += saved_mb
+            else:
+                total_freed += size_mb
+
+    verb = "would free" if dry_run else "freed"
+    suffix = "MB saved" if (mode == TRACE_CLEANUP_COMPRESS and not dry_run) else "MB"
+    print(f"  Total {verb}: {total_freed:.1f} {suffix}")
+    print(f"{chr(45)*54}")
 
 
 def run_comparison(
@@ -945,6 +1134,7 @@ def run_comparison(
     output_csv: str = "comparison_results.csv",
     dry_run: bool = False,
     avg_gt_rows: Optional[int] = None,
+    trace_cleanup: str = TRACE_CLEANUP_NONE,
 ) -> List[Dict]:
     """
     Run all experiments and write the comparison CSV.
@@ -959,8 +1149,18 @@ def run_comparison(
     output_csv       Path for the output comparison CSV.
     dry_run          If True, print commands but don't execute them.
     avg_gt_rows      Number of GT rows to average (None = all).
+    trace_cleanup    What to do with .json traces after the CSV is written:
+                       "none"     - keep as-is (default)
+                       "compress" - gzip in-place (.json -> .json.gz)
+                       "delete"   - permanently remove
+                     Applies to traces that were newly profiled OR decompressed
+                     from .gz in this run.  Pre-existing .json files are never
+                     touched.
     """
     all_rows = []
+    generated_traces: List[str] = []   # paths written/restored this run
+    n_ok, n_oom, n_err = 0, 0, 0
+
     for exp in experiments:
         row = run_experiment(
             exp=exp,
@@ -970,14 +1170,27 @@ def run_comparison(
             opt_config=opt_config,
             dry_run=dry_run,
             avg_gt_rows=avg_gt_rows,
+            _generated_traces=generated_traces,
         )
-        if row is not None:
-            all_rows.append(row)
+        all_rows.append(row)
+        s = row.get("status", STATUS_OK)
+        if s == STATUS_OOM:    n_oom += 1
+        elif s == STATUS_OK:   n_ok  += 1
+        else:                  n_err += 1
+
+    print(f"\nSweep complete: {n_ok} ok, {n_oom} oom, {n_err} error "
+          f"(out of {len(all_rows)} total)")
 
     if all_rows:
         write_comparison_csv(all_rows, output_csv, estimator_modes)
+        if n_oom or n_err:
+            print(f"  Note: skipped rows (oom/error) are included in the CSV "
+                  f"with blank segment values \u2014 see the 'status' column.")
     else:
-        print("No successful experiments to write.")
+        print("No experiments to write.")
+
+    # Cleanup runs after the CSV is safely on disk.
+    cleanup_traces(generated_traces, mode=trace_cleanup, dry_run=dry_run)
 
     return all_rows
 
@@ -1059,6 +1272,20 @@ def main():
         help="Print commands without executing them.")
     parser.add_argument("--avg-gt-rows", type=int, default=None,
         help="Number of GT summary rows to average (default: all).")
+    parser.add_argument(
+        "--trace-cleanup",
+        choices=[TRACE_CLEANUP_NONE, TRACE_CLEANUP_COMPRESS, TRACE_CLEANUP_DELETE],
+        default=TRACE_CLEANUP_NONE,
+        metavar="{none,compress,delete}",
+        help=(
+            "What to do with raw .json trace files after the CSV is written. "
+            "  none     - keep as-is (default). "
+            "  compress - gzip each trace in-place (.json -> .json.gz). "
+            "  delete   - permanently remove each trace. "
+            "Applies to traces newly profiled OR decompressed from .gz in "
+            "this run. Pre-existing .json files are never touched."
+        ),
+    )
     
     # ── Short-circuit flags for debugging with an existing trace ──────────────
     parser.add_argument(
@@ -1111,14 +1338,14 @@ def main():
     #       lut_yaml_path="...",
     #       dvfs_aware=True, ...
     #   )
-    # gpu_estimator = None
+    gpu_estimator = None
     # print("currently getting gpu estimator")
-    gpu_estimator = get_gee(gpu_yaml_path="../energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
-                        lut_yaml_path="../energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
-                        dvfs_aware=True, dvfs_inference_mode='all', 
-                        dvfs_supply_voltage_json="../energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
-                        dvfs_idle_power_json="../energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
-                        lut_folder_abs_path="../energaizer-ispass26-artifact/database/data")
+    # gpu_estimator = get_gee(gpu_yaml_path="../energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
+    #                     lut_yaml_path="../energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
+    #                     dvfs_aware=True, dvfs_inference_mode='all', 
+    #                     dvfs_supply_voltage_json="../energaizer-ispass26-artifact/config/dvfs/yz8/supply_voltage.json",
+    #                     dvfs_idle_power_json="../energaizer-ispass26-artifact/config/dvfs/yz8/idle_power.json", 
+    #                     lut_folder_abs_path="../energaizer-ispass26-artifact/database/data")
     
     opt_config = None
     if ESTIMATOR_AVAILABLE:
@@ -1204,6 +1431,7 @@ def main():
         output_csv=args.output_csv,
         dry_run=args.dry_run,
         avg_gt_rows=args.avg_gt_rows,
+        trace_cleanup=args.trace_cleanup,
     )
 
 

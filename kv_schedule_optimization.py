@@ -614,7 +614,10 @@ def pinned_pred(bytes, hardware_config, gpu_estimator):
     # print(f"pinned: bytes (B): {bytes}, latency (s): {latency}")
 
     # Pageable to Pinned does not contribute to GPU energy --> idle 
-    gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency 
+    if gpu_estimator is not None:
+        gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency 
+    else:
+        gpu_energy = 0
     return gpu_energy, latency
 
 
@@ -643,7 +646,10 @@ def transfer_pred(bytes, hardware_config, gpu_estimator, single_directional=True
         bandwidth = max(bandwidth, 0)
         latency = max(bytes/bandwidth, 0)
     
-    gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency
+    if gpu_estimator is not None:
+        gpu_energy = gpu_estimator.dvfs_idle_power[str(hardware_config.gpu_freq)] * latency
+    else:
+        gpu_energy = 0
     # print(f"transfer energy: {gpu_energy}, lat: {latency}")
     return gpu_energy, latency
 
