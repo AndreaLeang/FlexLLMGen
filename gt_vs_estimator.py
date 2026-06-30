@@ -61,9 +61,10 @@ import argparse
 import csv
 import dataclasses
 import glob
-import gzip
 import math
+import gzip
 import shutil
+import tarfile
 import os
 import subprocess
 import sys
@@ -141,7 +142,7 @@ STATUS_ERROR = "error"    # any other failure
 # ---------------------------------------------------------------------------
 
 TRACE_CLEANUP_NONE     = "none"       # keep traces as-is (default)
-TRACE_CLEANUP_COMPRESS = "compress"   # gzip each .json in-place -> .json.gz
+TRACE_CLEANUP_COMPRESS = "compress"   # tar.gz each .json in-place -> .json.tar.gz
 TRACE_CLEANUP_DELETE   = "delete"     # permanently remove each .json
 
 
@@ -534,28 +535,59 @@ def run_flexllm_profile(
     )
     expected_json = os.path.join(trace_dir, expected_stem + ".json")
 
+    # Candidate compressed paths, checked in priority order:
+    #   1. <stem>.json.tar.gz  — produced by cleanup_traces() in this script
+    #   2. <stem>.tar.gz       — produced by manual "tar -czf"
+    #   3. <stem>.json.gz      — produced by plain "gzip" (different format!)
+    _compressed_candidates = [
+        expected_json + ".tar.gz",                           # fo-…-gpu-cache.json.tar.gz
+        os.path.join(trace_dir, expected_stem + ".tar.gz"),  # fo-…-gpu-cache.tar.gz
+        expected_json + ".gz",                               # fo-…-gpu-cache.json.gz
+    ]
+
+    # Case 1: uncompressed .json already present — use it directly.
     if os.path.exists(expected_json):
         print(f"  [skip] trace already exists: {expected_json}")
         return expected_json
 
-    # Check for a previously compressed version (.json.gz) and decompress
-    # it rather than re-running the expensive profiling step.
-    gz_json = expected_json + ".gz"
-    if os.path.exists(gz_json):
-        print(f"  [decompress] found compressed trace: {gz_json}")
+    # Case 2: a compressed file present — decompress, then proceed.
+    # The decompressed .json is recorded in _generated_traces so that
+    # cleanup_traces() can re-compress or delete it at the end of the run.
+    found_compressed = next((p for p in _compressed_candidates if os.path.exists(p)), None)
+    if found_compressed is not None:
+        size_mb = os.path.getsize(found_compressed) / (1024 ** 2)
+        print(f"  [decompress] found {found_compressed} ({size_mb:.1f} MB) — extracting...")
         if not dry_run:
-            with gzip.open(gz_json, "rb") as f_in, \
-                 open(expected_json, "wb") as f_out:
-                shutil.copyfileobj(f_in, f_out)
-            print(f"  [decompress] restored: {expected_json}")
-            # Decompressed .json is recorded so cleanup can re-compress
-            # or delete it at the end of this run.
+            if found_compressed.endswith(".gz") and not found_compressed.endswith(".tar.gz"):
+                # Plain gzip (.json.gz) — decompress directly with gzip module.
+                with gzip.open(found_compressed, "rb") as f_in, \
+                     open(expected_json, "wb") as f_out:
+                    shutil.copyfileobj(f_in, f_out)
+            else:
+                # Tar archive (.json.tar.gz or .tar.gz) — extract via tarfile.
+                with tarfile.open(found_compressed, "r:gz") as tf:
+                    # Prefer the member whose bare name matches; fall back to any .json.
+                    members = [m for m in tf.getmembers()
+                               if os.path.basename(m.name) == os.path.basename(expected_json)
+                               and m.name == os.path.basename(m.name)]
+                    if not members:
+                        members = [m for m in tf.getmembers() if m.name.endswith(".json")]
+                    if not members:
+                        raise FileNotFoundError(
+                            f"No .json member found inside {found_compressed}"
+                        )
+                    member = members[0]
+                    member.name = os.path.basename(expected_json)  # strip any dir prefix
+                    tf.extract(member, path=trace_dir)
+            restored_mb = os.path.getsize(expected_json) / (1024 ** 2)
+            print(f"  [decompress] restored: {expected_json} ({restored_mb:.1f} MB)")
             if _generated_traces is not None:
                 _generated_traces.append(os.path.abspath(expected_json))
         else:
-            print(f"  [dry_run] would decompress {gz_json} -> {expected_json}")
+            print(f"  [dry_run] would decompress {found_compressed} -> {expected_json}")
         return expected_json
 
+    # Case 3: neither exists — run profiling.
     cmd = build_flexllm_command(exp, hw, trace_dir)
     print(f"  [run] flex_opt_kvpr: {' '.join(cmd)}")
     if dry_run:
@@ -645,45 +677,244 @@ def run_trace_analysis(
     return summary_csv
 
 
-def load_gt_summary(summary_csv: str, avg_rows: Optional[int] = None) -> Tuple[Dict, List[str]]:
+def compute_gt_decode_stats(
+    summary_csv: str,
+    num_prompts: int,
+    token_filter: Optional[int] = None,
+) -> Dict[str, float]:
     """
-    Load a batched-mode summary CSV and return (averaged_row, col_names).
+    Compute decode latency and throughput from the batched summary CSV.
 
-    avg_rows=None  → average all rows with complete numeric columns.
-    avg_rows=N     → average first N complete rows.
+    Per-token latency
+    -----------------
+    One full decode step (one output token) spans ALL transformer layers and
+    ALL GPU batches.  In the batched summary CSV each row is one mha_gen
+    execution (one layer, one GPU batch, one decode step).  Because layers
+    execute sequentially, the latency of one decode token is the SUM of
+    `critical-path` values across all rows that share the same `token` index.
+
+    Throughput
+    ----------
+    total_output_tokens = tokens_observed × num_prompts
+    total_decode_time   = sum of per-token latencies
+    throughput          = total_output_tokens / total_decode_time  [tokens/s]
+
+    Note: `tokens_observed` is the number of distinct token indices present in
+    the summary CSV.  trace_result_analyzer already excludes the warm-up token,
+    so this equals gen_len - 1 in typical runs.
+
+    Parameters
+    ----------
+    summary_csv  : path to the batched summary CSV
+    num_prompts  : total number of sequences in this run (gbs × ngbs)
+    token_filter : if given, report stats for this single decode token only
+                   (mean_token_latency == that token's latency; throughput is
+                   extrapolated as if all tokens had this latency).
+                   None = use all observed tokens.
+
+    Returns
+    -------
+    Dict with keys:
+      tokens_observed              int   — number of distinct decode tokens used
+      mean_token_latency_ms        float — mean per-token latency in ms
+      total_decode_latency_ms      float — total decode latency in ms
+      throughput_tok_per_s         float — tokens/s (all sequences)
+      throughput_tok_per_s_per_seq float — tokens/s per sequence
+    """
+    with open(summary_csv, newline="") as f:
+        all_rows = list(csv.DictReader(f))
+
+    if not all_rows:
+        raise ValueError(f"Empty summary CSV: {summary_csv}")
+
+    # Determine which tokens to include
+    all_tokens = sorted(set(r["token"] for r in all_rows), key=lambda t: int(t))
+    if token_filter is not None:
+        tokens = [str(token_filter)]
+        if tokens[0] not in set(r["token"] for r in all_rows):
+            raise ValueError(
+                f"token_filter={token_filter} not found in {summary_csv}. "
+                f"Available: {all_tokens}"
+            )
+    else:
+        tokens = all_tokens
+
+    # Per-token latency = sum of critical-path across all groups for that token
+    per_token_latency_us: List[float] = []
+    for tok in tokens:
+        tok_rows = [r for r in all_rows if r["token"] == tok]
+        lat = sum(float(r["critical-path"]) for r in tok_rows)
+        per_token_latency_us.append(lat)
+
+    n_tokens = len(per_token_latency_us)
+    mean_lat_us  = sum(per_token_latency_us) / n_tokens
+    total_lat_us = sum(per_token_latency_us)
+
+    # If filtering to a single token, extrapolate total as if all gen_len
+    # steps had that latency (for a fair comparison with whole-run estimates).
+    # If using all tokens, total_lat_us is the actual observed total.
+    total_output_tokens = n_tokens * num_prompts
+    throughput          = total_output_tokens / (total_lat_us * 1e-6)
+    throughput_per_seq  = throughput / num_prompts
+
+    return {
+        "tokens_observed":              n_tokens,
+        "mean_token_latency_ms":        round(mean_lat_us  / 1e3, 3),
+        "total_decode_latency_ms":      round(total_lat_us / 1e3, 3),
+        "throughput_tok_per_s":         round(throughput,         3),
+        "throughput_tok_per_s_per_seq": round(throughput_per_seq, 3),
+    }
+
+
+def load_gt_summary(
+    summary_csv: str,
+    token_filter: Optional[int] = None,
+    skip_first_n: int = 0,
+    first_n: Optional[int] = None,
+    dominant_path_only: bool = False,
+) -> Dict[str, float]:
+    """
+    Load a batched-mode summary CSV, compute per-row segment breakdowns, and
+    return their mean as a single segment dict.
+
+    Row structure
+    -------------
+    In --batched mode each summary CSV row represents ONE mha_gen execution:
+    one transformer layer, one GPU batch, one decode step.  For a model with
+    L layers and B GPU batches, a single decode token produces L*B rows.
+    The `group` column is a globally sequential counter (never resets between
+    tokens); the `token` column identifies the decode step (1-based, warm-up
+    already excluded by trace_result_analyzer).
+
+    There is NO separate "GPU batch" column in the summary CSV.  The
+    critical-path analysis in trace_result_analyzer already selects the
+    dominant path for each group independently, so every row is
+    self-contained: its `critical-path-winner` and `path1-inner-winner`
+    reflect the actual concurrent operations for that specific layer and batch.
+
+    Averaging strategy
+    ------------------
+    `build_gt_segments` is called on EACH row individually so that every row
+    uses its own winner label.  The resulting segment dicts are then averaged.
+    This is correct even when winners vary across rows (e.g. some layers are
+    path2 under recomputation, others are path1).  Averaging the raw op
+    durations first and then applying one winner label would give wrong results
+    whenever the winner distribution is not uniform.
+
+    Filtering and slicing (applied in order)
+    -----------------------------------------
+    1. token_filter       — keep only rows for this decode-step index.
+                            Use a mid-decode token (e.g. gen_len // 2) to avoid
+                            the first few steps where the KV cache is cold.
+                            None = all decode tokens (default).
+    2. skip_first_n       — drop the first N rows of the filtered list.
+                            Useful to skip any remaining warm-up burst within a
+                            token, or to skip the first few layers whose latency
+                            is unrepresentative.  Default 0.
+    3. first_n            — keep at most the next N rows after skipping.
+                            Any value from 1 upward; None = all remaining rows.
+    4. dominant_path_only — if True, tally the critical-path-winner distribution
+                            across the working set, keep only rows whose winner
+                            matches the most frequent path, then average those
+                            rows exclusively.  Ties are broken by path label order
+                            (path1 > path2 > path3).  The minority rows are
+                            discarded — use with care when the winner distribution
+                            is highly mixed, as it changes what the average
+                            represents.  Default False (mix all rows as before).
+
+    Parameters
+    ----------
+    summary_csv        : path to the batched summary CSV
+    token_filter       : decode-step index to filter on (None = all tokens).
+    skip_first_n       : rows to drop from the top of the filtered list (default 0).
+    first_n            : max rows to include after skipping (None = all).
+    dominant_path_only : if True, restrict averaging to rows with the most
+                         frequent critical-path-winner (default False).
+
+    Returns
+    -------
+    Dict[str, float]  segment_name → mean latency in µs across selected rows.
     """
     with open(summary_csv, newline="") as f:
         reader = csv.DictReader(f)
-        cols = reader.fieldnames or []
         all_rows = list(reader)
 
     if not all_rows:
         raise ValueError(f"Empty summary CSV: {summary_csv}")
 
-    # Identify numeric columns
-    numeric_cols, string_cols = [], []
-    for c in cols:
-        try:
-            float(all_rows[0].get(c, ""))
-            numeric_cols.append(c)
-        except (ValueError, TypeError):
-            string_cols.append(c)
+    rows = all_rows
 
-    complete = [r for r in all_rows if all(r.get(c, "") not in ("", None) for c in numeric_cols)]
-    if not complete:
-        raise ValueError(f"No complete rows in {summary_csv}")
+    # Step 1: filter to a specific decode token
+    if token_filter is not None:
+        rows = [r for r in rows if str(r.get("token", "")) == str(token_filter)]
+        if not rows:
+            raise ValueError(
+                f"No rows with token={token_filter} in {summary_csv}. "
+                f"Available: {sorted({r.get('token') for r in all_rows})}"
+            )
 
-    if avg_rows is not None:
-        complete = complete[:avg_rows]
+    # Step 2: skip the first N rows
+    if skip_first_n > 0:
+        rows = rows[skip_first_n:]
+        if not rows:
+            raise ValueError(
+                f"No rows left after skip_first_n={skip_first_n} in {summary_csv}."
+            )
 
-    n = len(complete)
-    averaged = {}
-    for c in numeric_cols:
-        averaged[c] = round(sum(float(r[c]) for r in complete) / n, 6)
-    for c in string_cols:
-        averaged[c] = complete[0].get(c, "")
+    # Step 3: cap to the next N rows
+    if first_n is not None:
+        rows = rows[:first_n]
 
-    return averaged, cols
+    if not rows:
+        raise ValueError(f"No rows to average in {summary_csv} after filtering.")
+
+    # Step 4 (optional): restrict to rows whose critical-path-winner is the
+    # most frequent one across the working set.
+    if dominant_path_only:
+        winner_counts: Dict[str, int] = {}
+        for r in rows:
+            w = r.get("critical-path-winner", "")
+            if w:
+                winner_counts[w] = winner_counts.get(w, 0) + 1
+        if not winner_counts:
+            raise ValueError(
+                f"No critical-path-winner values found in {summary_csv}. "
+                "Cannot apply --gt-dominant-path."
+            )
+        # Tie-break: prefer path1 > path2 > path3 (alphabetical happens to work)
+        dominant = max(winner_counts, key=lambda w: (winner_counts[w], ["path3", "path2", "path1"].index(w) if w in ["path1", "path2", "path3"] else -1))
+        rows_before = len(rows)
+        rows = [r for r in rows if r.get("critical-path-winner", "") == dominant]
+        print(
+            f"  GT: dominant-path filter → winner distribution: {winner_counts}  "
+            f"dominant='{dominant}'  kept {len(rows)}/{rows_before} rows"
+        )
+        if not rows:
+            raise ValueError(
+                f"No rows remain after dominant-path filter (dominant='{dominant}') "
+                f"in {summary_csv}."
+            )
+
+    # Compute segments per row, then average — never average raw ops first.
+    all_segs = [build_gt_segments(r) for r in rows]
+    n = len(all_segs)
+    averaged: Dict[str, float] = {
+        seg: round(sum(s[seg] for s in all_segs) / n, 3)
+        for seg in GT_SEGMENT_NAMES
+    }
+
+    parts = []
+    if token_filter is not None:  parts.append(f"token={token_filter}")
+    if skip_first_n > 0:          parts.append(f"skip={skip_first_n}")
+    if first_n is not None:       parts.append(f"first_n={first_n}")
+    if dominant_path_only:        parts.append("dominant_path_only")
+    filter_str = f"({', '.join(parts)})" if parts else "(no filter)"
+    winners = {w: sum(1 for r in rows if r.get("critical-path-winner") == w)
+               for w in ["path1", "path2", "path3"]
+               if any(r.get("critical-path-winner") == w for r in rows)}
+    print(f"  GT: averaged {n} rows {filter_str} → winners: {winners}")
+
+    return averaged
 
 
 def _fv(row: Dict, key: str) -> float:
@@ -850,6 +1081,12 @@ META_COLS = [
     "skip_reason",       # human-readable explanation when status != "ok"
     "trace_json",
     "summary_csv",
+    # Ground-truth decode latency / throughput
+    "gt_tokens_observed",              # number of decode tokens seen in trace
+    "gt_mean_token_latency_ms",        # mean per-token latency (ms)
+    "gt_total_decode_latency_ms",      # total latency for all observed tokens (ms)
+    "gt_throughput_tok_per_s",         # tokens/s (all sequences combined)
+    "gt_throughput_tok_per_s_per_seq", # tokens/s per sequence
 ]
 
 
@@ -878,6 +1115,7 @@ def build_csv_row(
     estimator_modes: List[EstimatorMode],
     status: str = STATUS_OK,
     skip_reason: str = "",
+    gt_decode_stats: Optional[Dict[str, float]] = None,
 ) -> Dict[str, Any]:
     row: Dict[str, Any] = {
         "experiment_id":  exp.experiment_id,
@@ -893,6 +1131,12 @@ def build_csv_row(
         "skip_reason":    skip_reason,
         "trace_json":     exp.trace_json_path or "",
         "summary_csv":    exp.summary_csv_path or "",
+        # Decode latency / throughput (blank when not yet computed)
+        "gt_tokens_observed":              (gt_decode_stats or {}).get("tokens_observed", ""),
+        "gt_mean_token_latency_ms":        (gt_decode_stats or {}).get("mean_token_latency_ms", ""),
+        "gt_total_decode_latency_ms":      (gt_decode_stats or {}).get("total_decode_latency_ms", ""),
+        "gt_throughput_tok_per_s":         (gt_decode_stats or {}).get("throughput_tok_per_s", ""),
+        "gt_throughput_tok_per_s_per_seq": (gt_decode_stats or {}).get("throughput_tok_per_s_per_seq", ""),
     }
 
     # GT segments
@@ -956,7 +1200,10 @@ def run_experiment(
     gpu_estimator: Any,
     opt_config: Any,
     dry_run: bool = False,
-    avg_gt_rows: Optional[int] = None,
+    gt_token_filter: Optional[int] = None,
+    gt_skip_first_n: int = 0,
+    gt_first_n: Optional[int] = None,
+    gt_dominant_path_only: bool = False,
     _generated_traces: Optional[List[str]] = None,
 ) -> Dict:
     """
@@ -1034,16 +1281,37 @@ def run_experiment(
     # Step 4: parse GT
     print("  Step 4: loading GT breakdown...")
     gt_segs: Dict[str, float] = {}
+    gt_decode_stats: Optional[Dict[str, float]] = None
     if not dry_run:
         try:
-            gt_row, _ = load_gt_summary(summary_csv, avg_rows=avg_gt_rows)
-            gt_segs = build_gt_segments(gt_row)
+            gt_segs = load_gt_summary(
+                summary_csv,
+                token_filter=gt_token_filter,
+                skip_first_n=gt_skip_first_n,
+                first_n=gt_first_n,
+                dominant_path_only=gt_dominant_path_only,
+            )
             print("  GT segments (µs):")
             for k, v in gt_segs.items():
                 print(f"    {k}: {v:.1f}")
         except Exception as e:
             return _skipped_row(exp, estimator_modes, STATUS_ERROR,
                                 f"Step 4 GT parsing failed: {e}")
+        try:
+            gt_decode_stats = compute_gt_decode_stats(
+                summary_csv,
+                num_prompts=exp.num_prompts,
+                token_filter=gt_token_filter,
+            )
+            print("  GT decode stats:")
+            print(f"    tokens observed:        {gt_decode_stats['tokens_observed']}")
+            print(f"    mean token latency:     {gt_decode_stats['mean_token_latency_ms']:.2f} ms")
+            print(f"    total decode latency:   {gt_decode_stats['total_decode_latency_ms']:.2f} ms")
+            print(f"    throughput:             {gt_decode_stats['throughput_tok_per_s']:.2f} tok/s")
+            print(f"    throughput per seq:     {gt_decode_stats['throughput_tok_per_s_per_seq']:.2f} tok/s/seq")
+        except Exception as e:
+            print(f"  [warn] Could not compute decode stats: {e}")
+            gt_decode_stats = None
 
     # Step 5: estimator breakdown per mode (failures here are non-fatal —
     # GT data is kept; only that mode's columns are blank)
@@ -1071,7 +1339,7 @@ def run_experiment(
 
     # Step 6: build row
     return build_csv_row(exp, gt_segs, est_segs_by_mode, estimator_modes,
-                         status=STATUS_OK)
+                         status=STATUS_OK, gt_decode_stats=gt_decode_stats)
 
 
 def cleanup_traces(
@@ -1110,15 +1378,15 @@ def cleanup_traces(
             total_freed += size_mb
 
         elif mode == TRACE_CLEANUP_COMPRESS:
-            gz_path = path + ".gz"
-            print(f"  [compress] {path}  ({size_mb:.1f} MB)  \u2192  {gz_path}")
+            tar_gz_path = path + ".tar.gz"
+            print(f"  [compress] {path}  ({size_mb:.1f} MB)  \u2192  {tar_gz_path}")
             if not dry_run:
-                with open(path, "rb") as f_in, gzip.open(gz_path, "wb") as f_out:
-                    shutil.copyfileobj(f_in, f_out)
-                gz_size_mb = os.path.getsize(gz_path) / (1024 ** 2)
+                with tarfile.open(tar_gz_path, "w:gz") as tf:
+                    tf.add(path, arcname=os.path.basename(path))
+                tar_gz_mb = os.path.getsize(tar_gz_path) / (1024 ** 2)
                 os.remove(path)
-                saved_mb = size_mb - gz_size_mb
-                print(f"    compressed: {gz_size_mb:.1f} MB  (saved {saved_mb:.1f} MB)")
+                saved_mb = size_mb - tar_gz_mb
+                print(f"    compressed: {tar_gz_mb:.1f} MB  (saved {saved_mb:.1f} MB)")
                 total_freed += saved_mb
             else:
                 total_freed += size_mb
@@ -1137,7 +1405,10 @@ def run_comparison(
     opt_config: Any,
     output_csv: str = "comparison_results.csv",
     dry_run: bool = False,
-    avg_gt_rows: Optional[int] = None,
+    gt_token_filter: Optional[int] = None,
+    gt_skip_first_n: int = 0,
+    gt_first_n: Optional[int] = None,
+    gt_dominant_path_only: bool = False,
     trace_cleanup: str = TRACE_CLEANUP_NONE,
 ) -> List[Dict]:
     """
@@ -1145,21 +1416,25 @@ def run_comparison(
 
     Parameters
     ----------
-    experiments      List of ExperimentConfig objects (from sweep helpers or manual).
-    hw               Hardware configuration (shared across experiments).
-    estimator_modes  List of EstimatorMode to compare (at least one).
-    gpu_estimator    Initialised GEE estimator object (pass None to skip estimator).
-    opt_config       FlexLLM OPT config object (from get_opt_config(model)).
-    output_csv       Path for the output comparison CSV.
-    dry_run          If True, print commands but don't execute them.
-    avg_gt_rows      Number of GT rows to average (None = all).
-    trace_cleanup    What to do with .json traces after the CSV is written:
-                       "none"     - keep as-is (default)
-                       "compress" - gzip in-place (.json -> .json.gz)
-                       "delete"   - permanently remove
-                     Applies to traces that were newly profiled OR decompressed
-                     from .gz in this run.  Pre-existing .json files are never
-                     touched.
+    experiments           List of ExperimentConfig objects (from sweep helpers or manual).
+    hw                    Hardware configuration (shared across experiments).
+    estimator_modes       List of EstimatorMode to compare (at least one).
+    gpu_estimator         Initialised GEE estimator object (pass None to skip estimator).
+    opt_config            FlexLLM OPT config object (from get_opt_config(model)).
+    output_csv            Path for the output comparison CSV.
+    dry_run               If True, print commands but don't execute them.
+    gt_token_filter       Only include GT rows from this decode token (None = all).
+    gt_skip_first_n       Skip the first N GT rows after token filtering.
+    gt_first_n            Use at most the next N GT rows after skipping (None = all).
+    gt_dominant_path_only If True, identify the most frequent critical-path-winner
+                          across the working set and average only those rows.
+    trace_cleanup         What to do with .json traces after the CSV is written:
+                            "none"     - keep as-is (default)
+                            "compress" - tar.gz in-place (.json -> .json.tar.gz)
+                            "delete"   - permanently remove
+                          Applies to traces newly profiled OR decompressed from
+                          .tar.gz in this run.  Pre-existing .json files are never
+                          touched.
     """
     all_rows = []
     generated_traces: List[str] = []   # paths written/restored this run
@@ -1173,7 +1448,10 @@ def run_comparison(
             gpu_estimator=gpu_estimator,
             opt_config=opt_config,
             dry_run=dry_run,
-            avg_gt_rows=avg_gt_rows,
+            gt_token_filter=gt_token_filter,
+            gt_skip_first_n=gt_skip_first_n,
+            gt_first_n=gt_first_n,
+            gt_dominant_path_only=gt_dominant_path_only,
             _generated_traces=generated_traces,
         )
         all_rows.append(row)
@@ -1276,8 +1554,33 @@ def main():
     parser.add_argument("--result-analyzer-script", default="trace_result_analyzer.py")
     parser.add_argument("--dry-run", action="store_true",
         help="Print commands without executing them.")
-    parser.add_argument("--avg-gt-rows", type=int, default=None,
-        help="Number of GT summary rows to average (default: all).")
+    parser.add_argument("--gt-token-filter", type=int, default=None, metavar="TOKEN",
+        help=(
+            "Only use GT rows from this decode-token index (1-based, warm-up already "
+            "excluded). Matches the estimator's steady-state assumption. "
+            "None = include all decode tokens (default)."
+        ))
+    parser.add_argument("--gt-skip-first-n", type=int, default=0, metavar="N",
+        help=(
+            "Skip the first N GT rows after token/batch filtering. "
+            "Useful to drop a remaining warm-up burst. Default: 0."
+        ))
+    parser.add_argument("--gt-first-n", type=int, default=None, metavar="N",
+        help=(
+            "Use at most N GT rows after skipping. Any value from 1 upward. "
+            "None = use all remaining rows (default)."
+        ))
+    parser.add_argument(
+        "--gt-dominant-path", action="store_true", default=False,
+        help=(
+            "After all other GT row filtering, tally the critical-path-winner "
+            "distribution and keep only rows whose winner is the most frequent "
+            "one (ties broken by path1 > path2 > path3). The minority-path rows "
+            "are discarded before averaging. Produces a cleaner, single-path "
+            "breakdown at the cost of excluding atypical layers. Default: off "
+            "(all rows averaged together regardless of winner)."
+        )
+    )
     parser.add_argument(
         "--trace-cleanup",
         choices=[TRACE_CLEANUP_NONE, TRACE_CLEANUP_COMPRESS, TRACE_CLEANUP_DELETE],
@@ -1286,10 +1589,10 @@ def main():
         help=(
             "What to do with raw .json trace files after the CSV is written. "
             "  none     - keep as-is (default). "
-            "  compress - gzip each trace in-place (.json -> .json.gz). "
+            "  compress - tar.gz each trace in-place (.json -> .json.tar.gz). "
             "  delete   - permanently remove each trace. "
-            "Applies to traces newly profiled OR decompressed from .gz in "
-            "this run. Pre-existing .json files are never touched."
+            "Applies to traces newly profiled OR decompressed from .tar.gz "
+            "in this run. Pre-existing .json files are never touched."
         ),
     )
     
@@ -1438,7 +1741,10 @@ def main():
         opt_config=opt_config,
         output_csv=args.output_csv,
         dry_run=args.dry_run,
-        avg_gt_rows=args.avg_gt_rows,
+        gt_token_filter=args.gt_token_filter,
+        gt_skip_first_n=args.gt_skip_first_n,
+        gt_first_n=args.gt_first_n,
+        gt_dominant_path_only=args.gt_dominant_path,
         trace_cleanup=args.trace_cleanup,
     )
 

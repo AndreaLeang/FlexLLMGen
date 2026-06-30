@@ -32,7 +32,7 @@ from flexllmgen.utils import (Task, ExecutionEnv, GB, T, ValueHolder,
 from experimental.cost_model import get_optimal_policy
 
 import torch
-import torchvision.models as models
+# import torchvision.models as models
 from torch.profiler import profile, ProfilerActivity, record_function
 
 fix_recursive_import()

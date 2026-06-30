@@ -1,3 +1,8 @@
-# python3 gt_vs_estimator.py --model facebook/opt-6.7b --prompt-len 8000 --sweep batch_size --recompute-lens 0 --gpu-mem 80 --output-csv gt_vs_est_runs/opt-6.7b_p8000_g16_sweep_batch.csv
-# python3 gt_vs_estimator.py --model facebook/opt-6.7b --prompt-len 8192 --sweep recompute --fixed-batch-size 1 --num-prompts 16 --recompute-lens 0 1024 2048 3072 4096 5120 6144 7168 8192 --gpu-mem 80 --output-csv gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_recompute.csv
-python3 gt_vs_estimator.py --model facebook/opt-6.7b --prompt-len 8192 --sweep batch_and_recompute --batch-sizes 1 2 --num-prompts 16 --recompute-lens 0 1024 2048 3072 4096 5120 6144 7168 8192 --gpu-mem 80 --output-csv gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_batch_and_recompute.csv --trace-cleanup compress
+# python3 gt_vs_estimator.py --model facebook/opt-6.7b --prompt-len 8192 --sweep batch_size --recompute-lens 0 --gpu-mem 80 --output-csv gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_batch.csv --trace-cleanup compress --gpu-mem 80 --gpu-tflop 312 --pcie-bw 16 --gt-dominant-path
+# python3 plot_gt_vs_estimator.py gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_batch.csv --x-axis batch_size --out gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_batch.png --normalize --show-throughput
+
+python3 gt_vs_estimator.py --model facebook/opt-6.7b --prompt-len 8192 --sweep recompute --fixed-batch-size 1 --num-prompts 16 --recompute-lens 0 1024 2048 3072 4096 5120 6144 7168 8192 --gpu-mem 80 --output-csv gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_recompute.csv --trace-cleanup compress --gpu-mem 80 --gpu-tflop 312 --pcie-bw 16 --gt-dominant-path
+python3 plot_gt_vs_estimator.py gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_recompute.csv --x-axis recompute_len --out gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_recompute.png --show-throughput
+
+python3 gt_vs_estimator.py --model facebook/opt-6.7b --prompt-len 8192 --sweep batch_and_recompute --batch-sizes 1 2 --num-prompts 16 --recompute-lens 0 1024 2048 3072 4096 5120 6144 7168 8192 --gpu-mem 80 --output-csv gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_batch_and_recompute.csv --trace-cleanup compress --gpu-mem 80 --gpu-tflop 312 --pcie-bw 16 --gt-dominant-path
+python3 plot_gt_vs_estimator.py gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_batch_and_recompute.csv --x-axis batch_and_recompute --out gt_vs_est_runs/opt-6.7b_p8192_g16_sweep_batch_and_recompute.png --show-throughput --normalize

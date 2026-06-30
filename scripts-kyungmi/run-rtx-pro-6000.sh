@@ -1,0 +1,17 @@
+python3 gt_vs_estimator.py --model facebook/opt-13b --prompt-len 8192 --sweep batch_size --recompute-lens 0 --gpu-mem 97 --gpu-tflop 1000 --pcie-bw 64 --output-dir gt_vs_est_runs_rtx6000 --output-csv gt_vs_est_runs_rtx6000/opt-13b_p8192_g16_sweep_batch.csv --trace-cleanup compress --gt-dominant-path
+python3 plot_gt_vs_estimator.py gt_vs_est_runs_rtx6000/opt-13b_p8192_g16_sweep_batch.csv --x-axis batch_size --out gt_vs_est_runs_rtx6000/opt-13b_p8192_g16_sweep_batch.png --normalize --show-throughput
+
+python3 gt_vs_estimator.py --model facebook/opt-13b --prompt-len 8192 --sweep recompute --fixed-batch-size 1 --num-prompts 16 --recompute-lens 0 1024 2048 3072 4096 5120 6144 7168 8192 --gpu-mem 97 --gpu-tflop 1000 --pcie-bw 64 --output-dir gt_vs_est_runs_rtx6000 --output-csv gt_vs_est_runs_rtx6000/opt-13b_p8192_g16_sweep_recompute.csv --trace-cleanup compress --gt-dominant-path
+python3 plot_gt_vs_estimator.py gt_vs_est_runs_rtx6000/opt-13b_p8192_g16_sweep_recompute.csv --x-axis recompute_len --out gt_vs_est_runs_rtx6000/opt-13b_p8192_g16_sweep_recompute.png --show-throughput
+
+python3 gt_vs_estimator.py --model facebook/opt-13b --prompt-len 8192 --sweep batch_and_recompute --batch-sizes 1 2 --num-prompts 16 --recompute-lens 0 1024 2048 3072 4096 5120 6144 7168 8192 --gpu-mem 97 --gpu-tflop 1000 --pcie-bw 64 --output-dir gt_vs_est_runs_rtx6000 --output-csv gt_vs_est_runs_rtx6000/opt-13b_p8192_g16_sweep_batch_and_recompute.csv --trace-cleanup compress --gt-dominant-path
+python3 plot_gt_vs_estimator.py gt_vs_est_runs_rtx6000/opt-13b_p8192_g16_sweep_batch_and_recompute.csv --x-axis batch_and_recompute --out gt_vs_est_runs_rtx6000/opt-13b_p8192_g16_sweep_batch_and_recompute.png --show-throughput --normalize
+
+python3 gt_vs_estimator.py --model facebook/opt-30b --prompt-len 2048 --sweep batch_size --recompute-lens 0 --gpu-mem 97 --gpu-tflop 1000 --pcie-bw 64 --output-dir gt_vs_est_runs_rtx6000 --output-csv gt_vs_est_runs_rtx6000/opt-30b_p2048_g16_sweep_batch.csv --trace-cleanup compress --gt-dominant-path
+python3 plot_gt_vs_estimator.py gt_vs_est_runs_rtx6000/opt-30b_p2048_g16_sweep_batch.csv --x-axis batch_size --out gt_vs_est_runs_rtx6000/opt-30b_p2048_g16_sweep_batch.png --normalize --show-throughput
+
+python3 gt_vs_estimator.py --model facebook/opt-30b --prompt-len 2048 --sweep recompute --fixed-batch-size 1 --num-prompts 16 --recompute-lens 0 256 512 1024 1536 2048 --gpu-mem 97 --gpu-tflop 1000 --pcie-bw 64 --output-dir gt_vs_est_runs_rtx6000 --output-csv gt_vs_est_runs_rtx6000/opt-30b_p2048_g16_sweep_recompute.csv --trace-cleanup compress --gt-dominant-path
+python3 plot_gt_vs_estimator.py gt_vs_est_runs_rtx6000/opt-30b_p2048_g16_sweep_recompute.csv --x-axis recompute_len --out gt_vs_est_runs_rtx6000/opt-30b_p2048_g16_sweep_recompute.png --show-throughput
+
+python3 gt_vs_estimator.py --model facebook/opt-30b --prompt-len 2048 --sweep batch_and_recompute --batch-sizes 1 2 --num-prompts 16 --recompute-lens 0 256 512 1024 1536 2048 --gpu-mem 97 --gpu-tflop 1000 --pcie-bw 64 --output-dir gt_vs_est_runs_rtx6000 --output-csv gt_vs_est_runs_rtx6000/opt-30b_p2048_g16_sweep_batch_and_recompute.csv --trace-cleanup compress --gt-dominant-path
+python3 plot_gt_vs_estimator.py gt_vs_est_runs_rtx6000/opt-30b_p2048_g16_sweep_batch_and_recompute.csv --x-axis batch_and_recompute --out gt_vs_est_runs_rtx6000/opt-30b_p2048_g16_sweep_batch_and_recompute.png --show-throughput --normalize

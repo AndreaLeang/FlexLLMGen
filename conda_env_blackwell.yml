@@ -1,0 +1,24 @@
+name: flexgen_env_blackwell
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - --extra-index-url https://download.pytorch.org/whl/nightly/cu128
+      - --pre torch
+      - --pre torchaudio
+      - --pre torchvision
+      - numpy
+      - pandas
+      - pynvml
+      - pyyaml
+      - scipy
+      - torchlens
+      - pulp
+      - nvidia-ml-py
+      - psutil
+      - transformers
+      - sniffio
+      - matplotlib
+      - scikit-learn
+      - cvxpy
+      - opt_einsum

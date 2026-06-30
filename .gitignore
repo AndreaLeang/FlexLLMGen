@@ -42,3 +42,5 @@ traces/
 
 gt_vs_est_runs/
 gt_vs_est_runs_l40/
+gt_vs_est_runs_h100/
+gt_vs_est_runs_rtx6000/

@@ -30,6 +30,7 @@ import numpy as np
 import matplotlib
 matplotlib.use("Agg")        # headless default; --show will call plt.show()
 import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 import matplotlib.patches as mpatches
 
 
@@ -179,25 +180,30 @@ def plot_comparison(
     modes_to_plot: Optional[List[str]] = None,
     title: Optional[str] = None,
     normalize: bool = False,
+    show_throughput: bool = False,
 ) -> plt.Figure:
     """
     Create the grouped-bar comparison plot.
 
     Parameters
     ----------
-    csv_path       Path to comparison_results.csv.
-    x_axis         Column used for x-tick labels: batch_size | recompute_len |
-                   offload_percent | experiment_id.
-    out_path       Save figure here (None = don't save).
-    dpi            DPI for saved figure.
-    show           Call plt.show().
-    modes_to_plot  Subset of estimator mode names to include (None = all).
-    title          Figure title override.
-    normalize      If True, multiply every bar's segments by num_batches so the
-                   y-axis shows total latency across all iterations needed to
-                   process the full num_prompts workload.  Useful when comparing
-                   configurations with different batch sizes (e.g. bs=1 × 16
-                   iterations vs bs=8 × 2 iterations) on a fair total-work basis.
+    csv_path         Path to comparison_results.csv.
+    x_axis           Column used for x-tick labels: batch_size | recompute_len |
+                     offload_percent | experiment_id.
+    out_path         Save figure here (None = don't save).
+    dpi              DPI for saved figure.
+    show             Call plt.show().
+    modes_to_plot    Subset of estimator mode names to include (None = all).
+    title            Figure title override.
+    normalize        If True, multiply every bar's segments by num_batches so the
+                     y-axis shows total latency across all iterations needed to
+                     process the full num_prompts workload.  Useful when comparing
+                     configurations with different batch sizes (e.g. bs=1 × 16
+                     iterations vs bs=8 × 2 iterations) on a fair total-work basis.
+    show_throughput  If True, overlay a line+marker plot of GT decode throughput
+                     (tokens/s, from the gt_throughput_tok_per_s CSV column) on a
+                     twin right-hand y-axis.  Rows with a blank or zero throughput
+                     column are plotted as gaps in the line.
     """
     rows, fieldnames, all_modes = load_comparison_csv(csv_path)
     if not rows:
@@ -378,6 +384,83 @@ def plot_comparison(
                 ha="center", va="top", fontsize=7, color="#555555",
             )
 
+    # ------------------------------------------------- Throughput overlay --
+    ax2 = None
+    if show_throughput:
+        # Read throughput values; None where the column is blank/missing/zero
+        tp_vals: List[Optional[float]] = []
+        for r in rows:
+            raw = r.get("gt_throughput_tok_per_s", "")
+            try:
+                v = float(raw)
+                tp_vals.append(v if v > 0 else None)
+            except (ValueError, TypeError):
+                tp_vals.append(None)
+
+        valid = [v for v in tp_vals if v is not None]
+        if not valid:
+            print("[warn] --show-throughput: no gt_throughput_tok_per_s values "
+                  "found in CSV — is the column present?", file=sys.stderr)
+        else:
+            ax2 = ax.twinx()
+
+            # Plot as a line with markers, using None entries as gaps
+            THROUGHPUT_COLOR  = "#D32F2F"   # strong red — stands out against bars
+            THROUGHPUT_MARKER = "D"          # diamond
+            tp_x = np.array([xi for xi, v in enumerate(tp_vals) if v is not None],
+                            dtype=float)
+            tp_y = np.array([v  for v in tp_vals if v is not None], dtype=float)
+
+            # Shift x positions to align with the centre of the GT bar
+            tp_x_shifted = tp_x + offsets[0]
+
+            # Draw the line connecting valid points
+            ax2.plot(
+                tp_x_shifted, tp_y,
+                color=THROUGHPUT_COLOR, linewidth=1.8,
+                linestyle="--", alpha=0.9, zorder=5,
+            )
+            # Draw markers on top of the line
+            ax2.scatter(
+                tp_x_shifted, tp_y,
+                color=THROUGHPUT_COLOR, marker=THROUGHPUT_MARKER,
+                s=55, zorder=6, alpha=0.95,
+            )
+            # Label each marker with its value
+            for xi_s, v in zip(tp_x_shifted, tp_y):
+                ax2.text(
+                    xi_s, v, f"  {v:.1f}",
+                    va="center", ha="left",
+                    fontsize=7.5, color=THROUGHPUT_COLOR, fontweight="bold",
+                )
+
+            # Right y-axis formatting
+            tp_max = max(valid)
+            ax2.set_ylim(0, tp_max * 1.30)
+            ax2.set_ylabel("GT Decode Throughput (tok/s)", fontsize=10,
+                           color=THROUGHPUT_COLOR)
+            ax2.tick_params(axis="y", colors=THROUGHPUT_COLOR)
+            ax2.spines["right"].set_visible(True)
+            ax2.spines["right"].set_color(THROUGHPUT_COLOR)
+            ax2.spines["top"].set_visible(False)
+
+            # Add throughput line to the legend
+            tp_handle = mlines.Line2D(
+                [], [],
+                color=THROUGHPUT_COLOR, linewidth=1.8, linestyle="--",
+                marker=THROUGHPUT_MARKER, markersize=6,
+                label="GT Throughput (tok/s)",
+            )
+            current_handles, current_labels = ax.get_legend_handles_labels()
+            ax.legend(
+                handles=gt_handles + [blank] + est_handles + [blank, tp_handle],
+                loc="upper right",
+                fontsize=7.5,
+                framealpha=0.92,
+                edgecolor="#cccccc",
+                ncol=max(1, (len(gt_handles) + len(est_handles)) // 7 + 1),
+            )
+
     plt.tight_layout()
 
     if out_path:
@@ -450,6 +533,14 @@ def main():
             "Enables fair comparison across different batch sizes."
         ),
     )
+    parser.add_argument(
+        "--show-throughput", action="store_true",
+        help=(
+            "Overlay GT decode throughput (tok/s) as a dashed line on a twin "
+            "right-hand y-axis.  Reads the gt_throughput_tok_per_s column "
+            "produced by gt_vs_estimator.py."
+        ),
+    )
     args = parser.parse_args()
 
     out = args.out or (Path(args.csv).stem + "_comparison.png")
@@ -462,6 +553,7 @@ def main():
         modes_to_plot=args.modes,
         title=args.title,
         normalize=args.normalize,
+        show_throughput=args.show_throughput,
     )
 
 
