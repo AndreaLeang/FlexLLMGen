@@ -100,6 +100,23 @@ try:
 except ImportError:
     TRACE_TOOLS_AVAILABLE = False
 
+# ---------------------------------------------------------------------------
+# baseline_model.py — the idealized "perfect overlap" estimator.  Independent
+# of the kv_schedule_optimization / flexllmgen stack, so it gets its own
+# import guard.  Aliased to avoid colliding with this file's HardwareConfig /
+# ExperimentConfig-style dataclasses of the same short names.
+# ---------------------------------------------------------------------------
+try:
+    from baseline_model import (
+        HardwareConfig as BaselineHardwareConfig,
+        ModelConfig as BaselineModelConfig,
+        MODEL_PRESETS as BASELINE_MODEL_PRESETS,
+        layer_decode_breakdown as baseline_layer_decode_breakdown,
+    )
+    BASELINE_AVAILABLE = True
+except ImportError:
+    BASELINE_AVAILABLE = False
+
 sys.path.append( '../energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
 from gee.gee_utils import get_gee
 
@@ -132,9 +149,10 @@ def _is_oom_output(text: str) -> bool:
 
 
 # Status values written to the CSV "status" column.
-STATUS_OK    = "ok"
-STATUS_OOM   = "oom"      # no feasible offload scheme, or CUDA OOM at runtime
-STATUS_ERROR = "error"    # any other failure
+STATUS_OK        = "ok"
+STATUS_OOM       = "oom"        # no feasible offload scheme, or CUDA OOM at runtime
+STATUS_ERROR     = "error"      # any other failure
+STATUS_COLLECTED = "collected"  # --collection-only: trace gathered, no analysis run
 
 
 # ---------------------------------------------------------------------------
@@ -174,7 +192,25 @@ class HardwareConfig:
     gpu_bind: Optional[str] = None  # e.g. "0"  (CUDA_VISIBLE_DEVICES)
     sudo_password: Optional[str] = None
 
-    def to_cost_model_config(self) -> "CostModelConfig":
+    def to_cost_model_config(self, opt_config: Any = None) -> "CostModelConfig":
+        """
+        Parameters
+        ----------
+        opt_config : if given, also sets cfg.h1/h2/l/nh from the model's real
+            hidden_size/ffn_embed_dim/num_hidden_layers/n_head.
+
+            This matters specifically for layer_calc_pred()'s use_ideal_comp
+            branch (layer_type="MHA"): it reads hardware_config.h1/h2 directly
+            rather than taking them from opt_config, and CostModelConfig's
+            class defaults are h1=12288, h2=12288*4 — OPT-175B scale. Without
+            this, every use_ideal_comp=True estimate (the default "ideal"
+            EstimatorMode) silently computes MHA compute FLOPs at the wrong
+            model size for anything other than opt-175b — e.g. for opt-6.7b
+            (h1=4096, h2=16384) the uncorrected defaults inflate MHA CUDA
+            compute_ops roughly 9x. Always pass opt_config when it's
+            available; only omit it in contexts where opt_config genuinely
+            isn't known (e.g. ESTIMATOR_AVAILABLE-gated fallbacks).
+        """
         cfg = CostModelConfig()
         cfg.gmem = self.alpha_g * self.gpu_mem_gb * GB
         cfg.cmem = self.alpha_c * self.cpu_mem_gb * GB
@@ -185,7 +221,27 @@ class HardwareConfig:
         cfg.use_ideal_comp = self.use_ideal_comp
         cfg.ideal_mm_flops = self.gpu_tflop * T
         cfg.ideal_bw = self.pcie_bw
+        if opt_config is not None:
+            cfg.h1 = opt_config.hidden_size
+            cfg.h2 = opt_config.ffn_embed_dim
+            cfg.l = opt_config.num_hidden_layers
+            cfg.nh = opt_config.n_head
         return cfg
+
+    def to_baseline_hardware_config(self) -> "BaselineHardwareConfig":
+        """
+        Maps to baseline_model.HardwareConfig (the idealized perfect-overlap
+        model). Unlike to_cost_model_config(), the use_ideal_bw / use_flex_bw /
+        use_no_pinned / use_ideal_comp toggles have no baseline_model
+        equivalent — that model is always the single idealized case — so they
+        are simply ignored here.
+        """
+        return BaselineHardwareConfig(
+            gpu_matmul_flops=self.gpu_tflop * 1e12,
+            cpu_gpu_bandwidth=self.pcie_bw * GB,
+            dtype_bytes=2,
+            gpu_mem_bytes=self.alpha_g * self.gpu_mem_gb * GB,
+        )
 
 
 @dataclasses.dataclass
@@ -194,16 +250,55 @@ class EstimatorMode:
     One estimator configuration (set of bandwidth / compute flags).
 
     name        Short label used in CSV column headers and plot legend.
-    use_ideal_bw   --i-BW flag
-    use_flex_bw    --f-BW flag
-    use_no_pinned  --nP flag
-    use_ideal_comp --i-C flag
+    impl        Which estimator implementation to run:
+                  "kv_schedule" (default) - kv_schedule_optimization.layer_prediction,
+                                  the realistic operation-timeline model.
+                  "baseline"              - baseline_model.py's idealized
+                                  perfect-overlap model instead. Also accepts
+                                  "perfect_overlap" / "perfect-overlap" as
+                                  aliases (see normalized_impl()), since
+                                  that's how baseline_model.py describes
+                                  itself.
+    use_ideal_bw   --i-BW flag (kv_schedule impl only)
+    use_flex_bw    --f-BW flag (kv_schedule impl only)
+    use_no_pinned  --nP flag (kv_schedule impl only)
+    use_ideal_comp --i-C flag (kv_schedule impl only)
     """
     name: str = "default"
+    impl: str = "kv_schedule"   # "kv_schedule" | "baseline" (aliases: "perfect_overlap", "perfect-overlap")
     use_ideal_bw: bool = False
     use_flex_bw: bool = False
     use_no_pinned: bool = False
     use_ideal_comp: bool = False
+
+    # Recognized spellings, normalized to one of "kv_schedule" / "baseline".
+    # A mismatch here used to silently fall through to the kv_schedule branch
+    # in run_experiment()'s Step 5 (which then crashed inside
+    # kv_schedule_optimization on a None gpu_estimator) instead of raising a
+    # clear error — normalized_impl() is the single place that maps spelling
+    # variants, and callers should always go through it rather than
+    # comparing self.impl directly.
+    _IMPL_ALIASES = {
+        "kv_schedule": "kv_schedule",
+        "baseline": "baseline",
+        "perfect_overlap": "baseline",
+        "perfect-overlap": "baseline",
+    }
+
+    def normalized_impl(self) -> str:
+        """
+        Return "kv_schedule" or "baseline", accepting known aliases and
+        raising immediately on anything unrecognized (case/whitespace
+        insensitive) rather than letting an unrecognized value silently
+        fall through to the wrong estimator.
+        """
+        key = self.impl.strip().lower()
+        if key not in self._IMPL_ALIASES:
+            raise ValueError(
+                f"EstimatorMode(name={self.name!r}).impl={self.impl!r} is not "
+                f"recognized. Expected one of: {sorted(self._IMPL_ALIASES)}."
+            )
+        return self._IMPL_ALIASES[key]
 
     def apply_to(self, hw: HardwareConfig) -> HardwareConfig:
         """Return a copy of hw with these mode flags applied."""
@@ -356,7 +451,7 @@ def get_estimator_breakdown(
     if not ESTIMATOR_AVAILABLE:
         raise RuntimeError("kv_schedule_optimization is not importable.")
 
-    hw_cfg = hw.to_cost_model_config()
+    hw_cfg = hw.to_cost_model_config(opt_config=opt_config)
     offload_pct = exp.offload_percent if exp.offload_percent is not None else 0.0
     num_batches = exp.num_batches
 
@@ -396,17 +491,87 @@ def get_estimator_breakdown(
     }
 
 
-def get_min_offload_percent(
+def get_estimator_breakdown_baseline(
+    exp: ExperimentConfig,
+    hw: HardwareConfig,
+) -> Dict[str, float]:
+    """
+    Baseline ("perfect overlap") estimator breakdown for a representative
+    decode layer, using baseline_model.py's layer_decode_breakdown() instead
+    of kv_schedule_optimization.layer_prediction().
+
+    Segment keys match EST_SEGMENT_NAMES exactly, so this slots into the same
+    CSV column-group machinery as the kv_schedule_optimization estimator
+    (see EstimatorMode.impl and Step 5 of run_experiment()).
+
+    baseline_model has no concept of is_load_store / first-batch / last-batch
+    bookkeeping — offload_frac alone determines the CPU-resident share of
+    THIS layer's micro-batch, so unlike get_estimator_breakdown() there is no
+    is_load_store selection here.
+
+    Values are in µs (baseline_model returns seconds).
+    """
+    if not BASELINE_AVAILABLE:
+        raise RuntimeError("baseline_model is not importable.")
+
+    model_key = exp.model.split("/")[-1]
+    if model_key not in BASELINE_MODEL_PRESETS:
+        raise RuntimeError(
+            f"baseline_model.MODEL_PRESETS has no entry for '{model_key}' "
+            f"(available: {sorted(BASELINE_MODEL_PRESETS)}). Add it there, "
+            f"or use the kv_schedule impl for this model."
+        )
+
+    model_cfg = BaselineModelConfig(
+        prompt_len=exp.prompt_len,
+        gen_len=exp.gen_len,
+        **BASELINE_MODEL_PRESETS[model_key],
+    )
+    hw_cfg = hw.to_baseline_hardware_config()
+    offload_frac = (exp.offload_percent if exp.offload_percent is not None else 0.0) / 100.0
+    # exp.recompute_len is a literal value everywhere else in this codebase
+    # (0 means "no recomputation" -- this is exactly how
+    # kv_schedule_optimization.layer_prediction()'s recomp_len argument is
+    # used too). Pass it through as-is rather than treating 0 as a sentinel
+    # for "let baseline_model auto-optimize its own recompute_len" -- doing
+    # that would silently evaluate a DIFFERENT policy than the one the
+    # experiment actually specifies (and than what kv_schedule/GT are
+    # evaluating for the same row), making the comparison apples-to-oranges.
+    # (layer_decode_breakdown()'s own recompute_len=None auto-optimize mode
+    # is still available to callers outside gt_vs_estimator.py.)
+    recompute_len = exp.recompute_len
+
+    segments_s, _recompute_len_used = baseline_layer_decode_breakdown(
+        model=model_cfg,
+        hw=hw_cfg,
+        gpu_batch_size=exp.batch_size,
+        offload_frac=offload_frac,
+        recompute_len=recompute_len,
+    )
+
+    S2US = 1e6
+    return {seg: val * S2US for seg, val in segments_s.items()}
+
+
+def get_offload_candidates(
     exp: ExperimentConfig,
     hw: HardwareConfig,
     opt_config: Any,
-) -> float:
+) -> List[float]:
     """
-    Call get_available_offloadings() to find the minimum feasible offload
-    percentage for exp.batch_size, given the hardware config.
-    Returns 0.0 if no offloading is needed (all KV fits on GPU).
+    Return every offload percentage that get_available_offloadings() predicts
+    feasible for exp.batch_size (ascending order), not just the minimum.
+
+    Used both to pick the minimum feasible offload (Step 1, via
+    get_min_offload_percent) and, if that minimum later turns out to
+    under-predict actual GPU memory use (a real CUDA OOM during profiling —
+    see run_flexllm_profile_with_oom_retry), to step up to the next higher
+    candidate instead of giving up.
+
+    Raises OOMError if the list is empty (no feasible scheme even at 100%
+    offload — a genuine, unrecoverable OOM).
     """
-    hw_cfg = hw.to_cost_model_config()
+    hw_cfg = hw.to_cost_model_config(opt_config=opt_config)
     seq_len = exp.prompt_len + exp.gen_len
 
     feasible = get_available_offloadings(
@@ -417,14 +582,28 @@ def get_min_offload_percent(
         prompt_len=exp.prompt_len,
         gen_len=exp.gen_len,
         seq_len=seq_len,
-        min_offloading=True,      # ← stop at first (minimum) feasible entry
+        min_offloading=False,   # ← collect every feasible entry, not just the first
     )
-    if exp.batch_size not in feasible or not feasible[exp.batch_size]:
+    candidates = sorted(float(x) for x in feasible.get(exp.batch_size, []))
+    if not candidates:
         raise OOMError(
             f"No feasible offloading strategy for batch_size={exp.batch_size} "
-            f"— model+KV cache exceeds available GPU/CPU memory."
+            f"— model+KV cache exceeds available GPU/CPU memory even at 100% offload."
         )
-    return float(feasible[exp.batch_size][0])
+    return candidates
+
+
+def get_min_offload_percent(
+    exp: ExperimentConfig,
+    hw: HardwareConfig,
+    opt_config: Any,
+) -> float:
+    """
+    Return the minimum feasible offload percentage for exp.batch_size, given
+    the hardware config. Returns 0.0 if no offloading is needed (all KV fits
+    on GPU). Thin wrapper over get_offload_candidates()[0].
+    """
+    return get_offload_candidates(exp, hw, opt_config)[0]
 
 
 # ===========================================================================
@@ -494,6 +673,42 @@ def build_flexllm_command(
     return cmd
 
 
+def compute_expected_trace_stem(exp: ExperimentConfig) -> str:
+    """
+    Re-derive the filename stem that flex_opt_kvpr.py's get_filename() would
+    produce for this experiment, WITHOUT running or touching anything on
+    disk:
+        fo-{model_size}-gbs{gbs}-ngbs{ngbs}-prompt{p}-gen{g}-percent-{pcts}-[R-{rc}-]gpu-cache
+
+    Shared by run_flexllm_profile() (to locate/produce the trace) and
+    run_experiment()'s Step 2/3 shortcut (to check whether the summary CSV
+    already exists before touching the — possibly large, possibly
+    compressed — trace at all).
+    """
+    offload = int(exp.offload_percent) if exp.offload_percent is not None else 0
+    kv_gpu = 100 - offload
+    kv_cpu = offload
+    w_gpu, w_cpu = 100, 0
+    pcts = f"{w_gpu}-{w_cpu}-{kv_gpu}-{kv_cpu}-100-0-"
+    model_size = exp.model.split("-")[-1]
+    rc_part = f"R-{exp.recompute_len}-" if exp.recompute_len > 0 else ""
+    return (
+        f"fo-{model_size}"
+        f"-gbs{exp.batch_size}"
+        f"-ngbs{exp.num_batches}"
+        f"-prompt{exp.prompt_len}"
+        f"-gen{exp.gen_len}"
+        f"-percent-{pcts}"
+        f"{rc_part}gpu-cache"
+    )
+
+
+def compute_expected_trace_paths(exp: ExperimentConfig, trace_dir: str) -> Tuple[str, str]:
+    """Return (expected_stem, expected_json_path) for this experiment."""
+    stem = compute_expected_trace_stem(exp)
+    return stem, os.path.join(trace_dir, stem + ".json")
+
+
 def run_flexllm_profile(
     exp: ExperimentConfig,
     hw: HardwareConfig,
@@ -504,10 +719,9 @@ def run_flexllm_profile(
     """
     Run flex_opt_kvpr.py and return the path to the produced JSON trace.
 
-    The filename is constructed by get_filename() inside flex_opt_kvpr.py:
-        fo-{model_size}-gbs{gbs}-ngbs{ngbs}-prompt{p}-gen{g}-percent-{pcts}-[R-{rc}-]gpu-cache.json
-
-    We re-derive the expected filename here to locate it after the run.
+    The filename is constructed by get_filename() inside flex_opt_kvpr.py;
+    compute_expected_trace_paths() re-derives it here to locate the trace
+    before/after the run.
 
     _generated_traces : optional list; if provided, the absolute path of
         the .json is appended when a trace is freshly profiled OR when a
@@ -517,23 +731,7 @@ def run_flexllm_profile(
     """
     os.makedirs(trace_dir, exist_ok=True)
 
-    offload = int(exp.offload_percent) if exp.offload_percent is not None else 0
-    kv_gpu = 100 - offload
-    kv_cpu = offload
-    w_gpu, w_cpu = 100, 0
-    pcts = f"{w_gpu}-{w_cpu}-{kv_gpu}-{kv_cpu}-100-0-"
-    model_size = exp.model.split("-")[-1]
-    rc_part = f"R-{exp.recompute_len}-" if exp.recompute_len > 0 else ""
-    expected_stem = (
-        f"fo-{model_size}"
-        f"-gbs{exp.batch_size}"
-        f"-ngbs{exp.num_batches}"
-        f"-prompt{exp.prompt_len}"
-        f"-gen{exp.gen_len}"
-        f"-percent-{pcts}"
-        f"{rc_part}gpu-cache"
-    )
-    expected_json = os.path.join(trace_dir, expected_stem + ".json")
+    expected_stem, expected_json = compute_expected_trace_paths(exp, trace_dir)
 
     # Candidate compressed paths, checked in priority order:
     #   1. <stem>.json.tar.gz  — produced by cleanup_traces() in this script
@@ -566,10 +764,11 @@ def run_flexllm_profile(
             else:
                 # Tar archive (.json.tar.gz or .tar.gz) — extract via tarfile.
                 with tarfile.open(found_compressed, "r:gz") as tf:
-                    # Prefer the member whose bare name matches; fall back to any .json.
+                    # Match by basename alone so a nested archive path
+                    # (e.g. some/dir/<stem>.json) is still found; fall back
+                    # to any .json member if no exact-name match exists.
                     members = [m for m in tf.getmembers()
-                               if os.path.basename(m.name) == os.path.basename(expected_json)
-                               and m.name == os.path.basename(m.name)]
+                               if os.path.basename(m.name) == os.path.basename(expected_json)]
                     if not members:
                         members = [m for m in tf.getmembers() if m.name.endswith(".json")]
                     if not members:
@@ -627,6 +826,71 @@ def run_flexllm_profile(
         _generated_traces.append(os.path.abspath(expected_json))
 
     return expected_json
+
+
+def run_flexllm_profile_with_oom_retry(
+    exp: ExperimentConfig,
+    hw: HardwareConfig,
+    opt_config: Any,
+    trace_dir: str,
+    dry_run: bool = False,
+    _generated_traces: Optional[List[str]] = None,
+) -> Tuple[str, ExperimentConfig]:
+    """
+    Wrap run_flexllm_profile() with automatic offload-percent escalation.
+
+    Rationale
+    ---------
+    get_min_offload_percent() / get_available_offloadings() is an ANALYTICAL
+    memory estimate. Allocator fragmentation, framework overhead, etc. can
+    make the predicted-minimum offload % actually OOM at profiling time even
+    though the model said it should fit. When that happens, step up to the
+    next higher offload percentage the same analytical model predicts
+    feasible and retry — rather than treating it as an unrecoverable OOM.
+
+    If offload_percent is already 100% (or no higher analytical candidate
+    exists), the OOM is genuine: there's nothing left to offload, so it is
+    re-raised unchanged and the caller reports status="oom" as before.
+
+    Returns (trace_json_path, possibly-updated exp) — exp.offload_percent
+    reflects whatever percentage the successful profiling run actually used,
+    so downstream steps (filename bookkeeping, CSV columns) stay consistent.
+    """
+    if not ESTIMATOR_AVAILABLE:
+        # Can't compute alternate candidates without the estimator; fall
+        # back to the plain single-shot behavior.
+        trace_json = run_flexllm_profile(
+            exp, hw, trace_dir, dry_run=dry_run, _generated_traces=_generated_traces
+        )
+        return trace_json, exp
+
+    try:
+        candidates = get_offload_candidates(exp, hw, opt_config)
+    except OOMError:
+        candidates = []
+
+    current = exp.offload_percent if exp.offload_percent is not None else 0.0
+    higher_candidates = sorted(c for c in candidates if c > current)
+
+    while True:
+        try:
+            trace_json = run_flexllm_profile(
+                exp, hw, trace_dir, dry_run=dry_run, _generated_traces=_generated_traces
+            )
+            return trace_json, exp
+        except OOMError:
+            if current >= 100.0 or not higher_candidates:
+                # Already at max offload (or no higher analytical candidate
+                # exists) — this is a genuine OOM, not a bad prediction.
+                print(f"  [OOM] offload_percent={current:.1f}% is already the "
+                      f"highest feasible candidate — cannot offload further.")
+                raise
+            next_off = higher_candidates.pop(0)
+            print(f"  [OOM] real CUDA OOM at offload_percent={current:.1f}% "
+                  f"(analytical prediction was optimistic) — retrying at "
+                  f"offload_percent={next_off:.1f}%")
+            exp = dataclasses.replace(exp, offload_percent=next_off)
+            current = next_off
 
 
 def run_trace_analysis(
@@ -1204,6 +1468,7 @@ def run_experiment(
     gt_skip_first_n: int = 0,
     gt_first_n: Optional[int] = None,
     gt_dominant_path_only: bool = False,
+    collection_only: bool = False,
     _generated_traces: Optional[List[str]] = None,
 ) -> Dict:
     """
@@ -1213,10 +1478,18 @@ def run_experiment(
     with status="oom" or status="error" and blank segment values, so the CSV
     remains complete and the sweep continues uninterrupted.
 
-    _generated_traces : optional list passed through to run_flexllm_profile.
-        Paths of .json files that are newly profiled OR decompressed from .gz
-        are appended here, making them eligible for --trace-cleanup at run end.
-        Pre-existing .json files (the [skip] branch) are never appended.
+    collection_only : if True, stop after Step 2 (trace collection) and skip
+        trace analysis (Step 3) and everything downstream entirely. Returns
+        a row with status="collected", trace_json set, and everything else
+        blank. Use this for a collect-now / analyze-later workflow — e.g.
+        gathering traces on a GPU box, then running the analysis separately
+        (possibly on a different machine) via --trace-json / --summary-csv.
+
+    _generated_traces : optional list passed through to run_flexllm_profile
+        (via the OOM-retry wrapper). Paths of .json files that are newly
+        profiled OR decompressed from .gz are appended here, making them
+        eligible for --trace-cleanup at run end. Pre-existing .json files
+        (the [skip] branch) are never appended.
     """
     print(f"\n{'='*60}")
     print(f"Experiment: {exp.experiment_id}")
@@ -1241,35 +1514,70 @@ def run_experiment(
             exp = dataclasses.replace(exp, offload_percent=0.0)
     print(f"  offload_percent = {exp.offload_percent:.1f}%")
 
-    # Step 2: run profiling trace (skip if trace_json_path already provided)
-    if exp.trace_json_path and os.path.isfile(exp.trace_json_path):
-        print(f"  Step 2: [skip] using existing trace: {exp.trace_json_path}")
-        trace_json = exp.trace_json_path
-    else:
-        trace_dir = os.path.join(
-            exp.output_dir,
-            f"prompt_{exp.prompt_len}_bs{exp.batch_size}"
-            + (f"_rc{exp.recompute_len}" if exp.recompute_len > 0 else ""),
-        )
-        print("  Step 2: running flex_opt_kvpr profiling...")
-        try:
-            trace_json = run_flexllm_profile(
-                exp, hw, trace_dir,
-                dry_run=dry_run,
-                _generated_traces=_generated_traces,
-            )
-            exp = dataclasses.replace(exp, trace_json_path=trace_json)
-        except OOMError as e:
-            return _skipped_row(exp, estimator_modes, STATUS_OOM, str(e))
-        except Exception as e:
-            return _skipped_row(exp, estimator_modes, STATUS_ERROR,
-                                f"Step 2 profiling failed: {e}")
+    # trace_dir and the expected (stem-based) trace/summary paths are shared
+    # by the Step 2/3 shortcut check below and by the actual profiling call.
+    trace_dir = os.path.join(
+        exp.output_dir,
+        f"prompt_{exp.prompt_len}_bs{exp.batch_size}"
+        + (f"_rc{exp.recompute_len}" if exp.recompute_len > 0 else ""),
+    )
+    _, expected_json = compute_expected_trace_paths(exp, trace_dir)
+    expected_summary_csv = os.path.join(
+        exp.output_dir, Path(expected_json).stem + "_batched_analysis_summary.csv"
+    )
 
-    # Step 3: trace analysis (skip if summary_csv_path already provided)
-    if exp.summary_csv_path and os.path.isfile(exp.summary_csv_path):
-        print(f"  Step 3: [skip] using existing summary CSV: {exp.summary_csv_path}")
-        summary_csv = exp.summary_csv_path
+    have_summary = (
+        not collection_only
+        and (
+            (exp.summary_csv_path and os.path.isfile(exp.summary_csv_path))
+            or os.path.isfile(expected_summary_csv)
+        )
+    )
+
+    if have_summary:
+        # Step 2+3 shortcut: the summary CSV already exists, so the trace has
+        # already been fully analyzed. Skip BOTH profiling (Step 2, including
+        # any decompression) AND trace analysis (Step 3) — there's no need to
+        # touch the (possibly large, possibly compressed) trace JSON at all.
+        # Not considered in --collection-only mode: the point of that mode is
+        # specifically to (re)collect the raw trace.
+        if exp.summary_csv_path and os.path.isfile(exp.summary_csv_path):
+            summary_csv = exp.summary_csv_path
+        else:
+            summary_csv = expected_summary_csv
+        trace_json = exp.trace_json_path or expected_json  # informational only; may not exist on disk
+        print(f"  Step 2+3: [skip] summary CSV already exists — skipping trace "
+              f"collection/decompression entirely: {summary_csv}")
+        exp = dataclasses.replace(exp, trace_json_path=trace_json, summary_csv_path=summary_csv)
     else:
+        # ---- Step 2: trace collection (skip if trace_json_path already provided) ----
+        if exp.trace_json_path and os.path.isfile(exp.trace_json_path):
+            print(f"  Step 2: [skip] using existing trace: {exp.trace_json_path}")
+            trace_json = exp.trace_json_path
+        else:
+            print("  Step 2: running flex_opt_kvpr profiling...")
+            try:
+                trace_json, exp = run_flexllm_profile_with_oom_retry(
+                    exp, hw, opt_config, trace_dir,
+                    dry_run=dry_run,
+                    _generated_traces=_generated_traces,
+                )
+                exp = dataclasses.replace(exp, trace_json_path=trace_json)
+            except OOMError as e:
+                return _skipped_row(exp, estimator_modes, STATUS_OOM, str(e))
+            except Exception as e:
+                return _skipped_row(exp, estimator_modes, STATUS_ERROR,
+                                    f"Step 2 profiling failed: {e}")
+
+        if collection_only:
+            print(f"  [collection-only] trace collected — skipping trace "
+                  f"analysis and everything downstream: {trace_json}")
+            return _skipped_row(
+                exp, estimator_modes, STATUS_COLLECTED,
+                f"collection-only: trace collected at {trace_json}",
+            )
+
+        # ---- Step 3: trace analysis (skip if summary_csv_path already provided) ----
         print("  Step 3: running trace analysis pipeline...")
         try:
             summary_csv = run_trace_analysis(trace_json, exp, dry_run=dry_run)
@@ -1314,24 +1622,41 @@ def run_experiment(
             gt_decode_stats = None
 
     # Step 5: estimator breakdown per mode (failures here are non-fatal —
-    # GT data is kept; only that mode's columns are blank)
+    # GT data is kept; only that mode's columns are blank). Each mode picks
+    # its implementation via mode.normalized_impl(): "kv_schedule" (default,
+    # the realistic operation-timeline model) or "baseline" (baseline_model.py's
+    # idealized perfect-overlap model — also accepts "perfect_overlap" /
+    # "perfect-overlap" as spelling variants, see EstimatorMode.impl).
     print("  Step 5: running estimator for each mode...")
     est_segs_by_mode: Dict[str, Dict[str, float]] = {}
-    if ESTIMATOR_AVAILABLE and not dry_run:
+    if not dry_run:
         for mode in estimator_modes:
             hw_mode = mode.apply_to(hw)
             try:
-                segs = get_estimator_breakdown(
-                    exp=exp,
-                    hw=hw_mode,
-                    gpu_estimator=gpu_estimator,
-                    opt_config=opt_config,
-                )
+                impl = mode.normalized_impl()   # raises ValueError on an unrecognized impl
+                if impl == "baseline":
+                    if not BASELINE_AVAILABLE:
+                        raise RuntimeError("baseline_model is not importable.")
+                    segs = get_estimator_breakdown_baseline(exp=exp, hw=hw_mode)
+                elif impl == "kv_schedule":
+                    if not ESTIMATOR_AVAILABLE:
+                        raise RuntimeError("kv_schedule_optimization is not importable.")
+                    segs = get_estimator_breakdown(
+                        exp=exp,
+                        hw=hw_mode,
+                        gpu_estimator=gpu_estimator,
+                        opt_config=opt_config,
+                    )
+                else:
+                    # normalized_impl() only ever returns "baseline" or
+                    # "kv_schedule" (or raises) — this branch exists purely
+                    # as a defensive backstop against future refactors.
+                    raise RuntimeError(f"Unhandled normalized impl: {impl!r}")
                 est_segs_by_mode[mode.name] = segs
                 total = sum(segs.values())
-                print(f"  Estimator [{mode.name}] total = {total:.1f} µs")
+                print(f"  Estimator [{mode.name}/{mode.impl}] total = {total:.1f} µs")
             except Exception as e:
-                print(f"  ERROR in estimator [{mode.name}]: {e}")
+                print(f"  ERROR in estimator [{mode.name}/{mode.impl}]: {e}")
                 est_segs_by_mode[mode.name] = {}
     else:
         for mode in estimator_modes:
@@ -1397,6 +1722,35 @@ def cleanup_traces(
     print(f"{chr(45)*54}")
 
 
+def validate_estimator_modes(estimator_modes: List[EstimatorMode]) -> None:
+    """
+    Guard against duplicate EstimatorMode.name values.
+
+    build_csv_row() keys estimator columns as f"est_{mode.name}_{segment}_us".
+    If two modes share a name, the second mode's values silently overwrite
+    the first's in the row dict — the CSV ends up with only one estimator's
+    numbers under that name, no error, no warning. (This is exactly the kind
+    of bug that can look like "the plot only shows one estimator" even
+    though everything downstream — CSV writing, column detection, plotting —
+    is working correctly on the data it was given.)
+
+    Raises ValueError immediately if a collision is found, rather than
+    letting it fail silently into the CSV.
+    """
+    seen: Dict[str, str] = {}
+    for mode in estimator_modes:
+        if mode.name in seen:
+            raise ValueError(
+                f"Duplicate EstimatorMode name '{mode.name}' "
+                f"(impl={seen[mode.name]!r} and impl={mode.impl!r}). "
+                f"Each EstimatorMode needs a unique name — two modes sharing "
+                f"a name silently collide on the same est_{mode.name}_* CSV "
+                f"columns, and the later mode overwrites the earlier one's "
+                f"results with no error."
+            )
+        seen[mode.name] = mode.impl
+
+
 def run_comparison(
     experiments: List[ExperimentConfig],
     hw: HardwareConfig,
@@ -1410,6 +1764,7 @@ def run_comparison(
     gt_first_n: Optional[int] = None,
     gt_dominant_path_only: bool = False,
     trace_cleanup: str = TRACE_CLEANUP_NONE,
+    collection_only: bool = False,
 ) -> List[Dict]:
     """
     Run all experiments and write the comparison CSV.
@@ -1418,7 +1773,8 @@ def run_comparison(
     ----------
     experiments           List of ExperimentConfig objects (from sweep helpers or manual).
     hw                    Hardware configuration (shared across experiments).
-    estimator_modes       List of EstimatorMode to compare (at least one).
+    estimator_modes       List of EstimatorMode to compare (at least one). Names
+                          must be unique — see validate_estimator_modes().
     gpu_estimator         Initialised GEE estimator object (pass None to skip estimator).
     opt_config            FlexLLM OPT config object (from get_opt_config(model)).
     output_csv            Path for the output comparison CSV.
@@ -1435,10 +1791,14 @@ def run_comparison(
                           Applies to traces newly profiled OR decompressed from
                           .tar.gz in this run.  Pre-existing .json files are never
                           touched.
+    collection_only       If True, each experiment stops after trace collection
+                          (Step 2) — trace analysis and everything downstream is
+                          skipped, and rows are marked status="collected".
     """
+    validate_estimator_modes(estimator_modes)
     all_rows = []
     generated_traces: List[str] = []   # paths written/restored this run
-    n_ok, n_oom, n_err = 0, 0, 0
+    n_ok, n_oom, n_err, n_collected = 0, 0, 0, 0
 
     for exp in experiments:
         row = run_experiment(
@@ -1452,22 +1812,28 @@ def run_comparison(
             gt_skip_first_n=gt_skip_first_n,
             gt_first_n=gt_first_n,
             gt_dominant_path_only=gt_dominant_path_only,
+            collection_only=collection_only,
             _generated_traces=generated_traces,
         )
         all_rows.append(row)
         s = row.get("status", STATUS_OK)
-        if s == STATUS_OOM:    n_oom += 1
-        elif s == STATUS_OK:   n_ok  += 1
-        else:                  n_err += 1
+        if s == STATUS_OOM:         n_oom += 1
+        elif s == STATUS_OK:        n_ok  += 1
+        elif s == STATUS_COLLECTED: n_collected += 1
+        else:                       n_err += 1
 
-    print(f"\nSweep complete: {n_ok} ok, {n_oom} oom, {n_err} error "
-          f"(out of {len(all_rows)} total)")
+    print(f"\nSweep complete: {n_ok} ok, {n_collected} collected, {n_oom} oom, "
+          f"{n_err} error (out of {len(all_rows)} total)")
 
     if all_rows:
         write_comparison_csv(all_rows, output_csv, estimator_modes)
         if n_oom or n_err:
             print(f"  Note: skipped rows (oom/error) are included in the CSV "
                   f"with blank segment values \u2014 see the 'status' column.")
+        if n_collected:
+            print(f"  Note: {n_collected} row(s) have status=\"collected\" "
+                  f"(--collection-only) — trace_json is set but no analysis "
+                  f"was run for them.")
     else:
         print("No experiments to write.")
 
@@ -1595,6 +1961,33 @@ def main():
             "in this run. Pre-existing .json files are never touched."
         ),
     )
+    parser.add_argument(
+        "--collection-only", action="store_true",
+        help=(
+            "Only collect the PyTorch trace (Step 2) via flex_opt_kvpr.py and "
+            "stop there — skip trace analysis (Step 3) and everything "
+            "downstream entirely. No summary CSV, no GT parsing, no "
+            "estimator calls. Rows in the output CSV get status=\"collected\". "
+            "Use this to gather traces now and analyze them later, e.g. with "
+            "--trace-json (per-trace) or a separate non---collection-only run "
+            "over the same sweep (which will pick up the already-collected "
+            "traces via the normal skip-if-exists logic)."
+        ),
+    )
+    parser.add_argument(
+        "--estimator-impl",
+        choices=["kv_schedule", "baseline", "perfect_overlap", "both"],
+        default="kv_schedule",
+        help=(
+            "Which analytical latency estimator(s) to run alongside the "
+            "ground truth. 'kv_schedule' (default) uses "
+            "kv_schedule_optimization.layer_prediction — the realistic "
+            "operation-timeline model. 'baseline' (alias: 'perfect_overlap') "
+            "uses baseline_model.py's idealized perfect-overlap model "
+            "instead. 'both' runs them side by side as separate "
+            "est_<mode>_* column groups in the CSV."
+        ),
+    )
     
     # ── Short-circuit flags for debugging with an existing trace ──────────────
     parser.add_argument(
@@ -1629,15 +2022,22 @@ def main():
     )
     
     # --- Estimator modes to compare ---
-    # Add / remove modes here; each will produce its own column group in the CSV.
-    estimator_modes = [
-        EstimatorMode(name="ideal", use_ideal_bw=True, use_ideal_comp=True, use_no_pinned=True)
-        # EstimatorMode(name="default"),
-        # EstimatorMode(name="ideal_bw",    use_ideal_bw=True),
-        # EstimatorMode(name="flex_bw",     use_flex_bw=True),
-        # EstimatorMode(name="no_pinned",   use_no_pinned=True),
-        # EstimatorMode(name="ideal_comp",  use_ideal_comp=True),
-    ]
+    # Add / remove kv_schedule modes here; each will produce its own column
+    # group in the CSV. --estimator-impl controls whether the baseline_model
+    # mode is included alongside (or instead of) the kv_schedule modes.
+    estimator_modes = []
+    if args.estimator_impl in ("kv_schedule", "both"):
+        estimator_modes.append(
+            EstimatorMode(name="ideal", impl="kv_schedule",
+                          use_ideal_bw=True, use_ideal_comp=True, use_no_pinned=True)
+            # EstimatorMode(name="default",     impl="kv_schedule"),
+            # EstimatorMode(name="ideal_bw",    impl="kv_schedule", use_ideal_bw=True),
+            # EstimatorMode(name="flex_bw",     impl="kv_schedule", use_flex_bw=True),
+            # EstimatorMode(name="no_pinned",   impl="kv_schedule", use_no_pinned=True),
+            # EstimatorMode(name="ideal_comp",  impl="kv_schedule", use_ideal_comp=True),
+        )
+    if args.estimator_impl in ("baseline", "both"):
+        estimator_modes.append(EstimatorMode(name="baseline", impl="baseline"))
     
     # --- Load opt_config and gpu_estimator ---
     # gpu_estimator is intentionally left as None here for the user to replace.
@@ -1746,6 +2146,7 @@ def main():
         gt_first_n=args.gt_first_n,
         gt_dominant_path_only=args.gt_dominant_path,
         trace_cleanup=args.trace_cleanup,
+        collection_only=args.collection_only,
     )
 
 

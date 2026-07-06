@@ -126,17 +126,20 @@ def decode_activation_bytes(gpu_batch_size, hidden_size, ffn_dim, num_heads,
 
 
 def optimal_recompute_len(hw: HardwareConfig, gpu_batch_size, hidden_size,
-                           num_cpu_tokens, base_compute_time=0.0, step=1) -> Tuple[int, float]:
+                           num_cpu_tokens, step=1) -> Tuple[int, float]:
     """
-    Refactor of get_optimal_split_point: for a given count of CPU-resident
-    cache tokens, find how many to recompute on GPU vs. transfer from CPU.
+    Reproduces the prior work's get_optimal_split_point() exactly: for a
+    given count of CPU-resident cache tokens, find how many to recompute
+    on GPU vs. transfer from CPU, by minimizing
 
-    base_compute_time: time already spent on this layer's other GPU compute
-    (QKVO/FFN/attention over the GPU-resident cache share). Recompute FLOPs
-    run on the same tensor cores as that work, so they're ADDITIVE with it,
-    not maxed against it. Only the PCIe transfer of the remaining
-    (non-recomputed) tokens runs on an independent DMA engine and can
-    genuinely overlap -> that's the only thing still under max().
+        t_activation_fetch + max(t_recompute_compute, t_transfer)
+
+    This search deliberately does NOT know about t_mha (GPU-resident
+    attention compute) -- matching the prior work's function signature,
+    which has no such concept either. The interaction between this
+    result and t_mha is handled separately, at the point where the total
+    per-layer latency is assembled (see layer_decode_breakdown()), not
+    here in the split-point search itself.
 
     Uses HardwareConfig instead of hardcoded v_com / v_gpu.
     """
@@ -153,11 +156,7 @@ def optimal_recompute_len(hw: HardwareConfig, gpu_batch_size, hidden_size,
         transfer_bytes = kv_cache_bytes(gpu_batch_size, remaining_tokens, hidden_size, dtype_bytes)
         t_transfer = transfer_bytes / v_com
 
-        # Activation fetch is a serial prerequisite for the recompute GEMM
-        # (matches the original snippet's placement outside the max).
-        # Recompute matmul shares tensor cores with base_compute_time (additive).
-        # Only the DMA of the remaining cache overlaps with compute (max).
-        t_total = t_activation_fetch + max(base_compute_time + t_recompute_compute, t_transfer)
+        t_total = t_activation_fetch + max(t_recompute_compute, t_transfer)
 
         if t_total < best_t:
             best_t, best_len = t_total, recompute_len
@@ -168,13 +167,14 @@ def optimal_recompute_len(hw: HardwareConfig, gpu_batch_size, hidden_size,
 def _recompute_compute_time(hw, gpu_batch_size, hidden_size, recompute_len):
     """
     GPU compute to regenerate K,V for `recompute_len` tokens: the two
-    projection GEMMs (as in the original snippet) PLUS the attention op
-    itself (QK^T + softmax*V) against those tokens, which the original
-    snippet omitted.
+    projection GEMMs, matching the prior work's get_optimal_split_point
+    exactly (N_recompute_flops = 4 * gpu_batch_size * recompute_len *
+    input_dim ** 2). Deliberately does NOT add an attention-op term for
+    those tokens -- an earlier version of this function did, but that
+    diverges from the prior work being reproduced here.
     """
     proj_flops = 4 * gpu_batch_size * recompute_len * hidden_size * hidden_size
-    attn_flops = 4 * gpu_batch_size * recompute_len * hidden_size
-    return (proj_flops + attn_flops) / hw.gpu_matmul_flops
+    return proj_flops / hw.gpu_matmul_flops
 
 
 def _recompute_activation_fetch_time(hw, gpu_batch_size, hidden_size, recompute_len):
@@ -190,15 +190,14 @@ def _recompute_activation_fetch_time(hw, gpu_batch_size, hidden_size, recompute_
     return activation_bytes / hw.cpu_gpu_bandwidth
 
 
-def _cache_time_for_len(hw, gpu_batch_size, hidden_size, num_cpu_tokens,
-                         recompute_len, base_compute_time=0.0):
+def _cache_time_for_len(hw, gpu_batch_size, hidden_size, num_cpu_tokens, recompute_len):
     recompute_len = min(recompute_len, num_cpu_tokens)
     remaining = num_cpu_tokens - recompute_len
     t_activation_fetch = _recompute_activation_fetch_time(hw, gpu_batch_size, hidden_size, recompute_len)
     t_recompute_compute = _recompute_compute_time(hw, gpu_batch_size, hidden_size, recompute_len)
     transfer_bytes = kv_cache_bytes(gpu_batch_size, remaining, hidden_size, hw.dtype_bytes)
     t_transfer = transfer_bytes / hw.cpu_gpu_bandwidth
-    return t_activation_fetch + max(base_compute_time + t_recompute_compute, t_transfer)
+    return t_activation_fetch + max(t_recompute_compute, t_transfer)
 
 
 # ---------------------------------------------------------------------------
@@ -322,10 +321,10 @@ def evaluate_policy(model: ModelConfig, hw: HardwareConfig, gpu_batch_size,
     if cpu_seqs_int > 0:
         if recompute_len is None:
             recompute_len, t_cpu_seqs = optimal_recompute_len(
-                hw, cpu_seqs_int, h1, avg_tokens_int, base_compute_time=0.0)
+                hw, cpu_seqs_int, h1, avg_tokens_int)
         else:
             t_cpu_seqs = _cache_time_for_len(
-                hw, cpu_seqs_int, h1, avg_tokens_int, recompute_len, base_compute_time=0.0)
+                hw, cpu_seqs_int, h1, avg_tokens_int, recompute_len)
     else:
         recompute_len, t_cpu_seqs = 0, 0.0
 
@@ -376,6 +375,162 @@ def evaluate_policy(model: ModelConfig, hw: HardwareConfig, gpu_batch_size,
         "wall_time_s": wall_time_s,
         "effective_throughput_tok_s": real_tokens / wall_time_s if wall_time_s > 0 else 0.0,
     }
+
+
+def layer_decode_breakdown(
+    model: ModelConfig,
+    hw: HardwareConfig,
+    gpu_batch_size: int,
+    offload_frac: float,
+    recompute_len: Optional[int] = None,
+) -> Tuple[Dict[str, float], int]:
+    """
+    Per-layer, per-decode-step latency breakdown for ONE representative
+    middle layer -- the baseline_model analog of
+    kv_schedule_optimization.layer_prediction()'s component_breakdown.
+
+    Segment keys match gt_vs_estimator.py's EST_SEGMENT_NAMES exactly, so
+    the two estimators can be compared side by side in the same CSV columns:
+        "PinnedMemory CPU (phase1)", "PinnedMemory CPU (phase2)",
+        "Recompute Load", "Recompute CUDA", "MHA CUDA",
+        "KVCache Load K", "KVCache Load V"
+
+    Two-resource model (IMPORTANT)
+    -------------------------------
+    This is the "perfect overlap" model: two independent HARDWARE RESOURCES
+    each process their own queue of work back-to-back, and the two
+    resources run concurrently with each other:
+
+      GPU tensor cores : t_mha (attention for the GPU-resident share --
+                         no dependency, can start immediately), THEN
+                         t_recompute_cuda (regenerating K/V for the
+                         CPU-resident share's recomputed tokens -- can only
+                         START once the activation fetch below is done).
+      PCIe / DMA       : t_recompute_load (fetching the activations needed
+                         to recompute), THEN t_transfer (moving the
+                         CPU-resident share's remaining, non-recomputed
+                         tokens' K/V). Both are PCIe traffic, so they share
+                         the one link and run sequentially on it.
+
+    GPU's own finish time is max(t_mha, t_recompute_load) + t_recompute_cuda:
+    t_mha runs immediately, but t_recompute_cuda has to wait for whichever
+    is later -- "GPU free" or "fetch done" -- before it can start. PCIe's
+    own finish time is simply t_recompute_load + t_transfer (strictly
+    sequential on one link). The layer's actual latency is whichever
+    resource finishes last; the other resource had slack.
+
+    This replaces an earlier version of this function that grouped by
+    SEQUENCE (GPU-resident vs. CPU-resident) rather than by RESOURCE, and
+    treated t_mha and t_recompute_cuda as independent even though they
+    both need the same tensor cores. Reproduces the prior work's
+    get_optimal_split_point() for choosing recompute_len itself (see
+    optimal_recompute_len()) -- that search intentionally has no notion of
+    t_mha, matching the prior work exactly; this function is where t_mha
+    gets folded back in, at the point of computing the actual total.
+
+    Segment reporting: whichever resource is NOT the bottleneck contributes
+    0.0 to every one of its segments -- it finished with slack, so none of
+    its legs extend the critical path. This means, unlike an earlier
+    version of this function, two segments can legitimately be non-zero
+    together now: if GPU is the bottleneck, "Recompute CUDA" is always
+    reported (it's unconditionally part of GPU's own chain) alongside
+    whichever of "MHA CUDA" / "Recompute Load" was the longer of the two
+    things it had to wait on; if PCIe is the bottleneck, "Recompute Load"
+    and "KVCache Load K/V" are reported together. sum(segments.values())
+    still always equals the true max()-based total latency -- see the
+    inline comments below for why each branch preserves that.
+
+    No separate pinned-memory staging phase is modeled, so both
+    PinnedMemory segments are always 0.0 -- any host-side copy cost is
+    folded directly into the PCIe transfer bandwidth. K and V are an equal
+    split of kv_cache_bytes() (which counts both together).
+
+    Parameters
+    ----------
+    gpu_batch_size : sequences in this layer's micro-batch (gbs).
+    offload_frac   : fraction (0-1) of those sequences that are CPU-resident.
+                     Use achievable_offload_fracs(gbs) for valid values.
+    recompute_len  : tokens/layer to recompute for the CPU-resident share.
+                     None -> auto-optimized via optimal_recompute_len(),
+                     which reproduces the prior work's get_optimal_split_point.
+
+    Returns
+    -------
+    (segments, recompute_len_used)
+      segments           : Dict[str, float] segment_name -> seconds.
+      recompute_len_used : the recompute length actually used (echoes the
+                            input if given, else the auto-optimized value).
+    """
+    h1 = model.hidden_size
+    s, n = model.prompt_len, model.gen_len
+    avg_tokens = s + n / 2
+
+    num_gpu_seqs = gpu_batch_size * (1 - offload_frac)
+    num_cpu_seqs = gpu_batch_size * offload_frac
+
+    # MHA CUDA: attention compute for the GPU-resident share only, over
+    # their average cache length. Excludes QKVO/FFN projections, matching
+    # kv_schedule_optimization's break_MHA=True / layer_type="MHA" convention.
+    mha_flops = 4 * num_gpu_seqs * avg_tokens * h1
+    t_mha = mha_flops / hw.gpu_matmul_flops
+
+    segments = {
+        "PinnedMemory CPU (phase1)": 0.0,
+        "PinnedMemory CPU (phase2)": 0.0,
+        "Recompute Load": 0.0,
+        "Recompute CUDA": 0.0,
+        "MHA CUDA": 0.0,
+        "KVCache Load K": 0.0,
+        "KVCache Load V": 0.0,
+    }
+
+    cpu_seqs_int = int(round(num_cpu_seqs))
+    if cpu_seqs_int == 0:
+        # No offloaded sequences this layer -- MHA compute is the only
+        # thing running, unconditionally.
+        segments["MHA CUDA"] = t_mha
+        return segments, 0
+
+    avg_tokens_int = int(round(avg_tokens))
+    if recompute_len is None:
+        recompute_len, _ = optimal_recompute_len(hw, cpu_seqs_int, h1, avg_tokens_int)
+    recompute_len = max(0, min(recompute_len, avg_tokens_int))
+    remaining = avg_tokens_int - recompute_len
+
+    t_recompute_load = _recompute_activation_fetch_time(hw, cpu_seqs_int, h1, recompute_len)
+    t_recompute_cuda = _recompute_compute_time(hw, cpu_seqs_int, h1, recompute_len)
+    transfer_bytes = kv_cache_bytes(cpu_seqs_int, remaining, h1, hw.dtype_bytes)
+    t_transfer = transfer_bytes / hw.cpu_gpu_bandwidth
+
+    # GPU's own finish time: t_mha runs immediately (no dependency);
+    # t_recompute_cuda waits for max(t_mha, t_recompute_load) -- whichever
+    # of "GPU is free" or "the fetch is done" comes later -- then takes
+    # t_recompute_cuda more.
+    gpu_wait = max(t_mha, t_recompute_load)
+    gpu_side = gpu_wait + t_recompute_cuda
+    # PCIe's own finish time: fetch, then transfer, sequential on one link.
+    pcie_side = t_recompute_load + t_transfer
+
+    if gpu_side >= pcie_side:
+        # GPU is the bottleneck. Report whichever of t_mha / t_recompute_load
+        # was the longer of the two things t_recompute_cuda had to wait on
+        # (matches gpu_wait exactly), plus t_recompute_cuda itself, which is
+        # unconditionally part of GPU's chain. These two sum to gpu_side.
+        if t_mha >= t_recompute_load:
+            segments["MHA CUDA"] = t_mha
+        else:
+            segments["Recompute Load"] = t_recompute_load
+        segments["Recompute CUDA"] = t_recompute_cuda
+        # KVCache Load K/V stay 0.0 -- PCIe finished with slack.
+    else:
+        # PCIe is the bottleneck. Both of its legs are unconditionally part
+        # of its chain (fetch then transfer), summing to pcie_side exactly.
+        segments["Recompute Load"] = t_recompute_load
+        segments["KVCache Load K"] = t_transfer / 2
+        segments["KVCache Load V"] = t_transfer / 2
+        # MHA CUDA / Recompute CUDA stay 0.0 -- GPU finished with slack.
+
+    return segments, recompute_len
 
 
 def achievable_offload_fracs(gpu_batch_size: int) -> List[float]:

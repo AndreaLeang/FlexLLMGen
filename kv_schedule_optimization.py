@@ -489,19 +489,27 @@ def multi_batch_forward_pass(model, num_of_prompts, prompt_len, cur_gen_len, har
 
 
 def get_bytes_to_load(model, batch_size, num_of_batches, offload_percent, recomp_len, prompt_len, gen_len, first_token = False):
+    # bytes for one of K or V, one token: hidden_size elements * 2 bytes/elem
+    # (bf16/fp16). Was hardcoded to 8192 (= opt-6.7b's hidden_size=4096 * 2),
+    # silently wrong for every other model size -- see model.hidden_size.
+    bytes_per_token = model.hidden_size * 2
     if first_token: # nothing is loaded
         recomp_load_bytes = 0
         kv_load_bytes = 0
     else:
-        recomp_load_bytes = recomp_len * 8192 * batch_size # 8192 bytes/token
-        kv_load_bytes = (prompt_len + gen_len-recomp_len) * 8192 * (batch_size-((batch_size*(100-offload_percent))//100)) 
+        recomp_load_bytes = recomp_len * bytes_per_token * batch_size
+        kv_load_bytes = (prompt_len + gen_len-recomp_len) * bytes_per_token * (batch_size-((batch_size*(100-offload_percent))//100)) 
     return recomp_load_bytes, kv_load_bytes
 
-def get_bytes_to_store(batch_size, prompt_len=0, recomp_len=0, first_token=False):
+def get_bytes_to_store(model, batch_size, prompt_len=0, recomp_len=0, first_token=False):
+    # Same bytes_per_token fix as get_bytes_to_load(); model is now a
+    # required parameter (was previously missing entirely, always using the
+    # hardcoded opt-6.7b-only constant regardless of the actual model).
+    bytes_per_token = model.hidden_size * 2
     if first_token:
-        kv_store_bytes = batch_size * (prompt_len-recomp_len) * 8192 # prompt_len tokens per batch
+        kv_store_bytes = batch_size * (prompt_len-recomp_len) * bytes_per_token # prompt_len tokens per batch
     else:
-        kv_store_bytes = batch_size * 8192 # 1 token per batch
+        kv_store_bytes = batch_size * bytes_per_token # 1 token per batch
     return kv_store_bytes
 
 
@@ -516,7 +524,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         store_KV_energy = 0.0
         store_KV_latency = 0.0
         if layer_type == "MHA" :
-            kv_bytes_to_store = get_bytes_to_store(batch_size, prompt_len, recomp_len, first_token=first_token)
+            kv_bytes_to_store = get_bytes_to_store(opt_config, batch_size, prompt_len, recomp_len, first_token=first_token)
             store_KV_energy, store_KV_latency = transfer_pred(kv_bytes_to_store, hardware_config, gpu_estimator) # using HtoD est. for this DtoH
         tot_energy = layer_calc_energy+store_KV_energy
         tot_latency = (layer_calc_latency-fir_token_after_KV_latency) + max(fir_token_after_KV_latency, store_KV_latency)
@@ -549,7 +557,7 @@ def layer_prediction(opt_config, is_load_store, batch_size, num_of_batches, offl
         return recomp_calc_energy+layer_calc_energy, recomp_calc_latency + layer_calc_latency, energy_transfer, energy_active, latency_transfer, component_breakdown
     elif is_load_store == 2:
         # store only --> single directional
-        transfer_energy, transfer_latency = transfer_pred(get_bytes_to_store(batch_size), hardware_config, gpu_estimator)
+        transfer_energy, transfer_latency = transfer_pred(get_bytes_to_store(opt_config, batch_size), hardware_config, gpu_estimator)
         if not break_MHA:
             component_breakdown[2] = recomp_transfer_latency
             if recomp_calc_latency+layer_calc_latency > transfer_latency:
@@ -1290,4 +1298,3 @@ if __name__ == "__main__":
         single_strat_pred(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.gbs, args.off_per, args.recomp_len, args.fast, gpu_estimator, args.d, args.break_MHA ,var_to_min = args.var_to_min)
     else: 
         disect_input(args.model, opt_config, args.np, args.prompt_len, args.gen_len, config, args.save, args.test, args.fast, gpu_estimator, args.d, args.break_MHA, var_to_min = args.var_to_min)
-

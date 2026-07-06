@@ -288,6 +288,13 @@ def plot_comparison(
         ("oo",   "#1B5E20"),
         ("++",   "#E65100"),
     ]
+    # One legend entry per estimator MODE (hatch + edge color identify which
+    # mode a bar belongs to); segment colors are shared across all modes and
+    # get a single "Est: {segment}" legend entry each (added once below, not
+    # per mode) rather than duplicating "Est [mode]: {segment}" once per
+    # mode — with >1 mode that duplication doesn't add information (the
+    # color is identical) and just floods the legend.
+    mode_handles: List[mpatches.Patch] = []
     for mi, mode in enumerate(modes):
         bar_idx = mi + 1
         hatch, edge_c = mode_bar_styles[mi % len(mode_bar_styles)]
@@ -310,7 +317,7 @@ def plot_comparison(
                         color="white", fontweight="bold",
                     )
             est_bottoms += vals
-            add_patch(f"Est [{mode}]: {seg}", color)
+            add_patch(f"Est: {seg}", color)   # shared across modes, added once
 
         all_totals.extend(est_bottoms.tolist())
 
@@ -321,6 +328,14 @@ def plot_comparison(
                 ha="center", va="bottom", fontsize=7.5, color="#555555",
                 style="italic",
             )
+
+        # Legend entry identifying this mode's hatch/edge combo. Neutral
+        # light-grey fill so the hatch pattern (the actual distinguishing
+        # feature) reads clearly in the small legend swatch.
+        mode_handles.append(mpatches.Patch(
+            facecolor="#F5F5F5", edgecolor=edge_c, hatch=hatch,
+            alpha=BAR_ALPHA, linewidth=EDGE_WIDTH, label=f"Mode: {mode}",
+        ))
 
     # ---------------------------------------------------------------- Axes --
     max_total = max(all_totals) if all_totals else 1.0
@@ -353,36 +368,32 @@ def plot_comparison(
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    # Legend: two groups (GT / Estimator) sorted by segment order
+    # Legend: three groups (GT segments / Estimator segments / Estimator
+    # modes), placed OUTSIDE the axes to the right so it never overlaps the
+    # title or bars regardless of how many modes are being compared.
     gt_handles = [p for lbl, p in legend_patches.items() if lbl.startswith("GT:")]
-    est_handles = [p for lbl, p in legend_patches.items() if not lbl.startswith("GT:")]
+    est_handles = [p for lbl, p in legend_patches.items() if lbl.startswith("Est:")]
 
-    # Add a blank separator patch between GT and Est groups
+    # Blank separator patches between legend groups.
     blank = mpatches.Patch(visible=False, label="")
 
     legend = ax.legend(
-        handles=gt_handles + [blank] + est_handles,
-        loc="upper right",
-        fontsize=7.5,
+        handles=gt_handles + [blank] + est_handles + [blank] + mode_handles,
+        loc="upper left",
+        bbox_to_anchor=(1.01, 1.0),
+        borderaxespad=0.0,
+        fontsize=8,
         framealpha=0.92,
         edgecolor="#cccccc",
-        ncol=max(1, (len(gt_handles) + len(est_handles)) // 7 + 1),
+        ncol=1,
     )
 
-    # Add "GT" / "Estimator" text annotations on the bars at x=0 for clarity
-    if n_ticks > 0:
-        ax.annotate(
-            "GT",
-            xy=(offsets[0], 0), xytext=(offsets[0], -max_total * 0.06),
-            ha="center", va="top", fontsize=7, color="#333333", fontweight="bold",
-        )
-        for mi, mode in enumerate(modes):
-            ax.annotate(
-                mode,
-                xy=(offsets[mi + 1], 0),
-                xytext=(offsets[mi + 1], -max_total * 0.06),
-                ha="center", va="top", fontsize=7, color="#555555",
-            )
+    # Bar identity (GT vs. each estimator mode) is now conveyed by the
+    # "Mode: {mode}" legend entries above, which is unambiguous regardless
+    # of how many modes are plotted. (A previous version additionally
+    # annotated mode names directly under the first x-tick's bars, but that
+    # only ever labeled one group and collided with multi-line x-tick labels
+    # such as batch_size's "bs=..\nnb=..\noff=..%".)
 
     # ------------------------------------------------- Throughput overlay --
     ax2 = None
@@ -451,17 +462,21 @@ def plot_comparison(
                 marker=THROUGHPUT_MARKER, markersize=6,
                 label="GT Throughput (tok/s)",
             )
-            current_handles, current_labels = ax.get_legend_handles_labels()
+            # Pushed further right than the no-throughput case (1.01) so the
+            # legend clears ax2's right-hand spine/ylabel, which now shares
+            # the same screen region just outside the primary axes.
             ax.legend(
-                handles=gt_handles + [blank] + est_handles + [blank, tp_handle],
-                loc="upper right",
-                fontsize=7.5,
+                handles=gt_handles + [blank] + est_handles + [blank] + mode_handles + [blank, tp_handle],
+                loc="upper left",
+                bbox_to_anchor=(1.16, 1.0),
+                borderaxespad=0.0,
+                fontsize=8,
                 framealpha=0.92,
                 edgecolor="#cccccc",
-                ncol=max(1, (len(gt_handles) + len(est_handles)) // 7 + 1),
+                ncol=1,
             )
 
-    plt.tight_layout()
+    fig.tight_layout()
 
     if out_path:
         plt.savefig(out_path, dpi=dpi, bbox_inches="tight", facecolor="white")
