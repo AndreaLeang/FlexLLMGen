@@ -1559,7 +1559,7 @@ def run_flexllmgen(args):
     prompt_len, gen_len, cut_gen_len = args.prompt_len, args.gen_len, args.cut_gen_len
 
     # Task and policy
-    warmup_inputs = get_test_inputs(32, num_prompts, tokenizer)
+    warmup_inputs = get_test_inputs(prompt_len, num_prompts, tokenizer)
     inputs = get_test_inputs(prompt_len, num_prompts, tokenizer)
 
     gpu = TorchDevice("cuda:0")
@@ -1708,7 +1708,7 @@ def run_flexllmgen_with_profile(args, model, warmup_inputs, inputs, cut_gen_len,
     try:
         print("warmup - generate profile after")
         output_ids = model.generate(
-            warmup_inputs, max_new_tokens=1, verbose=args.verbose)
+            warmup_inputs, max_new_tokens=16, verbose=args.verbose)
 
         print("benchmark - generate w profile")
         timers("generate").reset()

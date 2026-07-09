@@ -109,6 +109,17 @@ def _detect_estimator_modes(fieldnames: List[str]) -> List[str]:
     return modes
 
 
+def _model_matches(row_model: str, filter_value: str) -> bool:
+    """
+    True if filter_value matches row_model, accepting either the full CSV
+    value (e.g. "facebook/opt-30b") or just its short name (e.g. "opt-30b").
+    Case-insensitive.
+    """
+    row_model = (row_model or "").strip().lower()
+    filter_value = filter_value.strip().lower()
+    return filter_value in (row_model, row_model.split("/")[-1])
+
+
 def load_comparison_csv(csv_path: str) -> Tuple[List[Dict], List[str], List[str]]:
     """
     Returns (rows, fieldnames, estimator_mode_names).
@@ -146,24 +157,32 @@ def get_est_segments(row: Dict, mode: str) -> Dict[str, float]:
     }
 
 
-def make_x_label(row: Dict, x_axis: str) -> str:
+def make_x_label(row: Dict, x_axis: str, include_model: bool = False) -> str:
+    model_prefix = ""
+    if include_model:
+        model_short = (row.get("model") or "?").split("/")[-1]
+        model_prefix = f"{model_short}\n"
+
     if x_axis == "batch_size":
         bs  = row.get("batch_size", "?")
         nb  = row.get("num_batches", "?")
         off = row.get("offload_percent", "?")
-        return f"bs={bs}\nnb={nb}\noff={float(off):.0f}%"
+        return f"{model_prefix}bs={bs}\nnb={nb}\noff={float(off):.0f}%"
     elif x_axis == "recompute_len":
         rc = row.get("recompute_len", "?")
-        return f"rc={rc}"
+        return f"{model_prefix}rc={rc}"
     elif x_axis == "batch_and_recompute":
         bs  = row.get("batch_size", "?")
         rc  = row.get("recompute_len", "?")
         nb  = row.get("num_batches", "?")
         off = row.get("offload_percent", "?")
-        return f"bs={bs}, rc={rc}\nnb={nb}, off={float(off):.0f}%"
+        return f"{model_prefix}bs={bs}, rc={rc}\nnb={nb}, off={float(off):.0f}%"
     elif x_axis == "offload_percent":
-        return f"off={float(row.get('offload_percent', 0)):.0f}%"
+        return f"{model_prefix}off={float(row.get('offload_percent', 0)):.0f}%"
     else:
+        # experiment_id already starts with the model's short name
+        # (see ExperimentConfig.experiment_id in gt_vs_estimator.py), so
+        # don't prepend it again here even if include_model is True.
         return row.get("experiment_id", "?")
 
 
@@ -181,6 +200,7 @@ def plot_comparison(
     title: Optional[str] = None,
     normalize: bool = False,
     show_throughput: bool = False,
+    model_filter: Optional[List[str]] = None,
 ) -> plt.Figure:
     """
     Create the grouped-bar comparison plot.
@@ -204,11 +224,37 @@ def plot_comparison(
                      (tokens/s, from the gt_throughput_tok_per_s CSV column) on a
                      twin right-hand y-axis.  Rows with a blank or zero throughput
                      column are plotted as gaps in the line.
+    model_filter     Restrict to rows whose "model" column matches one of these
+                     values (None = no filtering, use every row in the CSV).
+                     Accepts either the full CSV value ("facebook/opt-30b") or
+                     just the short name ("opt-30b"), case-insensitive. Useful
+                     when a CSV covers multiple models (e.g. several sweeps
+                     appended together, or multiple models pointed at the same
+                     --output-dir). When this is left unset, every x-tick label
+                     is automatically prefixed with its row's model name, since
+                     with no filter the plot may otherwise mix bars from
+                     different models with no visual way to tell them apart.
     """
     rows, fieldnames, all_modes = load_comparison_csv(csv_path)
     if not rows:
         print("No rows in CSV.", file=sys.stderr)
         sys.exit(1)
+
+    if model_filter:
+        available = sorted({r.get("model", "") for r in rows})
+        rows = [r for r in rows
+                if any(_model_matches(r.get("model", ""), f) for f in model_filter)]
+        if not rows:
+            print(f"No rows match --model {model_filter}. "
+                  f"Models present in this CSV: {available}", file=sys.stderr)
+            sys.exit(1)
+
+    # With no explicit model filter, the CSV could easily span more than one
+    # model (multiple sweeps appended, or several models sharing one
+    # --output-dir) with nothing else distinguishing their bars -- so default
+    # to labeling every x-tick with its model name. A filter narrows things
+    # down to (presumably) one known model already, so skip the extra label.
+    include_model = not model_filter
 
     modes = modes_to_plot if modes_to_plot is not None else all_modes
     if not modes:
@@ -342,7 +388,7 @@ def plot_comparison(
     ax.set_ylim(0, max_total * 1.20)
     ax.set_xlim(-0.65, n_ticks - 0.35)
     ax.set_xticks(x)
-    ax.set_xticklabels([make_x_label(r, x_axis) for r in rows], fontsize=9)
+    ax.set_xticklabels([make_x_label(r, x_axis, include_model=include_model) for r in rows], fontsize=9)
     ax.set_ylabel(
         "Total Latency × num_batches (µs)" if normalize else "Latency per iteration (µs)",
         fontsize=11,
@@ -361,6 +407,9 @@ def plot_comparison(
         if normalize else
         "Ground Truth vs. Estimator: MHA Latency Breakdown"
     )
+    if model_filter:
+        models_shown = sorted({(r.get("model") or "?").split("/")[-1] for r in rows})
+        default_title += f" ({', '.join(models_shown)})"
     ax.set_title(title or default_title, fontsize=13, fontweight="bold", pad=14)
 
     ax.yaxis.grid(True, linestyle="--", alpha=0.4)
@@ -556,6 +605,18 @@ def main():
             "produced by gt_vs_estimator.py."
         ),
     )
+    parser.add_argument(
+        "--model", nargs="+", default=None, metavar="MODEL",
+        help=(
+            "Restrict to rows whose 'model' column matches one of these "
+            "values. Accepts either the full name (e.g. facebook/opt-30b) "
+            "or just the short name (e.g. opt-30b), case-insensitive. "
+            "Useful when a CSV covers multiple models. Default: no "
+            "filtering (every row is used), in which case each x-tick "
+            "label is automatically prefixed with its model name so bars "
+            "from different models stay visually distinguishable."
+        ),
+    )
     args = parser.parse_args()
 
     out = args.out or (Path(args.csv).stem + "_comparison.png")
@@ -569,6 +630,7 @@ def main():
         title=args.title,
         normalize=args.normalize,
         show_throughput=args.show_throughput,
+        model_filter=args.model,
     )
 
 

@@ -153,6 +153,7 @@ STATUS_OK        = "ok"
 STATUS_OOM       = "oom"        # no feasible offload scheme, or CUDA OOM at runtime
 STATUS_ERROR     = "error"      # any other failure
 STATUS_COLLECTED = "collected"  # --collection-only: trace gathered, no analysis run
+STATUS_NO_TRACE  = "no_trace"   # --analysis-only: no existing trace/summary found, collection skipped
 
 
 # ---------------------------------------------------------------------------
@@ -235,10 +236,25 @@ class HardwareConfig:
         use_no_pinned / use_ideal_comp toggles have no baseline_model
         equivalent — that model is always the single idealized case — so they
         are simply ignored here.
+        cpu_gpu_bandwidth uses decimal GB (1e9), NOT binary GiB (1024**3),
+        to match kv_schedule_optimization.transfer_pred()'s own convention
+        under use_ideal_bw=True: it converts bytes to GB via `bytes/1e9`,
+        then divides by `hardware_config.ideal_bw` (=pcie_bw) directly — i.e.
+        it treats pcie_bw as decimal GB/s. Using 1024**3 here instead (as an
+        earlier version of this method did) silently made every baseline KV
+        transfer time ~7% too fast relative to the "ideal" kv_schedule
+        estimator, on top of any other assumption differences between the
+        two models — small compared to model-formula differences, but a
+        real, avoidable skew worth keeping consistent.
+
+        gpu_mem_bytes intentionally stays binary GiB (1024**3), matching
+        to_cost_model_config()'s own gmem/cmem convention — memory capacity
+        and transfer rate are different units in practice and don't need to
+        agree with each other, only within themselves across the two models.
         """
         return BaselineHardwareConfig(
             gpu_matmul_flops=self.gpu_tflop * 1e12,
-            cpu_gpu_bandwidth=self.pcie_bw * GB,
+            cpu_gpu_bandwidth=self.pcie_bw * 1e9,
             dtype_bytes=2,
             gpu_mem_bytes=self.alpha_g * self.gpu_mem_gb * GB,
         )
@@ -709,6 +725,37 @@ def compute_expected_trace_paths(exp: ExperimentConfig, trace_dir: str) -> Tuple
     return stem, os.path.join(trace_dir, stem + ".json")
 
 
+def find_existing_trace_variant(exp: ExperimentConfig, trace_dir: str) -> Optional[str]:
+    """
+    Return the path to whichever on-disk form of this experiment's trace
+    already exists (uncompressed .json, .json.tar.gz, .tar.gz, or .json.gz),
+    checked in the same priority order as run_flexllm_profile(), or None if
+    none of them exist.
+
+    Pure existence check — never decompresses or otherwise touches the
+    file; run_flexllm_profile() does that separately once it actually needs
+    the uncompressed .json.
+
+    Used both by run_flexllm_profile() itself (below) and by
+    run_experiment()'s search across all feasible offload percentages (see
+    get_offload_candidates) for a trace that may have been collected at a
+    HIGHER offload percentage than what Step 1 currently predicts, if a
+    prior run's Step 2 had to escalate past the analytical minimum due to a
+    real CUDA OOM.
+    """
+    expected_stem, expected_json = compute_expected_trace_paths(exp, trace_dir)
+    if os.path.exists(expected_json):
+        return expected_json
+    for candidate in (
+        expected_json + ".tar.gz",                           # fo-…-gpu-cache.json.tar.gz
+        os.path.join(trace_dir, expected_stem + ".tar.gz"),  # fo-…-gpu-cache.tar.gz
+        expected_json + ".gz",                               # fo-…-gpu-cache.json.gz
+    ):
+        if os.path.exists(candidate):
+            return candidate
+    return None
+
+
 def run_flexllm_profile(
     exp: ExperimentConfig,
     hw: HardwareConfig,
@@ -733,16 +780,6 @@ def run_flexllm_profile(
 
     expected_stem, expected_json = compute_expected_trace_paths(exp, trace_dir)
 
-    # Candidate compressed paths, checked in priority order:
-    #   1. <stem>.json.tar.gz  — produced by cleanup_traces() in this script
-    #   2. <stem>.tar.gz       — produced by manual "tar -czf"
-    #   3. <stem>.json.gz      — produced by plain "gzip" (different format!)
-    _compressed_candidates = [
-        expected_json + ".tar.gz",                           # fo-…-gpu-cache.json.tar.gz
-        os.path.join(trace_dir, expected_stem + ".tar.gz"),  # fo-…-gpu-cache.tar.gz
-        expected_json + ".gz",                               # fo-…-gpu-cache.json.gz
-    ]
-
     # Case 1: uncompressed .json already present — use it directly.
     if os.path.exists(expected_json):
         print(f"  [skip] trace already exists: {expected_json}")
@@ -751,7 +788,7 @@ def run_flexllm_profile(
     # Case 2: a compressed file present — decompress, then proceed.
     # The decompressed .json is recorded in _generated_traces so that
     # cleanup_traces() can re-compress or delete it at the end of the run.
-    found_compressed = next((p for p in _compressed_candidates if os.path.exists(p)), None)
+    found_compressed = find_existing_trace_variant(exp, trace_dir)
     if found_compressed is not None:
         size_mb = os.path.getsize(found_compressed) / (1024 ** 2)
         print(f"  [decompress] found {found_compressed} ({size_mb:.1f} MB) — extracting...")
@@ -1307,6 +1344,17 @@ def sweep_batch_and_recompute(
     """
     Full cross-product of batch sizes and recompute lengths.
     offload_percent is always the minimum feasible for each (bs, rc) pair.
+
+    get_min_offload_percent() doesn't depend on recompute_len at all, so for
+    a given batch size, every rc in recompute_lens resolves to the SAME
+    min_off. When that min_off is 0% (the whole batch fits on GPU, nothing
+    offloaded), every rc > 0 for that batch size is meaningless -- there's
+    no offloaded KV to recompute -- and flex_opt_kvpr.py's "nothing
+    offloaded" code path ignores recompute_len entirely once it's actually
+    running (see the path==0 fix in flex_opt_kvpr.py's load_cache()), so
+    those runs would just re-profile the exact same configuration as rc=0
+    under a different label. Skip them here rather than wasting GPU time
+    collecting redundant traces.
     """
     experiments = []
     for bs in batch_sizes:
@@ -1316,6 +1364,10 @@ def sweep_batch_and_recompute(
                 min_off = get_min_offload_percent(exp, hw, opt_config)
             except OOMError as e:
                 print(f"  [OOM] sweep_batch_and_recompute: bs={bs}, rc={rc} skipped — {e}")
+                continue
+            if min_off == 0 and rc > 0:
+                print(f"  [skip] sweep_batch_and_recompute: bs={bs}, rc={rc} — "
+                      f"min_offload=0% (nothing to recompute; redundant with bs={bs}, rc=0)")
                 continue
             exp = dataclasses.replace(exp, offload_percent=min_off)
             print(
@@ -1469,6 +1521,7 @@ def run_experiment(
     gt_first_n: Optional[int] = None,
     gt_dominant_path_only: bool = False,
     collection_only: bool = False,
+    analysis_only: bool = False,
     _generated_traces: Optional[List[str]] = None,
 ) -> Dict:
     """
@@ -1485,6 +1538,19 @@ def run_experiment(
         gathering traces on a GPU box, then running the analysis separately
         (possibly on a different machine) via --trace-json / --summary-csv.
 
+    analysis_only : if True, Step 2 (trace collection) never launches
+        flex_opt_kvpr.py. If a trace or summary already exists for this
+        experiment at ANY feasible offload percentage (see the candidate
+        search above run_experiment's Step 1), it's used normally — this
+        flag only changes what happens when NOTHING already exists: instead
+        of collecting a fresh trace, the experiment is skipped with
+        status="no_trace". Mutually exclusive with collection_only (checked
+        in run_comparison()/main(), not here). Use this to (re)run the
+        analysis pipeline — e.g. after fixing a bug in trace_analyzer.py or
+        trace_result_analyzer.py — over a set of traces collected earlier,
+        possibly on a different (GPU-less) machine, without accidentally
+        triggering new GPU collection for any point that's missing.
+
     _generated_traces : optional list passed through to run_flexllm_profile
         (via the OOM-retry wrapper). Paths of .json files that are newly
         profiled OR decompressed from .gz are appended here, making them
@@ -1495,14 +1561,17 @@ def run_experiment(
     print(f"Experiment: {exp.experiment_id}")
     print(f"{'='*60}")
 
-    # Step 1: resolve offload_percent
+    # Step 1: resolve offload_percent (if the caller hasn't already -- note
+    # every sweep_* helper calls get_min_offload_percent() itself and bakes
+    # the result in before experiments ever reach here, so in normal CLI
+    # usage exp.offload_percent is essentially always already set by this
+    # point; this branch mainly matters for direct Python-API callers).
     if exp.offload_percent is None:
         if ESTIMATOR_AVAILABLE:
             print("  Step 1: computing minimum offload percent...")
             try:
                 exp = dataclasses.replace(
-                    exp,
-                    offload_percent=get_min_offload_percent(exp, hw, opt_config),
+                    exp, offload_percent=get_min_offload_percent(exp, hw, opt_config)
                 )
             except OOMError as e:
                 return _skipped_row(exp, estimator_modes, STATUS_OOM, str(e))
@@ -1514,17 +1583,84 @@ def run_experiment(
             exp = dataclasses.replace(exp, offload_percent=0.0)
     print(f"  offload_percent = {exp.offload_percent:.1f}%")
 
-    # trace_dir and the expected (stem-based) trace/summary paths are shared
-    # by the Step 2/3 shortcut check below and by the actual profiling call.
+    # trace_dir doesn't depend on offload_percent -- shared by every
+    # candidate searched below and by the actual profiling call.
+    # Model name is included so sweeps for different models pointed at the
+    # same --output-dir don't collide or get mixed up when browsing results.
+    model_name = exp.model.split("/")[-1]  # e.g. "facebook/opt-30b" -> "opt-30b"
     trace_dir = os.path.join(
         exp.output_dir,
-        f"prompt_{exp.prompt_len}_bs{exp.batch_size}"
+        f"{model_name}_prompt_{exp.prompt_len}_bs{exp.batch_size}"
         + (f"_rc{exp.recompute_len}" if exp.recompute_len > 0 else ""),
     )
-    _, expected_json = compute_expected_trace_paths(exp, trace_dir)
-    expected_summary_csv = os.path.join(
-        exp.output_dir, Path(expected_json).stem + "_batched_analysis_summary.csv"
-    )
+
+    # Compute every analytically-feasible offload percentage for this
+    # (batch_size, prompt_len, recompute_len) combination, for the
+    # trace-reuse search below. Deliberately NOT gated on whether Step 1
+    # itself just resolved offload_percent above -- every sweep_* helper
+    # already resolves it before calling run_experiment at all (see the
+    # docstring note above), so gating this on "was it None" would make the
+    # search never run in normal usage. get_offload_candidates() is a pure
+    # analytical calculation (no GPU/subprocess involved), so recomputing
+    # it here is cheap even when a sweep_* helper already computed the same
+    # thing once.
+    offload_candidates: Optional[List[float]] = None
+    if ESTIMATOR_AVAILABLE:
+        try:
+            offload_candidates = get_offload_candidates(exp, hw, opt_config)
+        except OOMError:
+            offload_candidates = None
+        except Exception as e:
+            print(f"  [warn] could not compute offload candidates for trace-reuse search: {e}")
+            offload_candidates = None
+
+    # Search across every feasible offload candidate for a trace or summary
+    # that already exists on disk -- not just the offload_percent currently
+    # attached to exp (whether that came from Step 1 above or from a
+    # sweep_* helper). A PRIOR run's Step 2 may have had to escalate past that minimum due to
+    # a real CUDA OOM (see run_flexllm_profile_with_oom_retry): e.g. Step 1
+    # predicts 75% is feasible, but profiling at 75% actually OOMs, so the
+    # retry logic escalates to 100% and the resulting trace is saved under
+    # THAT filename. A later run recomputes the SAME analytical 75%
+    # minimum (the escalation isn't remembered anywhere) and, if only ever
+    # checking 75%, would never find the existing 100% trace -- silently
+    # re-running Step 2 and burning GPU time on a result we already have.
+    # Search every candidate in ascending order (matching
+    # get_offload_candidates) and use the first one that already has a
+    # trace or summary on disk; only fall back to the analytical minimum
+    # for a fresh Step 2 attempt if none of them do.
+    search_percents = offload_candidates if offload_candidates else [exp.offload_percent]
+    expected_json = None
+    expected_summary_csv = None
+    found_kind_overall = None  # None | "summary" | "trace" -- what, if anything, exists on disk already
+    for candidate_pct in search_percents:
+        candidate_exp = dataclasses.replace(exp, offload_percent=candidate_pct)
+        _, candidate_json = compute_expected_trace_paths(candidate_exp, trace_dir)
+        candidate_summary = os.path.join(
+            exp.output_dir, Path(candidate_json).stem + "_batched_analysis_summary.csv"
+        )
+        this_kind = None
+        if os.path.isfile(candidate_summary):
+            this_kind = "summary"
+        elif find_existing_trace_variant(candidate_exp, trace_dir) is not None:
+            this_kind = "trace"
+        if this_kind is not None:
+            expected_json, expected_summary_csv = candidate_json, candidate_summary
+            found_kind_overall = this_kind
+            if candidate_pct != exp.offload_percent:
+                print(f"  [reuse] found existing {this_kind} at offload_percent="
+                      f"{candidate_pct:.1f}% (Step 1 predicted {exp.offload_percent:.1f}%) "
+                      f"— reusing it instead of re-running Step 2")
+            exp = dataclasses.replace(exp, offload_percent=candidate_pct)
+            break
+
+    if expected_json is None:
+        # Nothing found at any candidate -- proceed with the (still
+        # analytically-minimal) offload_percent for a fresh Step 2 attempt.
+        _, expected_json = compute_expected_trace_paths(exp, trace_dir)
+        expected_summary_csv = os.path.join(
+            exp.output_dir, Path(expected_json).stem + "_batched_analysis_summary.csv"
+        )
 
     have_summary = (
         not collection_only
@@ -1554,6 +1690,20 @@ def run_experiment(
         if exp.trace_json_path and os.path.isfile(exp.trace_json_path):
             print(f"  Step 2: [skip] using existing trace: {exp.trace_json_path}")
             trace_json = exp.trace_json_path
+        elif analysis_only and found_kind_overall is None:
+            # --analysis-only: nothing exists for this experiment at any
+            # feasible offload percentage, and there's no explicit
+            # trace_json_path override either. Normal mode would now launch
+            # flex_opt_kvpr.py to collect a fresh trace; analysis_only
+            # means don't -- skip this point instead.
+            print(f"  [analysis-only] no existing trace or summary found for "
+                  f"any feasible offload percentage ({', '.join(f'{p:.1f}%' for p in search_percents)}) "
+                  f"— skipping collection")
+            return _skipped_row(
+                exp, estimator_modes, STATUS_NO_TRACE,
+                f"analysis-only: no existing trace/summary at any feasible "
+                f"offload percentage {search_percents}",
+            )
         else:
             print("  Step 2: running flex_opt_kvpr profiling...")
             try:
@@ -1765,6 +1915,7 @@ def run_comparison(
     gt_dominant_path_only: bool = False,
     trace_cleanup: str = TRACE_CLEANUP_NONE,
     collection_only: bool = False,
+    analysis_only: bool = False,
 ) -> List[Dict]:
     """
     Run all experiments and write the comparison CSV.
@@ -1794,11 +1945,22 @@ def run_comparison(
     collection_only       If True, each experiment stops after trace collection
                           (Step 2) — trace analysis and everything downstream is
                           skipped, and rows are marked status="collected".
+    analysis_only         If True, Step 2 (trace collection) never launches
+                          flex_opt_kvpr.py — any experiment with no existing
+                          trace/summary at any feasible offload percentage is
+                          skipped with status="no_trace" instead of collecting
+                          one. Mutually exclusive with collection_only.
     """
+    if collection_only and analysis_only:
+        raise ValueError(
+            "--collection-only and --analysis-only are mutually exclusive "
+            "(one skips analysis and only collects; the other skips "
+            "collection and only analyzes what already exists)."
+        )
     validate_estimator_modes(estimator_modes)
     all_rows = []
     generated_traces: List[str] = []   # paths written/restored this run
-    n_ok, n_oom, n_err, n_collected = 0, 0, 0, 0
+    n_ok, n_oom, n_err, n_collected, n_no_trace = 0, 0, 0, 0, 0
 
     for exp in experiments:
         row = run_experiment(
@@ -1813,6 +1975,7 @@ def run_comparison(
             gt_first_n=gt_first_n,
             gt_dominant_path_only=gt_dominant_path_only,
             collection_only=collection_only,
+            analysis_only=analysis_only,
             _generated_traces=generated_traces,
         )
         all_rows.append(row)
@@ -1820,10 +1983,11 @@ def run_comparison(
         if s == STATUS_OOM:         n_oom += 1
         elif s == STATUS_OK:        n_ok  += 1
         elif s == STATUS_COLLECTED: n_collected += 1
+        elif s == STATUS_NO_TRACE:  n_no_trace += 1
         else:                       n_err += 1
 
-    print(f"\nSweep complete: {n_ok} ok, {n_collected} collected, {n_oom} oom, "
-          f"{n_err} error (out of {len(all_rows)} total)")
+    print(f"\nSweep complete: {n_ok} ok, {n_collected} collected, {n_no_trace} no_trace, "
+          f"{n_oom} oom, {n_err} error (out of {len(all_rows)} total)")
 
     if all_rows:
         write_comparison_csv(all_rows, output_csv, estimator_modes)
@@ -1834,6 +1998,11 @@ def run_comparison(
             print(f"  Note: {n_collected} row(s) have status=\"collected\" "
                   f"(--collection-only) — trace_json is set but no analysis "
                   f"was run for them.")
+        if n_no_trace:
+            print(f"  Note: {n_no_trace} row(s) have status=\"no_trace\" "
+                  f"(--analysis-only) — no existing trace/summary was found "
+                  f"for them at any feasible offload percentage, and "
+                  f"collection was skipped rather than run.")
     else:
         print("No experiments to write.")
 
@@ -1972,6 +2141,22 @@ def main():
             "--trace-json (per-trace) or a separate non---collection-only run "
             "over the same sweep (which will pick up the already-collected "
             "traces via the normal skip-if-exists logic)."
+        ),
+    )
+    parser.add_argument(
+        "--analysis-only", action="store_true",
+        help=(
+            "Never launch flex_opt_kvpr.py (Step 2) to collect a new trace. "
+            "If a trace or summary already exists for an experiment — at "
+            "any feasible offload percentage, not just the analytically- "
+            "predicted one — it's used normally, same as any other run. If "
+            "nothing exists for that experiment, it's skipped with "
+            "status=\"no_trace\" instead of collecting one. Mutually "
+            "exclusive with --collection-only. Use this to (re-)run Steps "
+            "3-5 over traces collected earlier — e.g. after fixing a bug in "
+            "trace_analyzer.py or trace_result_analyzer.py, or on a "
+            "GPU-less machine — without risking an accidental multi-hour "
+            "GPU collection run for any point that's missing."
         ),
     )
     parser.add_argument(
@@ -2147,6 +2332,7 @@ def main():
         gt_dominant_path_only=args.gt_dominant_path,
         trace_cleanup=args.trace_cleanup,
         collection_only=args.collection_only,
+        analysis_only=args.analysis_only,
     )
 
 
