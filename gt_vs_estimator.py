@@ -70,7 +70,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 # ---------------------------------------------------------------------------
 # Optional import guard — estimator and trace tools may not be installed in
@@ -725,6 +725,33 @@ def compute_expected_trace_paths(exp: ExperimentConfig, trace_dir: str) -> Tuple
     return stem, os.path.join(trace_dir, stem + ".json")
 
 
+def compute_trace_dir(exp: ExperimentConfig, run_idx: Optional[int] = None) -> str:
+    """
+    Directory flex_opt_kvpr.py is told to --save-to for this experiment.
+
+    run_idx=None (default, single-run mode) reproduces the exact same
+    directory used before multi-run support existed, so every trace/summary
+    collected under the old (single-run) layout is still found without any
+    re-collection. run_idx=i (multi-run mode, --num-runs > 1) uses a "runN"
+    subdirectory instead — flex_opt_kvpr.py's own get_filename() is fully
+    deterministic from its CLI args (model/prompt_len/gen_len/batch_size/
+    percent/recompute_len) with no run-index concept of its own, and
+    --save-to only accepts a directory (not a specific filename), so giving
+    each run its own subdirectory is what actually keeps independent runs'
+    traces from overwriting each other -- there's no other way to get
+    flex_opt_kvpr.py to produce a distinctly-named output per run.
+    """
+    model_name = exp.model.split("/")[-1]  # e.g. "facebook/opt-30b" -> "opt-30b"
+    base = os.path.join(
+        exp.output_dir,
+        f"{model_name}_prompt_{exp.prompt_len}_bs{exp.batch_size}"
+        + (f"_rc{exp.recompute_len}" if exp.recompute_len > 0 else ""),
+    )
+    if run_idx is None:
+        return base
+    return os.path.join(base, f"run{run_idx}")
+
+
 def find_existing_trace_variant(exp: ExperimentConfig, trace_dir: str) -> Optional[str]:
     """
     Return the path to whichever on-disk form of this experiment's trace
@@ -930,10 +957,48 @@ def run_flexllm_profile_with_oom_retry(
             current = next_off
 
 
+def _stderr_tail(stderr: Optional[str], max_lines: int = 20) -> str:
+    """
+    Last few lines of a subprocess's captured stderr, for inclusion in an
+    exception message. Tracebacks end with the exception type/message, so
+    the tail is almost always the informative part; bounded so a huge
+    traceback doesn't bloat the CSV's error column or the console output.
+    """
+    if not stderr or not stderr.strip():
+        return "(no stderr captured)"
+    lines = stderr.strip().splitlines()
+    tail = lines[-max_lines:]
+    prefix = f"... ({len(lines) - len(tail)} earlier lines omitted) ...\n" if len(lines) > max_lines else ""
+    return prefix + "\n".join(tail)
+
+
+def compute_expected_summary_csv(
+    exp: ExperimentConfig,
+    trace_json_path: str,
+    run_idx: Optional[int] = None,
+) -> str:
+    """
+    Path to the summary CSV that run_trace_analysis() would produce for this
+    trace. Output is written to the flat exp.output_dir, deliberately not
+    alongside the trace (see run_trace_analysis's docstring) -- but trace
+    filenames themselves don't vary with run_idx (flex_opt_kvpr.py has no
+    run-index concept; only the trace's DIRECTORY does, via
+    compute_trace_dir()), so multiple runs' traces all share the exact same
+    stem. Without folding run_idx into the summary filename here too, every
+    run of a multi-run (--num-runs > 1) experiment would collide on the
+    same summary CSV path and silently overwrite each other.
+    """
+    stem = Path(trace_json_path).stem
+    if run_idx is not None:
+        stem = f"{stem}_run{run_idx}"
+    return os.path.join(exp.output_dir, stem + "_batched_analysis_summary.csv")
+
+
 def run_trace_analysis(
     trace_json: str,
     exp: ExperimentConfig,
     dry_run: bool = False,
+    run_idx: Optional[int] = None,
 ) -> str:
     """
     Run trace_analyzer.py (--batched) then trace_result_analyzer.py (--batched)
@@ -941,8 +1006,16 @@ def run_trace_analysis(
 
     Output CSVs are written to exp.output_dir (not next to the trace), so that
     read-only trace locations (e.g. an uploads folder) are not a problem.
+
+    run_idx : for --num-runs > 1, folded into the output filenames (via
+        compute_expected_summary_csv) so different runs' summaries don't
+        collide on the same path -- see that function's docstring for why
+        this is necessary despite each run's trace already living in its
+        own subdirectory.
     """
     stem = Path(trace_json).stem
+    if run_idx is not None:
+        stem = f"{stem}_run{run_idx}"
     out_dir = exp.output_dir
     os.makedirs(out_dir, exist_ok=True)
 
@@ -960,9 +1033,14 @@ def run_trace_analysis(
     ]
     print(f"  [run] trace_analyzer: {' '.join(cmd1)}")
     if not dry_run:
-        r = subprocess.run(cmd1, capture_output=False, text=True)
+        r = subprocess.run(cmd1, stderr=subprocess.PIPE, text=True)
         if r.returncode != 0:
-            raise RuntimeError(f"trace_analyzer.py failed for {trace_json}")
+            if r.stderr:
+                print(r.stderr, file=sys.stderr, end="")
+            raise RuntimeError(
+                f"trace_analyzer.py failed (exit {r.returncode}) for {trace_json}: "
+                f"{_stderr_tail(r.stderr)}"
+            )
 
     # Step 2: trace_result_analyzer.py
     cmd2 = [
@@ -971,15 +1049,20 @@ def run_trace_analysis(
     ]
     print(f"  [run] trace_result_analyzer: {' '.join(cmd2)}")
     if not dry_run:
-        r = subprocess.run(cmd2, capture_output=False, text=True)
+        r = subprocess.run(cmd2, stderr=subprocess.PIPE, text=True)
         if r.returncode != 0:
-            raise RuntimeError(f"trace_result_analyzer.py failed for {analysis_csv}")
+            if r.stderr:
+                print(r.stderr, file=sys.stderr, end="")
+            raise RuntimeError(
+                f"trace_result_analyzer.py failed (exit {r.returncode}) for {analysis_csv}: "
+                f"{_stderr_tail(r.stderr)}"
+            )
 
     return summary_csv
 
 
 def compute_gt_decode_stats(
-    summary_csv: str,
+    summary_csv: Union[str, List[str]],
     num_prompts: int,
     token_filter: Optional[int] = None,
 ) -> Dict[str, float]:
@@ -1004,9 +1087,20 @@ def compute_gt_decode_stats(
     the summary CSV.  trace_result_analyzer already excludes the warm-up token,
     so this equals gen_len - 1 in typical runs.
 
+    Multi-run pooling
+    ------------------
+    summary_csv may be a single path or a list of paths (e.g. from multiple
+    --num-runs repetitions of the same experiment config). Unlike
+    load_gt_summary(), this does NOT simply concatenate every run's rows
+    together before summing by token — each run independently contributes a
+    full layer/batch sum for the SAME token index, so naive concatenation
+    would multiply the apparent per-token latency by the number of runs.
+    Instead, each run's per-token latency is computed separately (summed
+    across that run's own rows), and THEN averaged across runs.
+
     Parameters
     ----------
-    summary_csv  : path to the batched summary CSV
+    summary_csv  : path to the batched summary CSV, or a list of paths.
     num_prompts  : total number of sequences in this run (gbs × ngbs)
     token_filter : if given, report stats for this single decode token only
                    (mean_token_latency == that token's latency; throughput is
@@ -1022,30 +1116,49 @@ def compute_gt_decode_stats(
       throughput_tok_per_s         float — tokens/s (all sequences)
       throughput_tok_per_s_per_seq float — tokens/s per sequence
     """
-    with open(summary_csv, newline="") as f:
-        all_rows = list(csv.DictReader(f))
+    paths = [summary_csv] if isinstance(summary_csv, str) else list(summary_csv)
+    if not paths:
+        raise ValueError("compute_gt_decode_stats: no summary CSV path(s) given")
 
-    if not all_rows:
-        raise ValueError(f"Empty summary CSV: {summary_csv}")
+    # Each run's own per-token latency (sum of critical-path across that
+    # run's layer/batch rows sharing a token), computed independently.
+    per_run_token_latencies: List[Dict[str, float]] = []
+    for path in paths:
+        with open(path, newline="") as f:
+            run_rows = list(csv.DictReader(f))
+        if not run_rows:
+            raise ValueError(f"Empty summary CSV: {path}")
+        run_tokens = set(r["token"] for r in run_rows)
+        run_latencies = {
+            tok: sum(float(r["critical-path"]) for r in run_rows if r["token"] == tok)
+            for tok in run_tokens
+        }
+        per_run_token_latencies.append(run_latencies)
 
-    # Determine which tokens to include
-    all_tokens = sorted(set(r["token"] for r in all_rows), key=lambda t: int(t))
+    # Tokens common to every run (identical across runs of the same config
+    # in the normal case; guards against a run with a different gen_len).
+    common_tokens = set(per_run_token_latencies[0])
+    for run_latencies in per_run_token_latencies[1:]:
+        common_tokens &= set(run_latencies)
+    if not common_tokens:
+        raise ValueError(f"No decode tokens common to all {len(paths)} run(s): {paths}")
+    all_tokens = sorted(common_tokens, key=lambda t: int(t))
+
     if token_filter is not None:
         tokens = [str(token_filter)]
-        if tokens[0] not in set(r["token"] for r in all_rows):
+        if tokens[0] not in common_tokens:
             raise ValueError(
-                f"token_filter={token_filter} not found in {summary_csv}. "
-                f"Available: {all_tokens}"
+                f"token_filter={token_filter} not found in all {len(paths)} run(s). "
+                f"Common tokens: {all_tokens}"
             )
     else:
         tokens = all_tokens
 
-    # Per-token latency = sum of critical-path across all groups for that token
-    per_token_latency_us: List[float] = []
-    for tok in tokens:
-        tok_rows = [r for r in all_rows if r["token"] == tok]
-        lat = sum(float(r["critical-path"]) for r in tok_rows)
-        per_token_latency_us.append(lat)
+    # Average each token's latency across runs (a no-op when there's only one).
+    per_token_latency_us: List[float] = [
+        sum(run_latencies[tok] for run_latencies in per_run_token_latencies) / len(paths)
+        for tok in tokens
+    ]
 
     n_tokens = len(per_token_latency_us)
     mean_lat_us  = sum(per_token_latency_us) / n_tokens
@@ -1068,7 +1181,7 @@ def compute_gt_decode_stats(
 
 
 def load_gt_summary(
-    summary_csv: str,
+    summary_csv: Union[str, List[str]],
     token_filter: Optional[int] = None,
     skip_first_n: int = 0,
     first_n: Optional[int] = None,
@@ -1102,6 +1215,18 @@ def load_gt_summary(
     durations first and then applying one winner label would give wrong results
     whenever the winner distribution is not uniform.
 
+    Multi-run pooling
+    ------------------
+    summary_csv may be a single path or a list of paths (e.g. from multiple
+    --num-runs repetitions of the same experiment config). When a list is
+    given, every row from every file is concatenated into ONE pool BEFORE
+    any of the filtering/slicing below runs — skip_first_n/first_n operate
+    on the pooled list, not per-file. This is deliberate: each row is
+    already an independent sample of one layer/batch/token's segment
+    breakdown, so pooling more of them (regardless of which run they came
+    from) directly is what gives multi-run averaging its "more stable
+    estimate" benefit — there's no need to average-then-average.
+
     Filtering and slicing (applied in order)
     -----------------------------------------
     1. token_filter       — keep only rows for this decode-step index.
@@ -1125,7 +1250,7 @@ def load_gt_summary(
 
     Parameters
     ----------
-    summary_csv        : path to the batched summary CSV
+    summary_csv        : path to the batched summary CSV, or a list of paths.
     token_filter       : decode-step index to filter on (None = all tokens).
     skip_first_n       : rows to drop from the top of the filtered list (default 0).
     first_n            : max rows to include after skipping (None = all).
@@ -1136,12 +1261,17 @@ def load_gt_summary(
     -------
     Dict[str, float]  segment_name → mean latency in µs across selected rows.
     """
-    with open(summary_csv, newline="") as f:
-        reader = csv.DictReader(f)
-        all_rows = list(reader)
+    paths = [summary_csv] if isinstance(summary_csv, str) else list(summary_csv)
+    if not paths:
+        raise ValueError("load_gt_summary: no summary CSV path(s) given")
+
+    all_rows: List[Dict] = []
+    for path in paths:
+        with open(path, newline="") as f:
+            all_rows.extend(csv.DictReader(f))
 
     if not all_rows:
-        raise ValueError(f"Empty summary CSV: {summary_csv}")
+        raise ValueError(f"Empty summary CSV(s): {paths}")
 
     rows = all_rows
 
@@ -1150,7 +1280,7 @@ def load_gt_summary(
         rows = [r for r in rows if str(r.get("token", "")) == str(token_filter)]
         if not rows:
             raise ValueError(
-                f"No rows with token={token_filter} in {summary_csv}. "
+                f"No rows with token={token_filter} in {paths}. "
                 f"Available: {sorted({r.get('token') for r in all_rows})}"
             )
 
@@ -1159,7 +1289,7 @@ def load_gt_summary(
         rows = rows[skip_first_n:]
         if not rows:
             raise ValueError(
-                f"No rows left after skip_first_n={skip_first_n} in {summary_csv}."
+                f"No rows left after skip_first_n={skip_first_n} in {paths}."
             )
 
     # Step 3: cap to the next N rows
@@ -1167,7 +1297,7 @@ def load_gt_summary(
         rows = rows[:first_n]
 
     if not rows:
-        raise ValueError(f"No rows to average in {summary_csv} after filtering.")
+        raise ValueError(f"No rows to average in {paths} after filtering.")
 
     # Step 4 (optional): restrict to rows whose critical-path-winner is the
     # most frequent one across the working set.
@@ -1179,7 +1309,7 @@ def load_gt_summary(
                 winner_counts[w] = winner_counts.get(w, 0) + 1
         if not winner_counts:
             raise ValueError(
-                f"No critical-path-winner values found in {summary_csv}. "
+                f"No critical-path-winner values found in {paths}. "
                 "Cannot apply --gt-dominant-path."
             )
         # Tie-break: prefer path1 > path2 > path3 (alphabetical happens to work)
@@ -1193,7 +1323,7 @@ def load_gt_summary(
         if not rows:
             raise ValueError(
                 f"No rows remain after dominant-path filter (dominant='{dominant}') "
-                f"in {summary_csv}."
+                f"in {paths}."
             )
 
     # Compute segments per row, then average — never average raw ops first.
@@ -1205,6 +1335,7 @@ def load_gt_summary(
     }
 
     parts = []
+    if len(paths) > 1:             parts.append(f"{len(paths)} runs pooled")
     if token_filter is not None:  parts.append(f"token={token_filter}")
     if skip_first_n > 0:          parts.append(f"skip={skip_first_n}")
     if first_n is not None:       parts.append(f"first_n={first_n}")
@@ -1509,6 +1640,207 @@ def _skipped_row(
     )
 
 
+def _run_one_collection_and_analysis(
+    exp: ExperimentConfig,
+    hw: HardwareConfig,
+    opt_config: Any,
+    trace_dir: str,
+    offload_candidates: Optional[List[float]],
+    dry_run: bool,
+    collection_only: bool,
+    analysis_only: bool,
+    _generated_traces: Optional[List[str]],
+    run_idx: Optional[int] = None,
+    trace_cleanup: str = TRACE_CLEANUP_NONE,
+) -> Tuple[str, Optional[str], str, ExperimentConfig]:
+    """
+    Find-or-collect-or-analyze ONE run's trace/summary for the given
+    trace_dir (already run-index-aware if this is a --num-runs > 1 sweep;
+    see compute_trace_dir()). This is Steps 2+3 of the pipeline, factored
+    out of run_experiment() so it can be called once per run.
+
+    trace_cleanup : normally, --trace-cleanup only runs once at the very
+        end of the whole sweep (run_comparison()), after every experiment
+        has been processed -- meaning every raw .json trace generated
+        anywhere in the sweep sits on disk simultaneously until the last
+        experiment finishes, which can exhaust disk space mid-sweep for
+        large traces. Compressed/deleted immediately here instead of
+        waiting, in either of two cases where this trace is done being
+        touched for the rest of THIS call:
+          - collection_only=True: right after Step 2, since Step 3+ is
+            skipped entirely.
+          - analysis_only=True: right after Step 3 succeeds. analysis_only
+            may have just decompressed an existing .json.tar.gz purely to
+            run Step 3 on it (Step 4+ only needs the resulting summary_csv,
+            never the raw trace again), so leaving it decompressed until
+            the sweep's last experiment finishes would be pure waste.
+        Has no effect in the plain collection+analysis case (neither flag
+        set), since nothing marks the trace as "done" mid-call there --
+        the deferred end-of-sweep pass still handles that as before.
+
+    run_idx : must match whatever run_idx trace_dir was computed with (None
+        for single-run). Folded into the summary CSV filename (see
+        compute_expected_summary_csv) since flex_opt_kvpr.py's own trace
+        filenames don't vary with run_idx and run_trace_analysis writes
+        summaries to a flat directory, not alongside the trace — without
+        this, every run's summary would collide on the same path.
+
+    Returns (status, summary_csv, reason, updated_exp):
+      status      : STATUS_OK | STATUS_COLLECTED | STATUS_NO_TRACE | STATUS_OOM | STATUS_ERROR
+      summary_csv : path to the summary CSV, set only when status == STATUS_OK
+      reason      : human-readable detail, used by the caller for the CSV row
+                    when this is the only run / every run fails
+      updated_exp : exp with offload_percent/trace_json_path/summary_csv_path
+                    updated to reflect what was actually found or produced
+    """
+    # Search across every feasible offload candidate for a trace or summary
+    # that already exists on disk in trace_dir — not just the offload_percent
+    # currently attached to exp. A prior run's Step 2 may have had to
+    # escalate past that minimum due to a real CUDA OOM (see
+    # run_flexllm_profile_with_oom_retry): e.g. Step 1 predicts 75% is
+    # feasible, but profiling at 75% actually OOMs, so the retry logic
+    # escalates to 100% and the resulting trace is saved under THAT
+    # filename. A later run recomputes the SAME analytical 75% minimum (the
+    # escalation isn't remembered anywhere) and, if only ever checking 75%,
+    # would never find the existing 100% trace — silently re-running Step 2
+    # and burning GPU time on a result we already have. Search every
+    # candidate in ascending order (matching get_offload_candidates) and use
+    # the first one that already has a trace or summary on disk; only fall
+    # back to the analytical minimum for a fresh Step 2 attempt if none of
+    # them do. When offload_candidates is None (see run_experiment: only
+    # searched for run 0, so later runs of the same experiment stay at
+    # whatever offload_percent run 0 settled on), this degenerates to
+    # checking just the single current offload_percent.
+    search_percents = offload_candidates if offload_candidates else [exp.offload_percent]
+    expected_json = None
+    expected_summary_csv = None
+    found_kind_overall = None  # None | "summary" | "trace"
+    for candidate_pct in search_percents:
+        candidate_exp = dataclasses.replace(exp, offload_percent=candidate_pct)
+        _, candidate_json = compute_expected_trace_paths(candidate_exp, trace_dir)
+        candidate_summary = compute_expected_summary_csv(exp, candidate_json, run_idx)
+        this_kind = None
+        if os.path.isfile(candidate_summary):
+            this_kind = "summary"
+        elif find_existing_trace_variant(candidate_exp, trace_dir) is not None:
+            this_kind = "trace"
+        if this_kind is not None:
+            expected_json, expected_summary_csv = candidate_json, candidate_summary
+            found_kind_overall = this_kind
+            if candidate_pct != exp.offload_percent:
+                print(f"    [reuse] found existing {this_kind} at offload_percent="
+                      f"{candidate_pct:.1f}% (predicted {exp.offload_percent:.1f}%) "
+                      f"— reusing it instead of re-running Step 2")
+            exp = dataclasses.replace(exp, offload_percent=candidate_pct)
+            break
+
+    if expected_json is None:
+        # Nothing found at any candidate -- proceed with the (still
+        # analytically-minimal) offload_percent for a fresh Step 2 attempt.
+        _, expected_json = compute_expected_trace_paths(exp, trace_dir)
+        expected_summary_csv = compute_expected_summary_csv(exp, expected_json, run_idx)
+
+    have_summary = (
+        not collection_only
+        and (
+            (exp.summary_csv_path and os.path.isfile(exp.summary_csv_path))
+            or os.path.isfile(expected_summary_csv)
+        )
+    )
+
+    if have_summary:
+        # Step 2+3 shortcut: the summary CSV already exists, so the trace has
+        # already been fully analyzed. Skip BOTH profiling (Step 2, including
+        # any decompression) AND trace analysis (Step 3) — there's no need to
+        # touch the (possibly large, possibly compressed) trace JSON at all.
+        # Not considered in --collection-only mode: the point of that mode is
+        # specifically to (re)collect the raw trace.
+        if exp.summary_csv_path and os.path.isfile(exp.summary_csv_path):
+            summary_csv = exp.summary_csv_path
+        else:
+            summary_csv = expected_summary_csv
+        trace_json = exp.trace_json_path or expected_json  # informational only; may not exist on disk
+        print(f"    Step 2+3: [skip] summary CSV already exists — skipping trace "
+              f"collection/decompression entirely: {summary_csv}")
+        exp = dataclasses.replace(exp, trace_json_path=trace_json, summary_csv_path=summary_csv)
+        return STATUS_OK, summary_csv, "", exp
+
+    # ---- Step 2: trace collection (skip if trace_json_path already provided) ----
+    trace_was_explicit_override = False
+    if exp.trace_json_path and os.path.isfile(exp.trace_json_path):
+        print(f"    Step 2: [skip] using existing trace: {exp.trace_json_path}")
+        trace_json = exp.trace_json_path
+        trace_was_explicit_override = True
+    elif analysis_only and found_kind_overall is None:
+        # --analysis-only: nothing exists for this experiment at any
+        # feasible offload percentage, and there's no explicit
+        # trace_json_path override either. Normal mode would now launch
+        # flex_opt_kvpr.py to collect a fresh trace; analysis_only
+        # means don't -- skip this run instead.
+        reason = (f"analysis-only: no existing trace/summary at any feasible "
+                  f"offload percentage {search_percents}")
+        print(f"    [analysis-only] no existing trace or summary found for "
+              f"any feasible offload percentage ({', '.join(f'{p:.1f}%' for p in search_percents)}) "
+              f"— skipping collection")
+        return STATUS_NO_TRACE, None, reason, exp
+    else:
+        print("    Step 2: running flex_opt_kvpr profiling...")
+        try:
+            trace_json, exp = run_flexllm_profile_with_oom_retry(
+                exp, hw, opt_config, trace_dir,
+                dry_run=dry_run,
+                _generated_traces=_generated_traces,
+            )
+            exp = dataclasses.replace(exp, trace_json_path=trace_json)
+        except OOMError as e:
+            return STATUS_OOM, None, str(e), exp
+        except Exception as e:
+            return STATUS_ERROR, None, f"Step 2 profiling failed: {e}", exp
+
+    if collection_only:
+        # Normally --trace-cleanup only runs once, at the very end of the
+        # whole sweep, after every experiment (and every run, if
+        # --num-runs > 1) has finished -- see run_comparison(). With
+        # collection_only, this trace is done being touched for the rest of
+        # THIS call (Step 3+ is skipped below), so compress/delete it right
+        # now instead of leaving it on disk until the sweep's last
+        # experiment finishes. Skipped for explicit trace_json_path
+        # overrides -- if the user pointed at a specific existing trace,
+        # leave it exactly as they left it. cleanup_traces() is a no-op
+        # when trace_cleanup is "none", and gracefully skips paths that no
+        # longer exist, so the deferred end-of-sweep pass over
+        # _generated_traces (which still includes this path) later just
+        # prints a harmless "not found" for it rather than erroring.
+        if not trace_was_explicit_override and trace_cleanup != TRACE_CLEANUP_NONE:
+            cleanup_traces([os.path.abspath(trace_json)], mode=trace_cleanup, dry_run=dry_run)
+        reason = f"collection-only: trace collected at {trace_json}"
+        print(f"    [collection-only] trace collected — skipping trace "
+              f"analysis and everything downstream: {trace_json}")
+        return STATUS_COLLECTED, None, reason, exp
+
+    # ---- Step 3: trace analysis (skip if summary_csv_path already provided) ----
+    print("    Step 3: running trace analysis pipeline...")
+    try:
+        summary_csv = run_trace_analysis(trace_json, exp, dry_run=dry_run, run_idx=run_idx)
+        exp = dataclasses.replace(exp, summary_csv_path=summary_csv)
+    except Exception as e:
+        return STATUS_ERROR, None, f"Step 3 trace analysis failed: {e}", exp
+
+    if analysis_only and not trace_was_explicit_override and trace_cleanup != TRACE_CLEANUP_NONE:
+        # Mirrors the collection_only immediate-cleanup above, for the other
+        # side of the same problem: --analysis-only may have just
+        # decompressed an existing .json.tar.gz (via
+        # run_flexllm_profile_with_oom_retry's Case 2, called from Step 2
+        # above) purely to run Step 3 on it, or found it already sitting
+        # there uncompressed. Either way, Step 4+ only needs summary_csv,
+        # not the raw trace, so there's no reason to leave it on disk until
+        # the sweep's last experiment finishes. Skipped for explicit
+        # trace_json_path overrides, same reasoning as collection_only.
+        cleanup_traces([os.path.abspath(trace_json)], mode=trace_cleanup, dry_run=dry_run)
+
+    return STATUS_OK, summary_csv, "", exp
+
+
 def run_experiment(
     exp: ExperimentConfig,
     hw: HardwareConfig,
@@ -1522,6 +1854,8 @@ def run_experiment(
     gt_dominant_path_only: bool = False,
     collection_only: bool = False,
     analysis_only: bool = False,
+    num_runs: int = 1,
+    trace_cleanup: str = TRACE_CLEANUP_NONE,
     _generated_traces: Optional[List[str]] = None,
 ) -> Dict:
     """
@@ -1541,15 +1875,42 @@ def run_experiment(
     analysis_only : if True, Step 2 (trace collection) never launches
         flex_opt_kvpr.py. If a trace or summary already exists for this
         experiment at ANY feasible offload percentage (see the candidate
-        search above run_experiment's Step 1), it's used normally — this
-        flag only changes what happens when NOTHING already exists: instead
-        of collecting a fresh trace, the experiment is skipped with
+        search in _run_one_collection_and_analysis), it's used normally —
+        this flag only changes what happens when NOTHING already exists:
+        instead of collecting a fresh trace, that run is skipped with
         status="no_trace". Mutually exclusive with collection_only (checked
         in run_comparison()/main(), not here). Use this to (re)run the
         analysis pipeline — e.g. after fixing a bug in trace_analyzer.py or
         trace_result_analyzer.py — over a set of traces collected earlier,
         possibly on a different (GPU-less) machine, without accidentally
         triggering new GPU collection for any point that's missing.
+
+    num_runs : if > 1, repeat Steps 2+3 this many times — each an
+        independent flex_opt_kvpr.py invocation, saved to its own "runN"
+        subdirectory (see compute_trace_dir()) — then pool every row from
+        every run's summary CSV together before Step 4's GT averaging, for
+        a more stable/averaged ground truth than a single collection gives.
+        num_runs=1 (default) reproduces the exact single-run directory
+        layout used before this feature existed, so nothing about
+        previously-collected data changes. Only run 0 searches across every
+        feasible offload percentage (see _run_one_collection_and_analysis);
+        runs 1..N-1 reuse whatever offload_percent run 0 settled on, so
+        every run being pooled together is actually the same configuration
+        — if a later run still needs to escalate further via its own
+        OOM-retry, a warning is printed (see below) rather than silently
+        pooling runs collected at different offload percentages. A run that
+        fails (OOM/error) or is skipped (analysis_only, nothing found)
+        doesn't abort the others — as long as at least one run succeeds,
+        its data is used and the rest are just noted.
+
+    trace_cleanup : normally only applied once, at the very end of the
+        whole sweep (run_comparison()'s deferred pass over every trace
+        generated anywhere in the sweep). Applied immediately instead —
+        right after Step 2 when collection_only is True, or right after
+        Step 3 succeeds when analysis_only is True — since in both cases
+        this trace is done being touched for the rest of the call; see
+        _run_one_collection_and_analysis for the full reasoning. Has no
+        effect when neither flag is set.
 
     _generated_traces : optional list passed through to run_flexllm_profile
         (via the OOM-retry wrapper). Paths of .json files that are newly
@@ -1559,6 +1920,8 @@ def run_experiment(
     """
     print(f"\n{'='*60}")
     print(f"Experiment: {exp.experiment_id}")
+    if num_runs > 1:
+        print(f"  ({num_runs} runs will be collected/pooled)")
     print(f"{'='*60}")
 
     # Step 1: resolve offload_percent (if the caller hasn't already -- note
@@ -1583,27 +1946,16 @@ def run_experiment(
             exp = dataclasses.replace(exp, offload_percent=0.0)
     print(f"  offload_percent = {exp.offload_percent:.1f}%")
 
-    # trace_dir doesn't depend on offload_percent -- shared by every
-    # candidate searched below and by the actual profiling call.
-    # Model name is included so sweeps for different models pointed at the
-    # same --output-dir don't collide or get mixed up when browsing results.
-    model_name = exp.model.split("/")[-1]  # e.g. "facebook/opt-30b" -> "opt-30b"
-    trace_dir = os.path.join(
-        exp.output_dir,
-        f"{model_name}_prompt_{exp.prompt_len}_bs{exp.batch_size}"
-        + (f"_rc{exp.recompute_len}" if exp.recompute_len > 0 else ""),
-    )
-
     # Compute every analytically-feasible offload percentage for this
     # (batch_size, prompt_len, recompute_len) combination, for the
-    # trace-reuse search below. Deliberately NOT gated on whether Step 1
-    # itself just resolved offload_percent above -- every sweep_* helper
-    # already resolves it before calling run_experiment at all (see the
-    # docstring note above), so gating this on "was it None" would make the
-    # search never run in normal usage. get_offload_candidates() is a pure
-    # analytical calculation (no GPU/subprocess involved), so recomputing
-    # it here is cheap even when a sweep_* helper already computed the same
-    # thing once.
+    # trace-reuse search inside _run_one_collection_and_analysis.
+    # Deliberately NOT gated on whether Step 1 itself just resolved
+    # offload_percent above -- every sweep_* helper already resolves it
+    # before calling run_experiment at all (see the docstring note above),
+    # so gating this on "was it None" would make the search never run in
+    # normal usage. get_offload_candidates() is a pure analytical
+    # calculation (no GPU/subprocess involved), so computing it here is
+    # cheap even when a sweep_* helper already computed the same thing once.
     offload_candidates: Optional[List[float]] = None
     if ESTIMATOR_AVAILABLE:
         try:
@@ -1614,136 +1966,108 @@ def run_experiment(
             print(f"  [warn] could not compute offload candidates for trace-reuse search: {e}")
             offload_candidates = None
 
-    # Search across every feasible offload candidate for a trace or summary
-    # that already exists on disk -- not just the offload_percent currently
-    # attached to exp (whether that came from Step 1 above or from a
-    # sweep_* helper). A PRIOR run's Step 2 may have had to escalate past that minimum due to
-    # a real CUDA OOM (see run_flexllm_profile_with_oom_retry): e.g. Step 1
-    # predicts 75% is feasible, but profiling at 75% actually OOMs, so the
-    # retry logic escalates to 100% and the resulting trace is saved under
-    # THAT filename. A later run recomputes the SAME analytical 75%
-    # minimum (the escalation isn't remembered anywhere) and, if only ever
-    # checking 75%, would never find the existing 100% trace -- silently
-    # re-running Step 2 and burning GPU time on a result we already have.
-    # Search every candidate in ascending order (matching
-    # get_offload_candidates) and use the first one that already has a
-    # trace or summary on disk; only fall back to the analytical minimum
-    # for a fresh Step 2 attempt if none of them do.
-    search_percents = offload_candidates if offload_candidates else [exp.offload_percent]
-    expected_json = None
-    expected_summary_csv = None
-    found_kind_overall = None  # None | "summary" | "trace" -- what, if anything, exists on disk already
-    for candidate_pct in search_percents:
-        candidate_exp = dataclasses.replace(exp, offload_percent=candidate_pct)
-        _, candidate_json = compute_expected_trace_paths(candidate_exp, trace_dir)
-        candidate_summary = os.path.join(
-            exp.output_dir, Path(candidate_json).stem + "_batched_analysis_summary.csv"
+    # ---- Steps 2+3, once per run ----
+    run_indices: List[Optional[int]] = [None] if num_runs <= 1 else list(range(num_runs))
+    summary_csvs: List[str] = []
+    run_offload_percents: List[float] = []
+    first_failure: Optional[Tuple[str, str]] = None  # (status, reason) of the first non-OK run
+    any_collected = False
+
+    for i, run_idx in enumerate(run_indices):
+        label = "" if run_idx is None else f" (run {run_idx + 1}/{num_runs})"
+        print(f"  --- Steps 2+3{label} ---")
+        this_trace_dir = compute_trace_dir(exp, run_idx)
+        # Only run 0 searches every feasible offload candidate when we might
+        # be COLLECTING fresh data (so every run stays at the same
+        # offload_percent -- see the num_runs docstring). That restriction
+        # doesn't make sense for analysis_only: there's no fresh collection
+        # to keep consistent, only a search for whatever already exists, so
+        # every run searches independently -- otherwise run i>0's data
+        # sitting at a different offload_percent than run 0's (e.g. it
+        # needed to escalate further during the original collection) would
+        # never be found, even though it's right there on disk.
+        candidates_for_this_run = offload_candidates if (i == 0 or analysis_only) else None
+        if i > 0:
+            # trace_json_path/summary_csv_path are per-run state. exp is
+            # reassigned from each call's return value below, so without
+            # this reset, run 1+ would inherit run 0's (already-resolved)
+            # summary_csv_path and short-circuit straight onto run 0's
+            # summary via the explicit-path check inside
+            # _run_one_collection_and_analysis, never computing or
+            # searching for its own run-specific path at all.
+            exp = dataclasses.replace(exp, trace_json_path=None, summary_csv_path=None)
+        status, summary_csv, reason, exp = _run_one_collection_and_analysis(
+            exp, hw, opt_config, this_trace_dir, candidates_for_this_run,
+            dry_run, collection_only, analysis_only, _generated_traces,
+            run_idx=run_idx, trace_cleanup=trace_cleanup,
         )
-        this_kind = None
-        if os.path.isfile(candidate_summary):
-            this_kind = "summary"
-        elif find_existing_trace_variant(candidate_exp, trace_dir) is not None:
-            this_kind = "trace"
-        if this_kind is not None:
-            expected_json, expected_summary_csv = candidate_json, candidate_summary
-            found_kind_overall = this_kind
-            if candidate_pct != exp.offload_percent:
-                print(f"  [reuse] found existing {this_kind} at offload_percent="
-                      f"{candidate_pct:.1f}% (Step 1 predicted {exp.offload_percent:.1f}%) "
-                      f"— reusing it instead of re-running Step 2")
-            exp = dataclasses.replace(exp, offload_percent=candidate_pct)
-            break
+        if status == STATUS_OK:
+            summary_csvs.append(summary_csv)
+            run_offload_percents.append(exp.offload_percent)
+        elif status == STATUS_COLLECTED:
+            any_collected = True
+        if status != STATUS_OK and first_failure is None:
+            first_failure = (status, reason)
 
-    if expected_json is None:
-        # Nothing found at any candidate -- proceed with the (still
-        # analytically-minimal) offload_percent for a fresh Step 2 attempt.
-        _, expected_json = compute_expected_trace_paths(exp, trace_dir)
-        expected_summary_csv = os.path.join(
-            exp.output_dir, Path(expected_json).stem + "_batched_analysis_summary.csv"
-        )
+    if num_runs > 1:
+        print(f"  Steps 2+3 complete: {len(summary_csvs)}/{num_runs} run(s) "
+              f"produced a usable summary")
+        if len(set(run_offload_percents)) > 1:
+            print(f"  [warn] runs settled on DIFFERENT offload percentages "
+                  f"{sorted(set(run_offload_percents))} — pooled GT below mixes "
+                  f"configurations that aren't quite identical (likely one run "
+                  f"hit a real OOM at a percentage another run didn't).")
 
-    have_summary = (
-        not collection_only
-        and (
-            (exp.summary_csv_path and os.path.isfile(exp.summary_csv_path))
-            or os.path.isfile(expected_summary_csv)
-        )
-    )
-
-    if have_summary:
-        # Step 2+3 shortcut: the summary CSV already exists, so the trace has
-        # already been fully analyzed. Skip BOTH profiling (Step 2, including
-        # any decompression) AND trace analysis (Step 3) — there's no need to
-        # touch the (possibly large, possibly compressed) trace JSON at all.
-        # Not considered in --collection-only mode: the point of that mode is
-        # specifically to (re)collect the raw trace.
-        if exp.summary_csv_path and os.path.isfile(exp.summary_csv_path):
-            summary_csv = exp.summary_csv_path
-        else:
-            summary_csv = expected_summary_csv
-        trace_json = exp.trace_json_path or expected_json  # informational only; may not exist on disk
-        print(f"  Step 2+3: [skip] summary CSV already exists — skipping trace "
-              f"collection/decompression entirely: {summary_csv}")
-        exp = dataclasses.replace(exp, trace_json_path=trace_json, summary_csv_path=summary_csv)
-    else:
-        # ---- Step 2: trace collection (skip if trace_json_path already provided) ----
-        if exp.trace_json_path and os.path.isfile(exp.trace_json_path):
-            print(f"  Step 2: [skip] using existing trace: {exp.trace_json_path}")
-            trace_json = exp.trace_json_path
-        elif analysis_only and found_kind_overall is None:
-            # --analysis-only: nothing exists for this experiment at any
-            # feasible offload percentage, and there's no explicit
-            # trace_json_path override either. Normal mode would now launch
-            # flex_opt_kvpr.py to collect a fresh trace; analysis_only
-            # means don't -- skip this point instead.
-            print(f"  [analysis-only] no existing trace or summary found for "
-                  f"any feasible offload percentage ({', '.join(f'{p:.1f}%' for p in search_percents)}) "
-                  f"— skipping collection")
-            return _skipped_row(
-                exp, estimator_modes, STATUS_NO_TRACE,
-                f"analysis-only: no existing trace/summary at any feasible "
-                f"offload percentage {search_percents}",
-            )
-        else:
-            print("  Step 2: running flex_opt_kvpr profiling...")
-            try:
-                trace_json, exp = run_flexllm_profile_with_oom_retry(
-                    exp, hw, opt_config, trace_dir,
-                    dry_run=dry_run,
-                    _generated_traces=_generated_traces,
-                )
-                exp = dataclasses.replace(exp, trace_json_path=trace_json)
-            except OOMError as e:
-                return _skipped_row(exp, estimator_modes, STATUS_OOM, str(e))
-            except Exception as e:
-                return _skipped_row(exp, estimator_modes, STATUS_ERROR,
-                                    f"Step 2 profiling failed: {e}")
-
-        if collection_only:
-            print(f"  [collection-only] trace collected — skipping trace "
-                  f"analysis and everything downstream: {trace_json}")
+    if collection_only:
+        # At least one run getting as far as "collected" (or fully OK, if it
+        # found an existing summary along the way) counts as success here —
+        # collection_only's whole point is gathering traces, and with
+        # num_runs > 1 we want to attempt every run_idx, not stop after the
+        # first.
+        if any_collected or summary_csvs:
             return _skipped_row(
                 exp, estimator_modes, STATUS_COLLECTED,
-                f"collection-only: trace collected at {trace_json}",
+                f"collection-only: {len(run_indices)} run(s) attempted",
             )
+        status, reason = first_failure
+        return _skipped_row(exp, estimator_modes, status, reason)
 
-        # ---- Step 3: trace analysis (skip if summary_csv_path already provided) ----
-        print("  Step 3: running trace analysis pipeline...")
-        try:
-            summary_csv = run_trace_analysis(trace_json, exp, dry_run=dry_run)
-            exp = dataclasses.replace(exp, summary_csv_path=summary_csv)
-        except Exception as e:
-            return _skipped_row(exp, estimator_modes, STATUS_ERROR,
-                                f"Step 3 trace analysis failed: {e}")
+    if not summary_csvs:
+        # Every run failed or found nothing to analyze. If this was a
+        # single-run (default) search but run-indexed subdirectories exist
+        # right where we looked, the most likely explanation is that this
+        # experiment was originally collected with --num-runs > 1 and this
+        # invocation forgot to pass the same --num-runs value -- num_runs
+        # defaults to 1, which searches the base directory directly, never
+        # its run0/run1/... subdirectories (see compute_trace_dir).
+        if num_runs <= 1:
+            base_dir = compute_trace_dir(exp, None)
+            if os.path.isdir(base_dir):
+                run_subdirs = sorted(
+                    d for d in os.listdir(base_dir)
+                    if d.startswith("run") and d[3:].isdigit()
+                    and os.path.isdir(os.path.join(base_dir, d))
+                )
+                if run_subdirs:
+                    print(f"  [hint] found {len(run_subdirs)} run subdirectories "
+                          f"({', '.join(run_subdirs)}) in {base_dir}, but this "
+                          f"invocation didn't pass --num-runs (it defaults to 1, "
+                          f"which only searches {base_dir} directly -- see "
+                          f"compute_trace_dir()). If this experiment was collected "
+                          f"with --num-runs > 1, pass the same --num-runs value here too.")
+        status, reason = first_failure
+        return _skipped_row(exp, estimator_modes, status, reason)
 
-    # Step 4: parse GT
-    print("  Step 4: loading GT breakdown...")
+    # Step 4: parse GT, pooled across every successful run's summary CSV
+    # (load_gt_summary/compute_gt_decode_stats each accept a single path or
+    # a list — see their docstrings for how pooling works in each case).
+    print(f"  Step 4: loading GT breakdown ({len(summary_csvs)} run(s) pooled)...")
     gt_segs: Dict[str, float] = {}
     gt_decode_stats: Optional[Dict[str, float]] = None
     if not dry_run:
         try:
             gt_segs = load_gt_summary(
-                summary_csv,
+                summary_csvs,
                 token_filter=gt_token_filter,
                 skip_first_n=gt_skip_first_n,
                 first_n=gt_first_n,
@@ -1757,7 +2081,7 @@ def run_experiment(
                                 f"Step 4 GT parsing failed: {e}")
         try:
             gt_decode_stats = compute_gt_decode_stats(
-                summary_csv,
+                summary_csvs,
                 num_prompts=exp.num_prompts,
                 token_filter=gt_token_filter,
             )
@@ -1916,6 +2240,7 @@ def run_comparison(
     trace_cleanup: str = TRACE_CLEANUP_NONE,
     collection_only: bool = False,
     analysis_only: bool = False,
+    num_runs: int = 1,
 ) -> List[Dict]:
     """
     Run all experiments and write the comparison CSV.
@@ -1941,7 +2266,12 @@ def run_comparison(
                             "delete"   - permanently remove
                           Applies to traces newly profiled OR decompressed from
                           .tar.gz in this run.  Pre-existing .json files are never
-                          touched.
+                          touched.  When collection_only is also True, each
+                          trace is cleaned up immediately after its own Step 2
+                          instead of waiting for this end-of-sweep pass (see
+                          run_experiment) -- otherwise every trace generated
+                          anywhere in the sweep would sit on disk uncompressed
+                          simultaneously until the very last experiment finishes.
     collection_only       If True, each experiment stops after trace collection
                           (Step 2) — trace analysis and everything downstream is
                           skipped, and rows are marked status="collected".
@@ -1950,6 +2280,14 @@ def run_comparison(
                           trace/summary at any feasible offload percentage is
                           skipped with status="no_trace" instead of collecting
                           one. Mutually exclusive with collection_only.
+    num_runs              If > 1, repeat trace collection + analysis this many
+                          times per experiment (independent flex_opt_kvpr.py
+                          invocations, each saved to its own "runN"
+                          subdirectory) and pool every row from every run's
+                          summary CSV together for a more stable/averaged
+                          ground truth. Default 1 reproduces the exact
+                          single-run behavior/directory layout used before
+                          this feature existed.
     """
     if collection_only and analysis_only:
         raise ValueError(
@@ -1976,6 +2314,8 @@ def run_comparison(
             gt_dominant_path_only=gt_dominant_path_only,
             collection_only=collection_only,
             analysis_only=analysis_only,
+            num_runs=num_runs,
+            trace_cleanup=trace_cleanup,
             _generated_traces=generated_traces,
         )
         all_rows.append(row)
@@ -2160,6 +2500,24 @@ def main():
         ),
     )
     parser.add_argument(
+        "--num-runs", type=int, default=1, metavar="N",
+        help=(
+            "Repeat trace collection + analysis N times per experiment "
+            "(default 1). Each run is an independent flex_opt_kvpr.py "
+            "invocation, saved to its own runN subdirectory so repeats "
+            "don't overwrite each other, and every row from every run's "
+            "summary CSV is pooled together before Step 4's GT averaging — "
+            "more samples in the same average, not an average-of-averages. "
+            "Only the first run searches every feasible offload percentage "
+            "for an existing trace/summary (same reuse logic as always); "
+            "later runs of the same experiment reuse whatever "
+            "offload_percent the first run settled on, so pooled runs are "
+            "guaranteed to be the same configuration. N=1 (default) is "
+            "byte-for-byte the same behavior/directory layout as before "
+            "this flag existed."
+        ),
+    )
+    parser.add_argument(
         "--estimator-impl",
         choices=["kv_schedule", "baseline", "perfect_overlap", "both"],
         default="kv_schedule",
@@ -2333,6 +2691,7 @@ def main():
         trace_cleanup=args.trace_cleanup,
         collection_only=args.collection_only,
         analysis_only=args.analysis_only,
+        num_runs=args.num_runs,
     )
 
 
