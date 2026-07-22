@@ -6,16 +6,16 @@ set -e  # Exit on any error
 
 # Configuration
 MINICONDA_URL="https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh"
-INSTALL_DIR="/workspace/miniconda3"
+INSTALL_DIR="$HOME/miniconda3"
 
 # Function to check if conda is available
 check_conda() {
-    if command -v conda &> /dev/null; then
-        echo "✓ Conda found at: $(which conda)"
-        conda --version
+    if [ -x "$INSTALL_DIR/bin/conda" ]; then
+        echo "✓ Conda found at: $INSTALL_DIR/bin/conda"
+        "$INSTALL_DIR/bin/conda" --version
         return 0
     else
-        echo "✗ Conda not found"
+        echo "✗ Conda not found at $INSTALL_DIR"
         return 1
     fi
 }

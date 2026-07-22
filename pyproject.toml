@@ -22,9 +22,9 @@ dependencies = [
 "Bug Tracker" = "https://github.com/FMInference/FlexLLMGen/issues"
 
 [tool.setuptools.packages.find]
-exclude = ["benchmark*", "dist*", "playground*", "scripts*"]
+exclude = ["benchmark*", "dist*", "playground*", "scripts*", "gt_vs_est_runs*", "experiments*"]
 
 [tool.wheel]
-exclude = ["benchmark*", "dist*", "playground*", "scripts*"]
+exclude = ["benchmark*", "dist*", "playground*", "scripts*", "gt_vs_est_runs*", "experiments*"]
 
 
