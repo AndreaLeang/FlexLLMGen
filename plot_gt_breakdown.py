@@ -9,7 +9,7 @@ plot_gt_vs_estimator.py, stripped down to GT-only, with a few extra options.
 Usage
 -----
   python plot_gt_breakdown.py sweep.csv \\
-      [--x-axis batch_size|recompute_len|both] \\
+      [--x-axis batch_size|recompute_len|both|cpu_gpu_ratio] \\
       [--figsize W H] [--no-legend] [--hide-non-ok] \\
       [--normalize] [--normalize-throughput] \\
       [--hide-values] [--no-title] \\
@@ -18,7 +18,9 @@ Usage
 Options (see plot_gt_breakdown() docstring for full detail)
 -------------------------------------------------------------
   --x-axis                 What goes on the x-tick labels: batch_size,
-                            recompute_len, or both. Default: batch_size.
+                            recompute_len, both, or cpu_gpu_ratio (for
+                            --cpu-computation-ratios sweeps). Default:
+                            batch_size.
   --no-legend               Hide the legend (shown by default).
   --figsize W H             Explicit figure size in inches. Default (omitted):
                             width scales with the number of entries in the CSV.
@@ -74,6 +76,55 @@ GT_STACK_ORDER = [
     "Misc. CPU",
 ]
 
+# ---------------------------------------------------------------------------
+# Color palette / stacking order for --cpu-computation mode GT segments (see
+# GT_SEGMENT_NAMES_CPU_COMPUTE / build_gt_segments_cpu_computation in
+# gt_vs_estimator.py, and trace_analyzer.py's --cpu-computation mode). This
+# taxonomy is distinct from GT_COLORS/GT_STACK_ORDER above: "cpu_copy" is the
+# 2 CPU<->CPU general_copy() calls in load_cache (outside of smart_copy) --
+# NOT the pageable-to-pinned-memory concept behind "PinnedMemory CPU" below.
+# "PinnedMemory CPU" here is the aten::pin_memory call nested inside each
+# smart_copy call (pins the CPU-side buffer before its async H2D
+# cudaMemcpyAsync) -- same concept and same color as --batched mode's own
+# "PinnedMemory CPU" segment, just scoped per-smart_copy-call instead of
+# whole-window. "other cpu copy" is each smart_copy call's own duration minus
+# its nested pin_memory duration (the rest of smart_copy/general_copy/copy's
+# CPU-side work). "cpu_compute" is the CPU-side portion of compute_layer not
+# accounted for by the CUDA kernels it dispatches.
+# ---------------------------------------------------------------------------
+
+GT_COLORS_CPU_COMPUTE = {
+    "load_weight":         "#8D6E63",   # brown
+    "load_hidden_compute": "#FF9800",   # orange
+    "cpu_copy":            "#FDD835",   # yellow (distinct from PinnedMemory's amber)
+    "PinnedMemory CPU":    "#FFC107",   # amber (same color as --batched PinnedMemory CPU)
+    "other cpu copy":      "#FFB300",   # dark amber (formerly "smart_copy"'s color)
+    "KVCache Load":        "#9C27B0",   # purple (same concept as --batched KVCache Load)
+    "load_hidden":         "#4CAF50",   # green
+    "GPU Compute":         "#2196F3",   # blue (same concept as --batched MHA CUDA)
+    "cpu_compute":         "#00BCD4",   # cyan
+    "KVCache Store":       "#E91E63",   # pink (same as --batched KVCache Store)
+    "store_hidden":        "#8BC34A",   # light green
+    "sync":                "#607D8B",   # blue-grey
+    "Misc. CPU":           "#9E9E9E",   # grey (same as --batched Misc. CPU)
+}
+
+GT_STACK_ORDER_CPU_COMPUTE = [
+    "load_weight",
+    "load_hidden_compute",
+    "cpu_copy",
+    "PinnedMemory CPU",
+    "other cpu copy",
+    "KVCache Load",
+    "load_hidden",
+    "cpu_compute",
+    "GPU Compute",
+    "KVCache Store",
+    "store_hidden",
+    "sync",
+    "Misc. CPU",
+]
+
 BAR_ALPHA = 0.92
 EDGE_COLOR = "white"
 EDGE_WIDTH = 0.5
@@ -119,8 +170,48 @@ def get_gt_segments(row: Dict) -> Dict[str, float]:
     return {seg: _fv(row, col) for seg, col in mapping.items()}
 
 
+def get_gt_segments_cpu_computation(row: Dict) -> Dict[str, float]:
+    """
+    Same idea as get_gt_segments(), but reads the columns produced for
+    --cpu-computation sweeps (see GT_SEGMENT_NAMES_CPU_COMPUTE /
+    build_gt_segments_cpu_computation in gt_vs_estimator.py).
+    """
+    mapping = {
+        "load_weight":         "gt_load_weight_us",
+        "load_hidden_compute": "gt_load_hidden_compute_us",
+        "cpu_copy":            "gt_cpu_copy_us",
+        "PinnedMemory CPU":    "gt_PinnedMemory_CPU_us",
+        "other cpu copy":      "gt_other_cpu_copy_us",
+        "KVCache Load":        "gt_KVCache_Load_us",
+        "load_hidden":         "gt_load_hidden_us",
+        "GPU Compute":         "gt_GPU_Compute_us",
+        "cpu_compute":         "gt_cpu_compute_us",
+        "KVCache Store":       "gt_KVCache_Store_us",
+        "store_hidden":        "gt_store_hidden_us",
+        "sync":                "gt_sync_us",
+        "Misc. CPU":           "gt_Misc_CPU_us",
+    }
+    return {seg: _fv(row, col) for seg, col in mapping.items()}
+
+
 def is_ok(row: Dict) -> bool:
     return (row.get("status") or "").strip().lower() == "ok"
+
+
+def _fmt_ratio(val) -> str:
+    """
+    Format a cpu_gpu_ratio CSV value for an x-tick label. The column is
+    written as a float string ("13.0", "0.0", ...) by build_csv_row(); '%g'
+    strips the trailing ".0" for the common integer-percent case ("13.0" ->
+    "13") while still showing a fractional ratio as-is ("12.5" -> "12.5").
+    Non-numeric/missing values pass through unchanged so a malformed row
+    still gets *some* label instead of raising.
+    """
+    try:
+        f = float(val)
+    except (TypeError, ValueError):
+        return str(val)
+    return f"{f:g}"
 
 
 def make_x_label(row: Dict, x_axis: str) -> str:
@@ -132,6 +223,8 @@ def make_x_label(row: Dict, x_axis: str) -> str:
         return f"{rc}"
     elif x_axis == "both":
         return f"{bs}\n{rc}"
+    elif x_axis == "cpu_gpu_ratio":
+        return _fmt_ratio(row.get("cpu_gpu_ratio", "?"))
     else:
         raise ValueError(f"Unknown x_axis: {x_axis!r}")
 
@@ -154,6 +247,7 @@ def plot_gt_breakdown(
     normalize_throughput: bool = False,
     show_values: bool = True,
     show_title: bool = True,
+    cpu_computation: bool = False,
 ) -> plt.Figure:
     """
     Create the ground-truth-only latency breakdown plot with a throughput
@@ -165,7 +259,13 @@ def plot_gt_breakdown(
         Path to the sweep CSV (e.g. gt_vs_estimator.py output).
     x_axis
         What to show on the x-tick labels: "batch_size", "recompute_len",
-        or "both".
+        "both", or "cpu_gpu_ratio" (the CPU/GPU attention-compute split
+        percentage from a --cpu-computation sweep -- see
+        gt_vs_estimator.py's --cpu-computation-ratios). Rows are plotted in
+        the order they appear in the CSV; this does not sort by x_axis, so
+        a --cpu-computation-ratios sweep already comes out in ratio order
+        because that's the order gt_vs_estimator.py wrote the rows in
+        (same as batch_size/recompute_len sweeps today).
     out_path
         Save the figure here (None = don't save).
     dpi
@@ -207,7 +307,20 @@ def plot_gt_breakdown(
     show_title
         If True (default), draw the figure title. If False, omit it entirely
         (the `title` argument is ignored in that case).
+    cpu_computation
+        If True, read the GT segment columns produced by --cpu-computation
+        sweeps (gt_vs_estimator.py --cpu-computation) instead of the default
+        --batched taxonomy: stacks load_weight/load_hidden_compute/cpu_copy/
+        PinnedMemory CPU/other cpu copy/KVCache Load/load_hidden/cpu_compute/
+        GPU Compute/KVCache Store/store_hidden/sync/Misc. CPU (see
+        GT_STACK_ORDER_CPU_COMPUTE /
+        GT_COLORS_CPU_COMPUTE / get_gt_segments_cpu_computation). Default:
+        False (unchanged --batched behavior).
     """
+    stack_order = GT_STACK_ORDER_CPU_COMPUTE if cpu_computation else GT_STACK_ORDER
+    colors = GT_COLORS_CPU_COMPUTE if cpu_computation else GT_COLORS
+    segment_fn = get_gt_segments_cpu_computation if cpu_computation else get_gt_segments
+
     rows, fieldnames = load_csv(csv_path)
     if not rows:
         print("No rows in CSV.", file=sys.stderr)
@@ -252,10 +365,10 @@ def plot_gt_breakdown(
     bottoms = np.zeros(n)
     all_totals = np.zeros(n)
 
-    for seg in GT_STACK_ORDER:
-        vals = np.array([get_gt_segments(r).get(seg, 0.0) if ok else 0.0
+    for seg in stack_order:
+        vals = np.array([segment_fn(r).get(seg, 0.0) if ok else 0.0
                           for r, ok in zip(rows, ok_mask)]) * multipliers * US_TO_MS
-        color = GT_COLORS[seg]
+        color = colors[seg]
         # Only draw bars for 'ok' rows -- pass width 0 (i.e. skip) for
         # not-ok rows by masking x/vals/bottoms down to the ok subset.
         if ok_mask.any():
@@ -318,13 +431,15 @@ def plot_gt_breakdown(
         "batch_size":    "Batch Size",
         "recompute_len": "Recompute Length",
         "both":          "Batch Size / Recompute Length",
+        "cpu_gpu_ratio": "CPU/GPU Compute Ratio (% CPU)",
     }
     ax.set_xlabel(_x_axis_labels.get(x_axis, x_axis), fontsize=10)
 
+    mode_suffix = " (CPU/GPU Compute Split)" if cpu_computation else ""
     default_title = (
-        "Ground Truth Latency Breakdown (total, all iterations)"
+        f"Ground Truth Latency Breakdown{mode_suffix} (total, all iterations)"
         if normalize else
-        "Ground Truth Latency Breakdown"
+        f"Ground Truth Latency Breakdown{mode_suffix}"
     )
     if show_title:
         ax.set_title(title or default_title, fontsize=13, fontweight="bold", pad=14)
@@ -443,9 +558,12 @@ def main():
     parser.add_argument("csv", help="Path to the sweep CSV")
     parser.add_argument(
         "--x-axis",
-        choices=["batch_size", "recompute_len", "both"],
+        choices=["batch_size", "recompute_len", "both", "cpu_gpu_ratio"],
         default="batch_size",
-        help="What to display as x-tick labels. Default: batch_size.",
+        help="What to display as x-tick labels. 'cpu_gpu_ratio' reads the "
+             "cpu_gpu_ratio column written by a gt_vs_estimator.py "
+             "--cpu-computation --cpu-computation-ratios sweep. "
+             "Default: batch_size.",
     )
     parser.add_argument("--out", default=None, metavar="OUTPUT.png")
     parser.add_argument("--dpi", type=int, default=150)
@@ -488,6 +606,20 @@ def main():
         "--no-title", action="store_true",
         help="Omit the figure title entirely (shown by default).",
     )
+    parser.add_argument(
+        "--cpu-computation", action="store_true",
+        help=(
+            "Plot a sweep CSV produced by gt_vs_estimator.py --cpu-computation "
+            "instead of the default --batched-mode CSV: stacks the "
+            "cpu_computation GT segment taxonomy (load_weight/"
+            "load_hidden_compute/cpu_copy/PinnedMemory CPU/other cpu copy/"
+            "KVCache Load/load_hidden/cpu_compute/GPU Compute/KVCache Store/"
+            "store_hidden/sync/Misc. CPU) "
+            "instead of the --batched one (PinnedMemory CPU/Recompute Load/"
+            "Recompute CUDA/MHA CUDA/KVCache Load/KVCache Store/Misc. CPU). "
+            "Default: off (unchanged --batched behavior)."
+        ),
+    )
     args = parser.parse_args()
 
     out = args.out or str(Path(args.csv).with_suffix(".png"))
@@ -505,6 +637,7 @@ def main():
         normalize_throughput=args.normalize_throughput,
         show_values=not args.hide_values,
         show_title=not args.no_title,
+        cpu_computation=args.cpu_computation,
     )
 
 

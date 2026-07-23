@@ -77,6 +77,18 @@ def detect_batched(all_cols):
     return any(c.endswith("-origin") and "compute-cuda-" in c for c in all_cols)
 
 
+def detect_cpu_computation(all_cols):
+    """
+    CPU-computation CSVs (trace_analyzer.py --cpu-computation) have 'group'
+    and 'load_weight' like nosep/batched, but no compute-cuda-N-origin
+    columns at all (unlike batched) -- detect_nosep alone would otherwise
+    misclassify them as nosep. Detected via the columns unique to this mode:
+    cpu-copy-1/2 (the two general_copy calls "outside of smart_copy") and
+    attention-value-cpu (the CPU-thread _attention_value call).
+    """
+    return "cpu-copy-1" in all_cols and "attention-value-cpu" in all_cols
+
+
 # ---------------------------------------------------------------------------
 # SEP row analysis (original logic, unchanged)
 # ---------------------------------------------------------------------------
@@ -335,10 +347,83 @@ def analyze_row_batched(row, all_cols):
 
 
 # ---------------------------------------------------------------------------
+# CPU-COMPUTATION row analysis
+# ---------------------------------------------------------------------------
+
+def analyze_row_cpu_computation(row, all_cols):
+    """
+    CPU-computation mode analysis (trace_analyzer.py --cpu-computation, for
+    traces collected with flex_opt_kvpr.py's --cpu-gpu-compute).
+
+    sum-all:
+      Sum of all 8 op durations.
+
+    compute-cuda-sum:
+      Sum of all compute-cuda-N ops dispatched anywhere in compute_layer's
+      window (no origin tagging in this mode -- see extract_cpu_computation_metrics).
+
+    sub-winner1 = max(load_cache, load-cache-cudamemcpy-1 + load-cache-cudamemcpy-2)
+      load_cache (CPU thread: 2 general_copy + 2 smart_copy dispatch, wall time)
+      vs. the 2 GPU-stream memcpys the 2 smart_copy calls dispatch.
+
+    sub-winner2 = max(compute_layer + store_cache + sync, compute-cuda-sum)
+      CPU-thread dispatch chain vs. all CUDA-stream ops compute_layer invokes.
+
+    critical-path = load_weight + load_hidden_compute + sub-winner1
+                   + store_hidden + load_hidden + sub-winner2
+    """
+    result = dict(row)
+
+    OPS_8 = [
+        "load_weight", "load_hidden_compute", "load_cache", "load_hidden",
+        "compute_layer", "store_cache", "store_hidden", "sync",
+    ]
+    result["sum-all"] = sum_cols(row, OPS_8)
+
+    cuda_cols = sorted(
+        [c for c in all_cols if c.startswith("compute-cuda-")],
+        key=lambda c: int(c.split("-")[-1])
+    )
+    compute_cuda_sum = sum_cols(row, cuda_cols)
+    result["compute-cuda-sum"] = compute_cuda_sum
+
+    load_cache = fv(row, "load_cache")
+    mc_sum = round(fv(row, "load-cache-cudamemcpy-1") + fv(row, "load-cache-cudamemcpy-2"), 3)
+    result["sub-winner1-load_cache"] = round(load_cache, 3)
+    result["sub-winner1-memcpy-sum"] = mc_sum
+    sub1 = max(load_cache, mc_sum)
+    result["sub-winner1"] = round(sub1, 3)
+    result["sub-winner1-winner"] = "load_cache" if load_cache >= mc_sum else "cudamemcpy-1+2"
+
+    compute_layer = fv(row, "compute_layer")
+    store_cache = fv(row, "store_cache")
+    sync = fv(row, "sync")
+    cl_chain = round(compute_layer + store_cache + sync, 3)
+    result["sub-winner2-compute_layer+store_cache+sync"] = cl_chain
+    result["sub-winner2-compute-cuda-sum"] = compute_cuda_sum
+    sub2 = max(cl_chain, compute_cuda_sum)
+    result["sub-winner2"] = round(sub2, 3)
+    result["sub-winner2-winner"] = (
+        "compute_layer+store_cache+sync" if cl_chain >= compute_cuda_sum else "compute-cuda-sum"
+    )
+
+    load_weight = fv(row, "load_weight")
+    load_hidden_compute = fv(row, "load_hidden_compute")
+    store_hidden = fv(row, "store_hidden")
+    load_hidden = fv(row, "load_hidden")
+
+    result["critical-path"] = round(
+        load_weight + load_hidden_compute + sub1 + store_hidden + load_hidden + sub2, 3
+    )
+
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-def analyze_csv(input_path, output_path=None, nosep=None, batched=False):
+def analyze_csv(input_path, output_path=None, nosep=None, batched=False, cpu_computation=False):
     input_path = Path(input_path)
 
     with open(input_path, newline="") as f:
@@ -348,11 +433,20 @@ def analyze_csv(input_path, output_path=None, nosep=None, batched=False):
 
     print(f"Loaded {len(rows)} rows, {len(all_cols)} columns.", file=sys.stderr)
 
-    # Mode resolution: explicit flags take priority; otherwise auto-detect
-    if batched:
+    # Mode resolution: explicit flags take priority; otherwise auto-detect.
+    # cpu_computation is checked ahead of the nosep/batched auto-detection
+    # below, since a cpu-computation CSV also satisfies detect_nosep()'s test
+    # (it has 'load_weight' and no 'mha-gen_load_weight') but has none of
+    # detect_batched()'s '-origin' columns -- without this it would silently
+    # fall through and be mis-scored as "nosep".
+    if cpu_computation:
+        mode = "cpu_computation"
+    elif batched:
         mode = "batched"
     elif nosep is None:
-        if detect_nosep(all_cols) and detect_batched(all_cols):
+        if detect_cpu_computation(all_cols):
+            mode = "cpu_computation"
+        elif detect_nosep(all_cols) and detect_batched(all_cols):
             # Both look like nosep structure — check origin tag values to distinguish
             # batched uses 'fwd_pre_mha'; nosep uses 'fwd_pre'
             origin_vals = {row.get(c, "") for row in rows[:5]
@@ -367,7 +461,17 @@ def analyze_csv(input_path, output_path=None, nosep=None, batched=False):
 
     print(f"Mode: {mode}", file=sys.stderr)
 
-    if mode == "batched":
+    if mode == "cpu_computation":
+        results = [analyze_row_cpu_computation(row, all_cols) for row in rows]
+        derived_cols = [
+            "sum-all", "compute-cuda-sum",
+            "sub-winner1-load_cache", "sub-winner1-memcpy-sum",
+            "sub-winner1", "sub-winner1-winner",
+            "sub-winner2-compute_layer+store_cache+sync", "sub-winner2-compute-cuda-sum",
+            "sub-winner2", "sub-winner2-winner",
+            "critical-path",
+        ]
+    elif mode == "batched":
         results = [analyze_row_batched(row, all_cols) for row in rows]
         derived_cols = [
             "sum-all",
@@ -430,10 +534,16 @@ def main():
         "--batched", action="store_true",
         help="Use batched mode: critical-path analysis for consecutive mha_gen groups.",
     )
+    mode_group.add_argument(
+        "--cpu-computation", action="store_true",
+        help="Use cpu-computation mode: critical-path analysis for consecutive "
+             "cpu_mixed groups (CSVs from trace_analyzer.py --cpu-computation).",
+    )
     args = parser.parse_args()
     analyze_csv(args.input, output_path=args.out,
                 nosep=args.nosep if args.nosep else None,
-                batched=args.batched)
+                batched=args.batched,
+                cpu_computation=args.cpu_computation)
 
 
 if __name__ == "__main__":

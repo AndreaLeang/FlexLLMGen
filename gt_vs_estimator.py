@@ -63,6 +63,7 @@ import dataclasses
 import glob
 import math
 import gzip
+import zstandard as zstd
 import shutil
 import tarfile
 import os
@@ -349,6 +350,17 @@ class ExperimentConfig:
 
     offload_percent: Optional[float] = None   # None → auto minimum
 
+    # ---- cpu-computation mode (--cpu-gpu-compute in flex_opt_kvpr.py) ----
+    # When cpu_computation is True, the run splits attention compute between
+    # GPU and CPU instead of the normal KV-cache-offload sweep; offload_percent
+    # is not used to pick a feasible KV placement in this mode (it is left at
+    # 0.0 by the caller and the usual get_min_offload_percent() auto-detection
+    # is bypassed entirely — see build_flexllm_command/run_experiment).
+    # cpu_gpu_ratio (0-100) reuses the KV-cache percent[2]/percent[3] slots to
+    # set the CPU/GPU attention-compute split (see build_flexllm_command).
+    cpu_computation: bool = False
+    cpu_gpu_ratio: Optional[float] = None
+
     # ---- paths ----
     flexllmgen_script: str = "flexllmgen/flex_opt_kvpr.py"
     trace_analyzer_script: str = "trace_analyzer.py"
@@ -367,7 +379,11 @@ class ExperimentConfig:
     @property
     def experiment_id(self) -> str:
         rc = f"_rc{self.recompute_len}" if self.recompute_len > 0 else ""
-        off = f"_off{int(self.offload_percent)}" if self.offload_percent is not None else ""
+        if self.cpu_computation:
+            ratio = self.cpu_gpu_ratio if self.cpu_gpu_ratio is not None else 0.0
+            off = f"_cpucomp{int(ratio)}"
+        else:
+            off = f"_off{int(self.offload_percent)}" if self.offload_percent is not None else ""
         return (
             f"{self.model.split('/')[-1]}"
             f"_p{self.prompt_len}_g{self.gen_len}"
@@ -641,10 +657,31 @@ def build_flexllm_command(
     percent[3] = KV cache on CPU  = offload_percent
     percent[4] = activations on GPU (100)
     percent[5] = activations on CPU (0)
+
+    cpu_computation mode (exp.cpu_computation=True)
+    ------------------------------------------------
+    percent[2]/percent[3] instead encode the CPU/GPU attention-compute split
+    ratio (percent[2] = 100 - cpu_gpu_ratio on GPU, percent[3] = cpu_gpu_ratio
+    on CPU — see TorchDevice._mixed_gpu_attention/_mixed_cpu_attention's
+    "seg" boundary, which is derived from the GPU/CPU cache-buffer split
+    these percentages control). --cpu-gpu-compute is appended to the command
+    so flex_opt_kvpr.py actually splits attention compute between devices
+    instead of just placing the KV cache. The usual offload-percent
+    auto-detection (get_min_offload_percent) is bypassed entirely for these
+    experiments — see run_experiment/main().
     """
-    offload = int(exp.offload_percent) if exp.offload_percent is not None else 0
-    kv_gpu = 100 - offload
-    kv_cpu = offload
+    if exp.cpu_computation:
+        ratio = int(exp.cpu_gpu_ratio) if exp.cpu_gpu_ratio is not None else 0
+        if ratio == 0:
+            kv_gpu = 0
+            kv_cpu = 100
+        else:
+            kv_gpu = 100 - ratio
+            kv_cpu = ratio
+    else:
+        offload = int(exp.offload_percent) if exp.offload_percent is not None else 0
+        kv_gpu = 100 - offload
+        kv_cpu = offload
 
     # Weight placement: use 100% GPU for models that fit (opt-6.7b / 13b);
     # a future enhancement can look this up from opt_config.model_bytes().
@@ -667,6 +704,9 @@ def build_flexllm_command(
         "--profile",
         "--save-to", trace_dir,
     ]
+
+    if exp.cpu_computation and (exp.cpu_gpu_ratio > 0):
+        cmd.append("--cpu-gpu-compute")
 
     if hw.cpu_bind is not None and hw.gpu_bind is not None:
         numactl = [
@@ -700,14 +740,31 @@ def compute_expected_trace_stem(exp: ExperimentConfig) -> str:
     run_experiment()'s Step 2/3 shortcut (to check whether the summary CSV
     already exists before touching the — possibly large, possibly
     compressed — trace at all).
+
+    cpu_computation mode: mirrors build_flexllm_command()'s percent[2]/[3]
+    reuse for the CPU/GPU compute-split ratio, and appends the same
+    "-cpugpucomp" suffix flex_opt_kvpr.py's get_filename() adds when
+    --cpu-gpu-compute is set — without it, a cpu_computation run and a
+    normal offload run that happen to share the same percent digits (e.g.
+    ratio=50 vs offload_percent=50) would collide on the same trace filename.
     """
-    offload = int(exp.offload_percent) if exp.offload_percent is not None else 0
-    kv_gpu = 100 - offload
-    kv_cpu = offload
+    if exp.cpu_computation:
+        ratio = int(exp.cpu_gpu_ratio) if exp.cpu_gpu_ratio is not None else 0
+        if ratio == 0:
+            kv_gpu = 0
+            kv_cpu = 100
+        else:
+            kv_gpu = 100 - ratio
+            kv_cpu = ratio
+    else:
+        offload = int(exp.offload_percent) if exp.offload_percent is not None else 0
+        kv_gpu = 100 - offload
+        kv_cpu = offload
     w_gpu, w_cpu = 100, 0
     pcts = f"{w_gpu}-{w_cpu}-{kv_gpu}-{kv_cpu}-100-0-"
     model_size = exp.model.split("-")[-1]
     rc_part = f"R-{exp.recompute_len}-" if exp.recompute_len > 0 else ""
+    cpugpucomp_part = "-cpugpucomp" if (exp.cpu_computation and exp.cpu_gpu_ratio > 0) else ""
     return (
         f"fo-{model_size}"
         f"-gbs{exp.batch_size}"
@@ -716,6 +773,7 @@ def compute_expected_trace_stem(exp: ExperimentConfig) -> str:
         f"-gen{exp.gen_len}"
         f"-percent-{pcts}"
         f"{rc_part}gpu-cache"
+        f"{cpugpucomp_part}"
     )
 
 
@@ -777,6 +835,7 @@ def find_existing_trace_variant(exp: ExperimentConfig, trace_dir: str) -> Option
         expected_json + ".tar.gz",                           # fo-…-gpu-cache.json.tar.gz
         os.path.join(trace_dir, expected_stem + ".tar.gz"),  # fo-…-gpu-cache.tar.gz
         expected_json + ".gz",                               # fo-…-gpu-cache.json.gz
+        expected_json + ".zst"                               # fo-..-gpu-cache.json.zst
     ):
         if os.path.exists(candidate):
             return candidate
@@ -820,7 +879,12 @@ def run_flexllm_profile(
         size_mb = os.path.getsize(found_compressed) / (1024 ** 2)
         print(f"  [decompress] found {found_compressed} ({size_mb:.1f} MB) — extracting...")
         if not dry_run:
-            if found_compressed.endswith(".gz") and not found_compressed.endswith(".tar.gz"):
+            
+            if found_compressed.endswith(".zst"):
+                dctx = zstd.ZstdDecompressor()
+                with open(found_compressed, "rb") as f_in, open(expected_json, "wb") as f_out:
+                    dctx.copy_stream(f_in, f_out)
+            elif found_compressed.endswith(".gz") and not found_compressed.endswith(".tar.gz"):
                 # Plain gzip (.json.gz) — decompress directly with gzip module.
                 with gzip.open(found_compressed, "rb") as f_in, \
                      open(expected_json, "wb") as f_out:
@@ -920,9 +984,14 @@ def run_flexllm_profile_with_oom_retry(
     reflects whatever percentage the successful profiling run actually used,
     so downstream steps (filename bookkeeping, CSV columns) stay consistent.
     """
-    if not ESTIMATOR_AVAILABLE:
-        # Can't compute alternate candidates without the estimator; fall
-        # back to the plain single-shot behavior.
+    if not ESTIMATOR_AVAILABLE or exp.cpu_computation:
+        # Can't compute alternate candidates without the estimator; also
+        # skip escalation entirely for cpu_computation experiments, since
+        # get_offload_candidates() searches KV-cache-placement feasibility
+        # -- an axis this mode's percent[2]/[3] slots don't represent (they
+        # encode the CPU/GPU compute-split ratio instead, see
+        # build_flexllm_command). There is no meaningful "higher candidate"
+        # to escalate to, so a real OOM here is reported as-is.
         trace_json = run_flexllm_profile(
             exp, hw, trace_dir, dry_run=dry_run, _generated_traces=_generated_traces
         )
@@ -991,7 +1060,8 @@ def compute_expected_summary_csv(
     stem = Path(trace_json_path).stem
     if run_idx is not None:
         stem = f"{stem}_run{run_idx}"
-    return os.path.join(exp.output_dir, stem + "_batched_analysis_summary.csv")
+    suffix = "_cpu_computation_analysis_summary.csv" if exp.cpu_computation else "_batched_analysis_summary.csv"
+    return os.path.join(exp.output_dir, stem + suffix)
 
 
 def run_trace_analysis(
@@ -999,6 +1069,7 @@ def run_trace_analysis(
     exp: ExperimentConfig,
     dry_run: bool = False,
     run_idx: Optional[int] = None,
+    force_reanalysis: bool = False,
 ) -> str:
     """
     Run trace_analyzer.py (--batched) then trace_result_analyzer.py (--batched)
@@ -1012,6 +1083,15 @@ def run_trace_analysis(
         collide on the same path -- see that function's docstring for why
         this is necessary despite each run's trace already living in its
         own subdirectory.
+
+    force_reanalysis : if True, skip the "summary CSV already exists" shortcut
+        below and re-run trace_analyzer.py + trace_result_analyzer.py against
+        trace_json regardless, overwriting analysis_csv/summary_csv in place.
+        Use this to pick up trace_analyzer.py/trace_result_analyzer.py fixes
+        (e.g. a corrected metric extraction) over already-collected traces
+        without re-running the (expensive) profiling step -- see
+        _run_one_collection_and_analysis, which is the only caller and is
+        the one that decides whether Step 2 (collection) even runs.
     """
     stem = Path(trace_json).stem
     if run_idx is not None:
@@ -1019,17 +1099,24 @@ def run_trace_analysis(
     out_dir = exp.output_dir
     os.makedirs(out_dir, exist_ok=True)
 
-    analysis_csv = os.path.join(out_dir, stem + "_batched_analysis.csv")
-    summary_csv  = os.path.join(out_dir, stem + "_batched_analysis_summary.csv")
+    mode_flag = "--cpu-computation" if (exp.cpu_computation and exp.cpu_gpu_ratio > 0) else "--batched"
+    analysis_suffix = "_cpu_computation_analysis.csv" if (exp.cpu_computation and exp.cpu_gpu_ratio > 0) else "_batched_analysis.csv"
+    summary_suffix = "_cpu_computation_analysis_summary.csv" if (exp.cpu_computation and exp.cpu_gpu_ratio > 0) else "_batched_analysis_summary.csv"
 
-    if os.path.exists(summary_csv):
+    analysis_csv = os.path.join(out_dir, stem + analysis_suffix)
+    summary_csv  = os.path.join(out_dir, stem + summary_suffix)
+
+    if os.path.exists(summary_csv) and not force_reanalysis:
         print(f"  [skip] summary CSV already exists: {summary_csv}")
         return summary_csv
+    if os.path.exists(summary_csv) and force_reanalysis:
+        print(f"  [force-reanalysis] summary CSV already exists but re-running "
+              f"analysis anyway: {summary_csv}")
 
     # Step 1: trace_analyzer.py
     cmd1 = [
         sys.executable, exp.trace_analyzer_script,
-        trace_json, "--batched", "--out", analysis_csv,
+        trace_json, mode_flag, "--out", analysis_csv,
     ]
     print(f"  [run] trace_analyzer: {' '.join(cmd1)}")
     if not dry_run:
@@ -1045,7 +1132,7 @@ def run_trace_analysis(
     # Step 2: trace_result_analyzer.py
     cmd2 = [
         sys.executable, exp.result_analyzer_script,
-        analysis_csv, "--batched", "--out", summary_csv,
+        analysis_csv, mode_flag, "--out", summary_csv,
     ]
     print(f"  [run] trace_result_analyzer: {' '.join(cmd2)}")
     if not dry_run:
@@ -1186,6 +1273,8 @@ def load_gt_summary(
     skip_first_n: int = 0,
     first_n: Optional[int] = None,
     dominant_path_only: bool = False,
+    segment_names: Optional[List[str]] = None,
+    segment_builder: Optional[Any] = None,
 ) -> Dict[str, float]:
     """
     Load a batched-mode summary CSV, compute per-row segment breakdowns, and
@@ -1327,11 +1416,16 @@ def load_gt_summary(
             )
 
     # Compute segments per row, then average — never average raw ops first.
-    all_segs = [build_gt_segments(r) for r in rows]
+    # segment_names/segment_builder let callers swap in the cpu_computation
+    # taxonomy (GT_SEGMENT_NAMES_CPU_COMPUTE / build_gt_segments_cpu_computation)
+    # without altering the default --batched behavior below.
+    names = segment_names if segment_names is not None else GT_SEGMENT_NAMES
+    builder = segment_builder if segment_builder is not None else build_gt_segments
+    all_segs = [builder(r) for r in rows]
     n = len(all_segs)
     averaged: Dict[str, float] = {
         seg: round(sum(s[seg] for s in all_segs) / n, 3)
-        for seg in GT_SEGMENT_NAMES
+        for seg in names
     }
 
     parts = []
@@ -1401,6 +1495,104 @@ def build_gt_segments(row: Dict) -> Dict[str, float]:
         segs["PinnedMemory CPU"] = pm1 + pm2
         segs["KVCache Store"]    = sc1 + sc2
 
+    return segs
+
+
+# Segment taxonomy for --cpu-computation mode (trace_analyzer.py
+# --cpu-computation / trace_result_analyzer.py analyze_row_cpu_computation).
+# Distinct from GT_SEGMENT_NAMES (--batched mode) since the underlying
+# operator structure differs (compute_layer splits CPU/GPU attention
+# compute instead of a single mha_gen/recompute critical path) — see the
+# Feature 2 spec this mirrors.
+GT_SEGMENT_NAMES_CPU_COMPUTE = [
+    "load_weight",
+    "load_hidden_compute",
+    "cpu_copy",
+    "PinnedMemory CPU",
+    "other cpu copy",
+    "KVCache Load",
+    "load_hidden",
+    "GPU Compute",
+    "cpu_compute",
+    "KVCache Store",
+    "store_hidden",
+    "sync",
+    "Misc. CPU",
+]
+
+
+def build_gt_segments_cpu_computation(row: Dict) -> Dict[str, float]:
+    """
+    Extract latency breakdown from a --cpu-computation summary row (see
+    analyze_row_cpu_computation() in trace_result_analyzer.py).
+
+    Mirrors build_gt_segments()'s convention: only the winning branch of
+    each two-way "sub-winner" race contributes non-zero segments; the
+    losing branch's raw values are folded into "Misc. CPU" via the
+    sum-all/accounted residual, same as build_gt_segments() uses
+    sum_all - critical-path.
+
+    sub-winner1 (load_cache vs. its 2 GPU-stream memcpys):
+      load_cache wins  → cpu_copy (2 general_copy, outside smart_copy) +
+                          PinnedMemory CPU (the aten::pin_memory call nested
+                          inside each of the 2 smart_copy calls, pinning the
+                          CPU-side buffer before its async H2D copy) +
+                          other cpu copy (each smart_copy's own duration
+                          minus its nested pin_memory duration -- i.e. the
+                          rest of smart_copy/general_copy/copy's CPU-side
+                          work: dtype/shape bookkeeping, dispatch overhead,
+                          etc.)
+      cudamemcpy wins  → KVCache Load (2 load-cache-cudamemcpy ops)
+
+    sub-winner2 (compute_layer+store_cache+sync vs. compute-cuda-sum):
+      compute_layer chain wins → cpu_compute (compute_layer minus the CUDA
+                                  ops it invokes) + GPU Compute (compute-cuda-sum)
+                                  + KVCache Store (2 store-cache-cudamemcpy ops)
+      compute-cuda-sum wins    → GPU Compute only (compute-cuda-sum already
+                                  IS the winning duration)
+    """
+    lw   = _fv(row, "load_weight")
+    lhc  = _fv(row, "load_hidden_compute")
+    lh   = _fv(row, "load_hidden")
+    sh   = _fv(row, "store_hidden")
+    sy   = _fv(row, "sync")
+    cl   = _fv(row, "compute_layer")
+    sum_all = _fv(row, "sum-all")
+
+    sw1_winner = (row.get("sub-winner1-winner") or "").strip()
+    sw2_winner = (row.get("sub-winner2-winner") or "").strip()
+
+    cpu_copy_sum    = _fv(row, "cpu-copy-1") + _fv(row, "cpu-copy-2")
+    smart_copy_sum  = _fv(row, "smart-copy-1") + _fv(row, "smart-copy-2")
+    pin_mem_sum     = _fv(row, "pin-memory-1") + _fv(row, "pin-memory-2")
+    other_cpu_copy  = max(0.0, smart_copy_sum - pin_mem_sum)
+    kv_load_sum     = _fv(row, "load-cache-cudamemcpy-1") + _fv(row, "load-cache-cudamemcpy-2")
+    gpu_compute_sum = _fv(row, "compute-cuda-sum")
+    kv_store_sum    = _fv(row, "store-cache-cudamemcpy-1") + _fv(row, "store-cache-cudamemcpy-2")
+
+    segs: Dict[str, float] = {k: 0.0 for k in GT_SEGMENT_NAMES_CPU_COMPUTE}
+    segs["load_weight"] = lw
+    segs["load_hidden_compute"] = lhc
+    segs["load_hidden"] = lh
+    segs["store_hidden"] = sh
+    segs["sync"] = sy
+
+    if sw1_winner == "load_cache":
+        segs["cpu_copy"] = cpu_copy_sum
+        segs["PinnedMemory CPU"] = pin_mem_sum
+        segs["other cpu copy"] = other_cpu_copy
+    else:
+        segs["KVCache Load"] = kv_load_sum
+
+    if sw2_winner == "compute_layer+store_cache+sync":
+        segs["cpu_compute"] = max(0.0, cl - gpu_compute_sum)
+        segs["GPU Compute"] = gpu_compute_sum
+        segs["KVCache Store"] = kv_store_sum
+    else:
+        segs["GPU Compute"] = gpu_compute_sum
+
+    accounted = sum(v for k, v in segs.items() if k != "Misc. CPU")
+    segs["Misc. CPU"] = round(sum_all - accounted, 3)
     return segs
 
 
@@ -1524,6 +1716,8 @@ META_COLS = [
     "num_batches",
     "recompute_len",
     "offload_percent",   # minimum feasible, as used
+    "cpu_computation",   # True for --cpu-gpu-compute runs (see ExperimentConfig)
+    "cpu_gpu_ratio",     # CPU/GPU attention-compute split ratio, cpu_computation only
     "status",            # "ok" | "oom" | "error"
     "skip_reason",       # human-readable explanation when status != "ok"
     "trace_json",
@@ -1537,11 +1731,20 @@ META_COLS = [
 ]
 
 
-def make_csv_columns(estimator_modes: List[EstimatorMode]) -> List[str]:
-    """Return the full ordered list of CSV column names."""
+def make_csv_columns(
+    estimator_modes: List[EstimatorMode],
+    gt_segment_names: Optional[List[str]] = None,
+) -> List[str]:
+    """Return the full ordered list of CSV column names.
+
+    gt_segment_names : defaults to GT_SEGMENT_NAMES (--batched taxonomy).
+        Pass GT_SEGMENT_NAMES_CPU_COMPUTE for --cpu-computation experiments
+        so the gt_* columns match that mode's segment breakdown instead.
+    """
+    names = gt_segment_names if gt_segment_names is not None else GT_SEGMENT_NAMES
     cols = list(META_COLS)
     # Ground-truth columns
-    for seg in GT_SEGMENT_NAMES:
+    for seg in names:
         safe = seg.replace(" ", "_").replace(".", "").replace("(", "").replace(")", "")
         cols.append(f"gt_{safe}_us")
     cols.append("gt_total_us")
@@ -1563,7 +1766,9 @@ def build_csv_row(
     status: str = STATUS_OK,
     skip_reason: str = "",
     gt_decode_stats: Optional[Dict[str, float]] = None,
+    gt_segment_names: Optional[List[str]] = None,
 ) -> Dict[str, Any]:
+    names = gt_segment_names if gt_segment_names is not None else GT_SEGMENT_NAMES
     row: Dict[str, Any] = {
         "experiment_id":  exp.experiment_id,
         "model":          exp.model,
@@ -1574,6 +1779,8 @@ def build_csv_row(
         "num_batches":    exp.num_batches,
         "recompute_len":  exp.recompute_len,
         "offload_percent": round(exp.offload_percent, 2) if exp.offload_percent is not None else "",
+        "cpu_computation": exp.cpu_computation,
+        "cpu_gpu_ratio":   round(exp.cpu_gpu_ratio, 2) if exp.cpu_gpu_ratio is not None else "",
         "status":         status,
         "skip_reason":    skip_reason,
         "trace_json":     exp.trace_json_path or "",
@@ -1587,7 +1794,7 @@ def build_csv_row(
     }
 
     # GT segments
-    for seg in GT_SEGMENT_NAMES:
+    for seg in names:
         safe = seg.replace(" ", "_").replace(".", "").replace("(", "").replace(")", "")
         row[f"gt_{safe}_us"] = round(gt_segs.get(seg, 0.0), 3)
     row["gt_total_us"] = round(sum(gt_segs.values()), 3)
@@ -1608,8 +1815,9 @@ def write_comparison_csv(
     rows: List[Dict],
     output_path: str,
     estimator_modes: List[EstimatorMode],
+    gt_segment_names: Optional[List[str]] = None,
 ) -> None:
-    cols = make_csv_columns(estimator_modes)
+    cols = make_csv_columns(estimator_modes, gt_segment_names=gt_segment_names)
     with open(output_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=cols, extrasaction="ignore")
         writer.writeheader()
@@ -1627,6 +1835,7 @@ def _skipped_row(
     estimator_modes: List[EstimatorMode],
     status: str,
     reason: str,
+    gt_segment_names: Optional[List[str]] = None,
 ) -> Dict:
     """Return a CSV row with all segment values blank and status/reason set."""
     print(f"  [{status.upper()}] {reason}")
@@ -1637,6 +1846,7 @@ def _skipped_row(
         estimator_modes=estimator_modes,
         status=status,
         skip_reason=reason,
+        gt_segment_names=gt_segment_names,
     )
 
 
@@ -1652,6 +1862,7 @@ def _run_one_collection_and_analysis(
     _generated_traces: Optional[List[str]],
     run_idx: Optional[int] = None,
     trace_cleanup: str = TRACE_CLEANUP_NONE,
+    force_reanalysis: bool = False,
 ) -> Tuple[str, Optional[str], str, ExperimentConfig]:
     """
     Find-or-collect-or-analyze ONE run's trace/summary for the given
@@ -1684,6 +1895,18 @@ def _run_one_collection_and_analysis(
         filenames don't vary with run_idx and run_trace_analysis writes
         summaries to a flat directory, not alongside the trace — without
         this, every run's summary would collide on the same path.
+
+    force_reanalysis : if True, never take the Step 2+3 shortcut below just
+        because a summary CSV already exists -- Step 2 still skips collection
+        normally (the trace itself is reused as-is, found via the same
+        offload-candidate search as always), but Step 3 always re-runs
+        trace_analyzer.py + trace_result_analyzer.py and overwrites the
+        existing summary CSV. Use this after fixing a bug in either analysis
+        script to refresh already-collected traces' summaries without
+        re-profiling. Has no effect on collection_only (Step 3 is skipped
+        there regardless) and composes with analysis_only (which only
+        controls what happens when a trace is missing, not when a summary
+        already exists).
 
     Returns (status, summary_csv, reason, updated_exp):
       status      : STATUS_OK | STATUS_COLLECTED | STATUS_NO_TRACE | STATUS_OOM | STATUS_ERROR
@@ -1742,6 +1965,7 @@ def _run_one_collection_and_analysis(
 
     have_summary = (
         not collection_only
+        and not force_reanalysis
         and (
             (exp.summary_csv_path and os.path.isfile(exp.summary_csv_path))
             or os.path.isfile(expected_summary_csv)
@@ -1754,7 +1978,8 @@ def _run_one_collection_and_analysis(
         # any decompression) AND trace analysis (Step 3) — there's no need to
         # touch the (possibly large, possibly compressed) trace JSON at all.
         # Not considered in --collection-only mode: the point of that mode is
-        # specifically to (re)collect the raw trace.
+        # specifically to (re)collect the raw trace. Not considered either
+        # when force_reanalysis is set -- see this function's docstring.
         if exp.summary_csv_path and os.path.isfile(exp.summary_csv_path):
             summary_csv = exp.summary_csv_path
         else:
@@ -1821,7 +2046,8 @@ def _run_one_collection_and_analysis(
     # ---- Step 3: trace analysis (skip if summary_csv_path already provided) ----
     print("    Step 3: running trace analysis pipeline...")
     try:
-        summary_csv = run_trace_analysis(trace_json, exp, dry_run=dry_run, run_idx=run_idx)
+        summary_csv = run_trace_analysis(trace_json, exp, dry_run=dry_run, run_idx=run_idx,
+                                         force_reanalysis=force_reanalysis)
         exp = dataclasses.replace(exp, summary_csv_path=summary_csv)
     except Exception as e:
         return STATUS_ERROR, None, f"Step 3 trace analysis failed: {e}", exp
@@ -1857,6 +2083,7 @@ def run_experiment(
     num_runs: int = 1,
     trace_cleanup: str = TRACE_CLEANUP_NONE,
     _generated_traces: Optional[List[str]] = None,
+    force_reanalysis: bool = False,
 ) -> Dict:
     """
     Execute the full pipeline for one experiment and return a CSV row dict.
@@ -1912,6 +2139,17 @@ def run_experiment(
         _run_one_collection_and_analysis for the full reasoning. Has no
         effect when neither flag is set.
 
+    force_reanalysis : if True, Step 3 (trace_analyzer.py + trace_result_analyzer.py)
+        always re-runs and overwrites the existing summary CSV, even if one
+        is already found on disk -- unlike analysis_only, which only changes
+        behavior when NOTHING exists yet. Step 2 is unaffected: an existing
+        trace is still reused as-is (no forced re-collection). Use this after
+        fixing a bug in either analysis script to refresh every already-
+        collected trace's summary in one sweep, without re-profiling.
+        Combine with analysis_only for extra safety if some experiments in
+        the sweep might be missing a trace entirely -- otherwise those would
+        still trigger a fresh (possibly lengthy) GPU collection.
+
     _generated_traces : optional list passed through to run_flexllm_profile
         (via the OOM-retry wrapper). Paths of .json files that are newly
         profiled OR decompressed from .gz are appended here, making them
@@ -1924,11 +2162,22 @@ def run_experiment(
         print(f"  ({num_runs} runs will be collected/pooled)")
     print(f"{'='*60}")
 
+    # cpu_computation experiments use a different GT segment taxonomy (see
+    # GT_SEGMENT_NAMES_CPU_COMPUTE / build_gt_segments_cpu_computation) —
+    # None for both here reproduces the exact default --batched behavior.
+    gt_segment_names = GT_SEGMENT_NAMES_CPU_COMPUTE if exp.cpu_computation else None
+    gt_segment_builder = build_gt_segments_cpu_computation if exp.cpu_computation else None
+
     # Step 1: resolve offload_percent (if the caller hasn't already -- note
     # every sweep_* helper calls get_min_offload_percent() itself and bakes
     # the result in before experiments ever reach here, so in normal CLI
     # usage exp.offload_percent is essentially always already set by this
     # point; this branch mainly matters for direct Python-API callers).
+    # cpu_computation experiments are constructed with offload_percent
+    # already set to 0.0 (it isn't meaningful for this mode — see
+    # ExperimentConfig), so this branch never runs for them, which is
+    # exactly the point: get_min_offload_percent()'s KV-cache-placement
+    # feasibility search doesn't apply to a compute-split sweep.
     if exp.offload_percent is None:
         if ESTIMATOR_AVAILABLE:
             print("  Step 1: computing minimum offload percent...")
@@ -1937,10 +2186,11 @@ def run_experiment(
                     exp, offload_percent=get_min_offload_percent(exp, hw, opt_config)
                 )
             except OOMError as e:
-                return _skipped_row(exp, estimator_modes, STATUS_OOM, str(e))
+                return _skipped_row(exp, estimator_modes, STATUS_OOM, str(e),
+                                    gt_segment_names=gt_segment_names)
             except Exception as e:
                 return _skipped_row(exp, estimator_modes, STATUS_ERROR,
-                                    f"Step 1 failed: {e}")
+                                    f"Step 1 failed: {e}", gt_segment_names=gt_segment_names)
         else:
             print("  Step 1: [skip] estimator not available, defaulting to 0% offload")
             exp = dataclasses.replace(exp, offload_percent=0.0)
@@ -1956,8 +2206,13 @@ def run_experiment(
     # normal usage. get_offload_candidates() is a pure analytical
     # calculation (no GPU/subprocess involved), so computing it here is
     # cheap even when a sweep_* helper already computed the same thing once.
+    # Skipped entirely for cpu_computation experiments -- get_offload_candidates()
+    # searches KV-cache-placement feasibility, which has no bearing on a
+    # CPU/GPU compute-split ratio; leaving offload_candidates=None makes the
+    # trace-reuse search in _run_one_collection_and_analysis fall back to
+    # just exp.offload_percent (always 0.0 for this mode), which is correct.
     offload_candidates: Optional[List[float]] = None
-    if ESTIMATOR_AVAILABLE:
+    if ESTIMATOR_AVAILABLE and not exp.cpu_computation:
         try:
             offload_candidates = get_offload_candidates(exp, hw, opt_config)
         except OOMError:
@@ -2000,6 +2255,7 @@ def run_experiment(
             exp, hw, opt_config, this_trace_dir, candidates_for_this_run,
             dry_run, collection_only, analysis_only, _generated_traces,
             run_idx=run_idx, trace_cleanup=trace_cleanup,
+            force_reanalysis=force_reanalysis,
         )
         if status == STATUS_OK:
             summary_csvs.append(summary_csv)
@@ -2028,9 +2284,10 @@ def run_experiment(
             return _skipped_row(
                 exp, estimator_modes, STATUS_COLLECTED,
                 f"collection-only: {len(run_indices)} run(s) attempted",
+                gt_segment_names=gt_segment_names,
             )
         status, reason = first_failure
-        return _skipped_row(exp, estimator_modes, status, reason)
+        return _skipped_row(exp, estimator_modes, status, reason, gt_segment_names=gt_segment_names)
 
     if not summary_csvs:
         # Every run failed or found nothing to analyze. If this was a
@@ -2056,7 +2313,7 @@ def run_experiment(
                           f"compute_trace_dir()). If this experiment was collected "
                           f"with --num-runs > 1, pass the same --num-runs value here too.")
         status, reason = first_failure
-        return _skipped_row(exp, estimator_modes, status, reason)
+        return _skipped_row(exp, estimator_modes, status, reason, gt_segment_names=gt_segment_names)
 
     # Step 4: parse GT, pooled across every successful run's summary CSV
     # (load_gt_summary/compute_gt_decode_stats each accept a single path or
@@ -2072,13 +2329,15 @@ def run_experiment(
                 skip_first_n=gt_skip_first_n,
                 first_n=gt_first_n,
                 dominant_path_only=gt_dominant_path_only,
+                segment_names=gt_segment_names,
+                segment_builder=gt_segment_builder,
             )
             print("  GT segments (µs):")
             for k, v in gt_segs.items():
                 print(f"    {k}: {v:.1f}")
         except Exception as e:
             return _skipped_row(exp, estimator_modes, STATUS_ERROR,
-                                f"Step 4 GT parsing failed: {e}")
+                                f"Step 4 GT parsing failed: {e}", gt_segment_names=gt_segment_names)
         try:
             gt_decode_stats = compute_gt_decode_stats(
                 summary_csvs,
@@ -2138,7 +2397,8 @@ def run_experiment(
 
     # Step 6: build row
     return build_csv_row(exp, gt_segs, est_segs_by_mode, estimator_modes,
-                         status=STATUS_OK, gt_decode_stats=gt_decode_stats)
+                         status=STATUS_OK, gt_decode_stats=gt_decode_stats,
+                         gt_segment_names=gt_segment_names)
 
 
 def cleanup_traces(
@@ -2177,15 +2437,16 @@ def cleanup_traces(
             total_freed += size_mb
 
         elif mode == TRACE_CLEANUP_COMPRESS:
-            tar_gz_path = path + ".tar.gz"
-            print(f"  [compress] {path}  ({size_mb:.1f} MB)  \u2192  {tar_gz_path}")
+            zst_path = path + ".zst"
+            print(f"  [compress] {path}  ({size_mb:.1f} MB)  →  {zst_path}")
             if not dry_run:
-                with tarfile.open(tar_gz_path, "w:gz") as tf:
-                    tf.add(path, arcname=os.path.basename(path))
-                tar_gz_mb = os.path.getsize(tar_gz_path) / (1024 ** 2)
+                cctx = zstd.ZstdCompressor(level=19, threads=-1)  # threads=-1 = use all cores
+                with open(path, "rb") as f_in, open(zst_path, "wb") as f_out:
+                    cctx.copy_stream(f_in, f_out)
+                zst_mb = os.path.getsize(zst_path) / (1024 ** 2)
                 os.remove(path)
-                saved_mb = size_mb - tar_gz_mb
-                print(f"    compressed: {tar_gz_mb:.1f} MB  (saved {saved_mb:.1f} MB)")
+                saved_mb = size_mb - zst_mb
+                print(f"    compressed: {zst_mb:.1f} MB  (saved {saved_mb:.1f} MB)")
                 total_freed += saved_mb
             else:
                 total_freed += size_mb
@@ -2241,6 +2502,7 @@ def run_comparison(
     collection_only: bool = False,
     analysis_only: bool = False,
     num_runs: int = 1,
+    force_reanalysis: bool = False,
 ) -> List[Dict]:
     """
     Run all experiments and write the comparison CSV.
@@ -2288,6 +2550,18 @@ def run_comparison(
                           ground truth. Default 1 reproduces the exact
                           single-run behavior/directory layout used before
                           this feature existed.
+    force_reanalysis      If True, re-run Step 3 (trace_analyzer.py +
+                          trace_result_analyzer.py) for every experiment and
+                          overwrite its existing summary CSV, even though one
+                          is already found on disk. Step 2 is unaffected --
+                          an already-collected trace is reused as-is, never
+                          re-profiled. Use this to refresh a whole sweep's
+                          summaries after fixing a bug in either analysis
+                          script, without re-running the (expensive)
+                          collection step. Combine with analysis_only if any
+                          experiment in the sweep might be missing its trace
+                          entirely, to guarantee no fresh GPU collection is
+                          triggered for those points either.
     """
     if collection_only and analysis_only:
         raise ValueError(
@@ -2317,6 +2591,7 @@ def run_comparison(
             num_runs=num_runs,
             trace_cleanup=trace_cleanup,
             _generated_traces=generated_traces,
+            force_reanalysis=force_reanalysis,
         )
         all_rows.append(row)
         s = row.get("status", STATUS_OK)
@@ -2330,7 +2605,16 @@ def run_comparison(
           f"{n_oom} oom, {n_err} error (out of {len(all_rows)} total)")
 
     if all_rows:
-        write_comparison_csv(all_rows, output_csv, estimator_modes)
+        # experiments in one sweep are all-or-nothing --cpu-computation (set
+        # by main()'s CLI wiring), so the first experiment's flag decides
+        # which GT segment taxonomy every row in this CSV should use.
+        gt_segment_names = (
+            GT_SEGMENT_NAMES_CPU_COMPUTE
+            if experiments and experiments[0].cpu_computation
+            else None
+        )
+        write_comparison_csv(all_rows, output_csv, estimator_modes,
+                             gt_segment_names=gt_segment_names)
         if n_oom or n_err:
             print(f"  Note: skipped rows (oom/error) are included in the CSV "
                   f"with blank segment values \u2014 see the 'status' column.")
@@ -2414,6 +2698,39 @@ def main():
     )
     parser.add_argument("--fixed-batch-size", type=int, default=2,
         help="Batch size for the recompute-only sweep.")
+    parser.add_argument(
+        "--cpu-computation", action="store_true",
+        help=(
+            "Collect traces with flex_opt_kvpr.py's --cpu-gpu-compute instead "
+            "of the normal KV-cache-offload sweep: attention compute is split "
+            "between GPU and CPU according to --cpu-computation-ratios, and "
+            "the usual minimum-offload auto-detection (get_min_offload_percent) "
+            "is bypassed entirely -- offload_percent is fixed at 0.0 and plays "
+            "no role in this mode. Trace analysis uses trace_analyzer.py's / "
+            "trace_result_analyzer.py's --cpu-computation mode instead of "
+            "--batched, and the GT segment columns use the cpu_computation "
+            "taxonomy (cpu_copy/PinnedMemory CPU/other cpu copy/cpu_compute/"
+            "... instead of "
+            "PinnedMemory/Recompute/MHA). Estimator columns (est_*) are "
+            "omitted entirely in this mode -- kv_schedule_optimization / "
+            "baseline_model have no cpu_gpu_compute-aware implementation. "
+            "Still respects --batch-sizes / --recompute-lens / --sweep for "
+            "the other two axes; combines with --cpu-computation-ratios as a "
+            "full cross-product."
+        ),
+    )
+    parser.add_argument(
+        "--cpu-computation-ratios", type=float, nargs="+", default=[50.0],
+        metavar="RATIO",
+        help=(
+            "CPU/GPU attention-compute split ratio(s) (0-100) to sweep for "
+            "--cpu-computation experiments -- accepts multiple values (like "
+            "--recompute-lens) to make benchmarking sweeps easy. ratio=X sets "
+            "--percent to '100 0 <100-X> <X> 100 0' and passes "
+            "--cpu-gpu-compute to flex_opt_kvpr.py. Ignored unless "
+            "--cpu-computation is set. Default: [50.0]."
+        ),
+    )
     parser.add_argument("--gpu-mem", type=int, default=40)
     parser.add_argument("--cpu-mem", type=int, default=200)
     parser.add_argument("--gpu-tflop", type=int, default=312)
@@ -2500,6 +2817,26 @@ def main():
         ),
     )
     parser.add_argument(
+        "--force-reanalysis", action="store_true",
+        help=(
+            "Re-run Step 3 (trace_analyzer.py + trace_result_analyzer.py) "
+            "and overwrite the existing summary CSV for every experiment, "
+            "even if one is already found on disk. Step 2 is unaffected -- "
+            "an already-collected trace is reused as-is (found via the same "
+            "offload-candidate search as always), never re-profiled. Use "
+            "this to refresh a whole sweep's summaries after fixing a bug "
+            "in trace_analyzer.py / trace_result_analyzer.py (e.g. a "
+            "corrected metric extraction), without re-running the "
+            "expensive GPU collection step. Unlike --analysis-only (which "
+            "only changes behavior when a trace/summary is MISSING), this "
+            "forces re-analysis even when a summary already exists. Combine "
+            "with --analysis-only if some experiments in the sweep might be "
+            "missing their trace entirely, to guarantee those are skipped "
+            "with status=\"no_trace\" rather than triggering a fresh "
+            "collection."
+        ),
+    )
+    parser.add_argument(
         "--num-runs", type=int, default=1, metavar="N",
         help=(
             "Repeat trace collection + analysis N times per experiment "
@@ -2551,7 +2888,13 @@ def main():
         ),
     )
     args = parser.parse_args()
-    
+
+    if args.cpu_computation:
+        bad = [r for r in args.cpu_computation_ratios if not (0.0 <= r <= 100.0)]
+        if bad:
+            print(f"ERROR: --cpu-computation-ratios must be within 0-100, got: {bad}")
+            sys.exit(1)
+
     # --- Hardware config ---
     hw = HardwareConfig(
         gpu_mem_gb=args.gpu_mem,
@@ -2568,19 +2911,27 @@ def main():
     # Add / remove kv_schedule modes here; each will produce its own column
     # group in the CSV. --estimator-impl controls whether the baseline_model
     # mode is included alongside (or instead of) the kv_schedule modes.
+    # --cpu-computation experiments always skip estimator columns entirely --
+    # neither kv_schedule_optimization nor baseline_model models the
+    # cpu_gpu_compute attention-compute split, so est_* columns would just be
+    # meaningless/blank noise in the CSV. GT-only, as requested.
     estimator_modes = []
-    if args.estimator_impl in ("kv_schedule", "both"):
-        estimator_modes.append(
-            EstimatorMode(name="ideal", impl="kv_schedule",
-                          use_ideal_bw=True, use_ideal_comp=True, use_no_pinned=True)
-            # EstimatorMode(name="default",     impl="kv_schedule"),
-            # EstimatorMode(name="ideal_bw",    impl="kv_schedule", use_ideal_bw=True),
-            # EstimatorMode(name="flex_bw",     impl="kv_schedule", use_flex_bw=True),
-            # EstimatorMode(name="no_pinned",   impl="kv_schedule", use_no_pinned=True),
-            # EstimatorMode(name="ideal_comp",  impl="kv_schedule", use_ideal_comp=True),
-        )
-    if args.estimator_impl in ("baseline", "both"):
-        estimator_modes.append(EstimatorMode(name="baseline", impl="baseline"))
+    if args.cpu_computation:
+        print("  [note] --cpu-computation set: skipping estimator columns "
+              "(GT-only comparison) regardless of --estimator-impl.")
+    else:
+        if args.estimator_impl in ("kv_schedule", "both"):
+            estimator_modes.append(
+                EstimatorMode(name="ideal", impl="kv_schedule",
+                              use_ideal_bw=True, use_ideal_comp=True, use_no_pinned=True)
+                # EstimatorMode(name="default",     impl="kv_schedule"),
+                # EstimatorMode(name="ideal_bw",    impl="kv_schedule", use_ideal_bw=True),
+                # EstimatorMode(name="flex_bw",     impl="kv_schedule", use_flex_bw=True),
+                # EstimatorMode(name="no_pinned",   impl="kv_schedule", use_no_pinned=True),
+                # EstimatorMode(name="ideal_comp",  impl="kv_schedule", use_ideal_comp=True),
+            )
+        if args.estimator_impl in ("baseline", "both"):
+            estimator_modes.append(EstimatorMode(name="baseline", impl="baseline"))
     
     # --- Load opt_config and gpu_estimator ---
     # gpu_estimator is intentionally left as None here for the user to replace.
@@ -2634,7 +2985,10 @@ def main():
         g       = parsed.get('gen_len',         args.gen_len)
         off     = parsed.get('offload_percent', 0.0)
         rc      = parsed.get('recompute_len',   0)
-    
+
+        # For a --cpu-gpu-compute trace, the filename's percent[3] slot
+        # (parsed above as 'offload_percent') is actually the CPU/GPU
+        # compute-split ratio -- see build_flexllm_command/compute_expected_trace_stem.
         exp = ExperimentConfig(
             model          = args.model,
             prompt_len     = p,
@@ -2642,7 +2996,9 @@ def main():
             num_prompts    = bs * nb,
             batch_size     = bs,
             recompute_len  = rc,
-            offload_percent= off,
+            offload_percent= 0.0 if args.cpu_computation else off,
+            cpu_computation= args.cpu_computation,
+            cpu_gpu_ratio  = off if args.cpu_computation else None,
             output_dir     = args.output_dir,
             flexllmgen_script       = args.flexllm_script,
             trace_analyzer_script   = args.trace_analyzer_script,
@@ -2651,7 +3007,34 @@ def main():
             summary_csv_path = os.path.abspath(args.summary_csv) if args.summary_csv else None,
         )
         experiments = [exp]
-    
+
+    elif args.cpu_computation:
+        # Bypass sweep_batch_size/sweep_recompute/sweep_batch_and_recompute
+        # entirely (and therefore get_min_offload_percent()'s KV-cache-
+        # placement auto-detection, which is meaningless for a compute-split
+        # sweep) -- build the (batch_size, recompute_len) axis directly per
+        # whichever --sweep mode was requested, then cross it with every
+        # --cpu-computation-ratios value.
+        if args.sweep == "batch_size":
+            bs_rc_pairs = [(bs, 0) for bs in args.batch_sizes]
+        elif args.sweep == "recompute":
+            bs_rc_pairs = [(args.fixed_batch_size, rc) for rc in args.recompute_lens]
+        else:  # batch_and_recompute
+            bs_rc_pairs = [(bs, rc) for bs in args.batch_sizes for rc in args.recompute_lens]
+
+        experiments = [
+            dataclasses.replace(
+                base, batch_size=bs, recompute_len=rc,
+                offload_percent=0.0, cpu_computation=True, cpu_gpu_ratio=ratio,
+            )
+            for (bs, rc) in bs_rc_pairs
+            for ratio in args.cpu_computation_ratios
+        ]
+        print(f"  cpu_computation sweep: {len(experiments)} experiment(s) "
+              f"({len(bs_rc_pairs)} (batch_size, recompute_len) point(s) x "
+              f"{len(args.cpu_computation_ratios)} ratio(s) "
+              f"{args.cpu_computation_ratios})")
+
     elif args.sweep == "batch_size":
         experiments = sweep_batch_size(
             base, args.batch_sizes, hw, opt_config
@@ -2692,6 +3075,7 @@ def main():
         collection_only=args.collection_only,
         analysis_only=args.analysis_only,
         num_runs=args.num_runs,
+        force_reanalysis=args.force_reanalysis,
     )
 
 

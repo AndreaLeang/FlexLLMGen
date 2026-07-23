@@ -1536,6 +1536,12 @@ def get_filename(args):
         filename += "-compw"
     if args.compress_cache:
         filename += "-compc"
+    if getattr(args, "cpu_gpu_compute", False):
+        # Disambiguate from a normal offload run that happens to share the
+        # same --percent digits (percent[2]/[3] double as the CPU/GPU
+        # attention-compute split ratio in this mode instead of KV-cache
+        # placement — see gt_vs_estimator.py's compute_expected_trace_stem()).
+        filename += "-cpugpucomp"
     return filename
 
 

@@ -46,3 +46,6 @@ gt_vs_est_runs_h100/
 gt_vs_est_runs_rtx6000/
 gt_vs_est_runs_rtx6000_0702/
 experiments/
+
+tmpscript.sh
+*condaenv*

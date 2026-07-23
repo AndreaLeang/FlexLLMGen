@@ -50,7 +50,18 @@ def build_indices(events):
     corrs_with_cpu_rt = set()
 
     # Pre-filtered lists for fast time-window queries (populated below, sorted after)
-    cuda_rt_by_tid = {}   # tid -> [event, ...]  (cuda_runtime events only)
+    # cuda_rt_by_tid holds BOTH cuda_runtime (cudaLaunchKernel etc.) AND
+    # cuda_driver (cuLaunchKernel etc.) dispatch events. cuBLASLt picks a
+    # cutlass tensor-op kernel for some GEMM shapes and dispatches it via the
+    # driver API instead of the runtime API -- those dispatches only show up
+    # as cat="cuda_driver" in the trace, never "cuda_runtime". Excluding them
+    # here silently drops every cutlass-dispatched kernel from every window
+    # search below (get_gpu_events_in_window, get_gpu_events_via_cpu_chain,
+    # _has_gpu_activity_in_window, and the cuda_rt_in_fwd primary loop in
+    # get_gpu_events_in_forward_sep/nosep) -- verified on the sample trace:
+    # 462/3088 GPU-side events (~15%), all cutlass::Kernel2 GEMMs, were
+    # dispatched exclusively via cuda_driver and were being missed.
+    cuda_rt_by_tid = {}   # tid -> [event, ...]  (cuda_runtime + cuda_driver dispatch events)
     pin_mem_list   = []   # aten::pin_memory cpu_op events
     gpu_event_list = []   # kernel/gpu_memcpy/gpu_memset events (for cutlass fallback)
 
@@ -73,7 +84,7 @@ def build_indices(events):
             ext_id_to_cpu_ops.setdefault(ext_id, []).append(e)
             if e.get("name") == "aten::pin_memory":
                 pin_mem_list.append(e)
-        if corr is not None and cat == "cuda_runtime":
+        if corr is not None and cat in ("cuda_runtime", "cuda_driver"):
             corrs_with_cpu_rt.add(corr)
             cuda_rt_by_tid.setdefault(e["tid"], []).append(e)
 
@@ -120,7 +131,7 @@ def is_op8(event):
 
 
 def get_cuda_rt_in_window(cuda_rt_by_tid, cuda_rt_ts_by_tid, ts_start, ts_end, main_tid):
-    """Return cuda_runtime events for main_tid in [ts_start, ts_end] using bisect."""
+    """Return cuda_runtime/cuda_driver dispatch events for main_tid in [ts_start, ts_end] using bisect."""
     lst = cuda_rt_by_tid.get(main_tid)
     if not lst:
         return []
@@ -478,7 +489,9 @@ def identify_nosep_groups(events, parent_to_children, token_boundaries):
 # BATCHED mode helpers
 # ---------------------------------------------------------------------------
 
-def identify_batched_groups(events, parent_to_children, token_boundaries):
+def identify_batched_groups(events, parent_to_children, token_boundaries,
+                             classify_fn=get_compute_layer_type_sep,
+                             pair_type="mha_gen"):
     """
     BATCHED mode: find all 8-op groups that are mha_gen AND whose immediately
     following 8-op group is also mha_gen (i.e., the first of a consecutive pair).
@@ -490,6 +503,13 @@ def identify_batched_groups(events, parent_to_children, token_boundaries):
     parent) that may be searched with bisect to find the async store_cache
     dispatcher after sync ends.  Building this once here avoids re-sorting
     the full sibling list (16 000+ events) on every call to extract_batched_metrics.
+
+    classify_fn / pair_type : parameterize the "what counts as a pair" test so
+        other modes (e.g. --cpu-computation) can reuse this exact grouping /
+        warm-up-skip / async-sibling-caching logic with a different
+        compute_layer classifier. Defaults reproduce --batched's original
+        behavior exactly (classify_fn=get_compute_layer_type_sep,
+        pair_type="mha_gen") -- existing callers are unaffected.
     """
     gen_children = get_gen_children(events, parent_to_children)
     all_groups = []
@@ -507,12 +527,12 @@ def identify_batched_groups(events, parent_to_children, token_boundaries):
             grp = token_8ops[i:i + 8]
             cl = next((e for e in grp if "compute_layer" in e.get("name", "")), None)
             if cl is not None:
-                ftype = get_compute_layer_type_sep(cl, parent_to_children)
+                ftype = classify_fn(cl, parent_to_children)
                 grps.append({"token": ti, "type": ftype, "events": grp, "cl": cl})
             i += 8
-        # Collect the first group of each consecutive mha_gen->mha_gen pair
+        # Collect the first group of each consecutive pair-type->pair-type pair
         for j in range(len(grps) - 1):
-            if grps[j]["type"] == "mha_gen" and grps[j + 1]["type"] == "mha_gen":
+            if grps[j]["type"] == pair_type and grps[j + 1]["type"] == pair_type:
                 g = grps[j]
                 # Build async store_cache sibling list once per gen_loop parent
                 outer_sc = next(
@@ -639,6 +659,255 @@ def extract_batched_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
     for idx, (gpu_ev, origin) in enumerate(tagged_gpu_ops, 1):
         metrics[f"compute-cuda-{idx}"] = round(gpu_ev["dur"], 3)
         metrics[f"compute-cuda-{idx}-origin"] = origin
+
+    return metrics
+
+
+# ---------------------------------------------------------------------------
+# CPU-COMPUTATION mode helpers (--cpu-gpu-compute traces)
+# ---------------------------------------------------------------------------
+
+def get_compute_layer_type_cpu_mixed(cl_event, parent_to_children):
+    """
+    Classifier for --cpu-computation mode, parallel to get_compute_layer_type_sep:
+    a compute_layer group is "cpu_mixed" iff its forward()'s direct children
+    include a call to _mixed_cpu_attention (only present when the run used
+    --cpu-gpu-compute, gated purely on that flag -- see SelfAttention.forward()
+    in flex_opt_kvpr.py). Every other group (MLP, or SelfAttention groups from
+    a non-cpu_gpu_compute run) classifies as "other".
+    """
+    cl_id = cl_event["args"]["Python id"]
+    for fc in parent_to_children.get(cl_id, []):
+        if "forward" not in fc.get("name", ""):
+            continue
+        fwd_id = fc["args"]["Python id"]
+        fwd_sub = parent_to_children.get(fwd_id, [])
+        names = [s.get("name", "") for s in fwd_sub]
+        if any("_mixed_cpu_attention" in n for n in names):
+            return "cpu_mixed"
+    return "other"
+
+
+def identify_cpu_computation_groups(events, parent_to_children, token_boundaries):
+    """
+    CPU-COMPUTATION mode: find all 8-op groups whose own compute_layer AND the
+    immediately following group's compute_layer both hit _mixed_cpu_attention
+    (i.e. the first of a consecutive cpu_mixed->cpu_mixed pair -- this is the
+    same "first of a same-typed consecutive pair" shape as --batched's
+    mha_gen->mha_gen search, just with a different classifier, so it's
+    implemented as a thin wrapper over identify_batched_groups). All prefill
+    (token 0) groups are skipped, and the first qualifying pair across all
+    decode tokens is skipped as warm-up -- identical conventions to --batched.
+    """
+    return identify_batched_groups(
+        events, parent_to_children, token_boundaries,
+        classify_fn=get_compute_layer_type_cpu_mixed,
+        pair_type="cpu_mixed",
+    )
+
+
+def find_descendants_by_name(parent_to_children, root_python_id, name_substr):
+    """
+    BFS/DFS over the full descendant subtree of a python_function event
+    (identified by its "Python id"), collecting every descendant whose name
+    contains name_substr, sorted by timestamp.
+
+    Needed (rather than a shallow 1-level check like
+    get_compute_layer_type_sep's) because calls like general_copy/smart_copy/
+    _attention_value are nested at varying depths below the op8 event that
+    contains them (e.g. load_cache -> SelfAttention.load_cache -> general_copy),
+    unlike the fixed compute_layer->forward->{mha_gen,mlp} depth used by the
+    classifiers above.
+    """
+    result = []
+    stack = list(parent_to_children.get(root_python_id, []))
+    while stack:
+        e = stack.pop()
+        if name_substr in e.get("name", ""):
+            result.append(e)
+        child_id = e["args"].get("Python id")
+        if child_id is not None:
+            stack.extend(parent_to_children.get(child_id, []))
+    result.sort(key=lambda e: e["ts"])
+    return result
+
+
+def _has_gpu_activity_in_window(cuda_rt_by_tid, cuda_rt_ts_by_tid, ts_start, ts_end, main_tid):
+    """True if any cuda_runtime call was dispatched from main_tid in [ts_start, ts_end]."""
+    return len(get_cuda_rt_in_window(cuda_rt_by_tid, cuda_rt_ts_by_tid, ts_start, ts_end, main_tid)) > 0
+
+
+def extract_cpu_computation_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                                     gpu_event_list, gpu_event_ts,
+                                     corr_to_gpu, ext_id_to_cpu_ops,
+                                     corrs_with_cpu_rt,
+                                     pin_mem_list, pin_mem_ts,
+                                     parent_to_children, main_tid):
+    """
+    CPU-COMPUTATION mode metric extraction for a single cpu_mixed group.
+
+    load_cache breakdown (SelfAttention.load_cache's path==3, the
+    --cpu-gpu-compute branch):
+      general_copy(k_buf, ..., k_home, ...); general_copy(v_buf, ..., v_home, ...)
+      k_home.smart_copy(gpu, gpu_indices); v_home.smart_copy(gpu, gpu_indices)
+    smart_copy() internally calls .copy() -> general_copy() itself, so a naive
+    substring search for "general_copy" under load_cache finds 4 matches (2
+    explicit CPU<->CPU copies + 2 nested inside the 2 smart_copy calls). Only
+    the 2 explicit ones -- "outside of smart_copy" -- are recorded as
+    cpu-copy-1/2; the smart_copy calls' own end-to-end latency is recorded
+    separately as smart-copy-1/2, and the GPU-stream cudaMemcpyAsync ops they
+    dispatch (H2D transfer of the GPU-resident cache slice) as
+    load-cache-cudamemcpy-1/2, same mechanism as --batched's pin-memory/
+    cudamemcpy extraction. Each smart_copy call also contains exactly one
+    aten::pin_memory cpu_op nested inside it (verified on the sample trace:
+    35/35 groups, both smart_copy calls each contain exactly 1) -- recorded
+    per-call as pin-memory-1/2, mirroring --batched's own pin-memory
+    extraction but scoped to each smart_copy's own window individually
+    rather than the whole load_cache window (there are two distinct
+    smart_copy calls here, so a whole-window search would conflate them).
+
+    compute_layer breakdown:
+      all CUDA-stream ops dispatched anywhere in compute_layer's window are
+      collected as compute-cuda-N (no mha_gen/fwd_pre_mha origin tagging --
+      that distinction doesn't cleanly apply once cpu_gpu_compute changes
+      the call graph). _attention_value (pytorch_backend.py) is called twice
+      per group: once from _mixed_cpu_attention (on tensors already moved to
+      CPU via .float().cpu() -- no correlated GPU dispatch) and once from
+      _mixed_gpu_attention (on GPU tensors -- dispatches CUDA kernels). The
+      one with NO correlated GPU activity in its own window is the CPU-stream
+      one; its own duration is recorded as attention-value-cpu.
+
+    store_cache: unchanged from --batched (general_copy's actual DtoH copy is
+    dispatched asynchronously after sync ends, via a sibling store_cache call
+    under the same generation_loop parent -- see extract_batched_metrics).
+    """
+    evts = {e["name"].split(": ")[-1]: e for e in grp["events"]}
+
+    def dur(key):
+        e = evts.get(key)
+        return round(e["dur"], 3) if e else None
+
+    cl = grp["cl"]
+
+    # --- load_hidden_compute cudaMemcpyAsync (only relevant when recompute_len > 0) ---
+    lhc = evts.get("load_hidden_compute")
+    lhc_memcpy_dur = None
+    if lhc:
+        lhc_gpu = get_gpu_events_in_window(
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            lhc["ts"], lhc["ts"] + lhc["dur"],
+            main_tid, corr_to_gpu, filter_names={"cudaMemcpyAsync"}
+        )
+        if lhc_gpu:
+            lhc_memcpy_dur = round(lhc_gpu[0]["dur"], 3)
+
+    # --- load_cache breakdown ---
+    lc = evts.get("load_cache")
+    cpu_copy1 = cpu_copy2 = None
+    smart_copy1 = smart_copy2 = None
+    pin_mem1 = pin_mem2 = None
+    lc_mc1 = lc_mc2 = None
+    if lc:
+        lc_id = lc["args"]["Python id"]
+        smart_copies = find_descendants_by_name(parent_to_children, lc_id, "smart_copy")
+        general_copies = find_descendants_by_name(parent_to_children, lc_id, "general_copy")
+        sc_windows = [(s["ts"], s["ts"] + s["dur"]) for s in smart_copies]
+
+        def _inside_any(e, windows):
+            return any(w0 <= e["ts"] <= w1 for w0, w1 in windows)
+
+        # "outside of smart_copy" -- excludes the general_copy calls nested
+        # inside each smart_copy's own .copy() -> general_copy() chain.
+        outer_general_copies = sorted(
+            (g for g in general_copies if not _inside_any(g, sc_windows)),
+            key=lambda e: e["ts"],
+        )
+        if len(outer_general_copies) > 0: cpu_copy1 = round(outer_general_copies[0]["dur"], 3)
+        if len(outer_general_copies) > 1: cpu_copy2 = round(outer_general_copies[1]["dur"], 3)
+        if len(smart_copies) > 0: smart_copy1 = round(smart_copies[0]["dur"], 3)
+        if len(smart_copies) > 1: smart_copy2 = round(smart_copies[1]["dur"], 3)
+
+        # aten::pin_memory nested inside each smart_copy call, individually.
+        if len(smart_copies) > 0:
+            pm1 = get_pin_memory_events_in_window(
+                pin_mem_list, pin_mem_ts,
+                smart_copies[0]["ts"], smart_copies[0]["ts"] + smart_copies[0]["dur"]
+            )
+            if pm1: pin_mem1 = round(pm1[0]["dur"], 3)
+        if len(smart_copies) > 1:
+            pm2 = get_pin_memory_events_in_window(
+                pin_mem_list, pin_mem_ts,
+                smart_copies[1]["ts"], smart_copies[1]["ts"] + smart_copies[1]["dur"]
+            )
+            if pm2: pin_mem2 = round(pm2[0]["dur"], 3)
+
+        lc_gpu = get_gpu_events_in_window(
+            cuda_rt_by_tid, cuda_rt_ts_by_tid,
+            lc["ts"], lc["ts"] + lc["dur"], main_tid, corr_to_gpu,
+            filter_names={"cudaMemcpyAsync"}
+        )
+        if len(lc_gpu) > 0: lc_mc1 = round(lc_gpu[0]["dur"], 3)
+        if len(lc_gpu) > 1: lc_mc2 = round(lc_gpu[1]["dur"], 3)
+
+    # --- compute_layer breakdown ---
+    cl_gpu_events = get_gpu_events_in_window(
+        cuda_rt_by_tid, cuda_rt_ts_by_tid,
+        cl["ts"], cl["ts"] + cl["dur"], main_tid, corr_to_gpu
+    )
+    attn_value_cpu_dur = None
+    cl_id = cl["args"]["Python id"]
+    attn_value_events = find_descendants_by_name(parent_to_children, cl_id, "_attention_value")
+    cpu_side = [
+        e for e in attn_value_events
+        if not _has_gpu_activity_in_window(cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                                            e["ts"], e["ts"] + e["dur"], main_tid)
+    ]
+    if cpu_side:
+        attn_value_cpu_dur = round(cpu_side[0]["dur"], 3)
+
+    # --- store_cache: identical mechanism to --batched (see extract_batched_metrics) ---
+    sync_e = evts.get("sync")
+    sc_mc1 = sc_mc2 = None
+    if sync_e is not None:
+        sync_end = sync_e["ts"] + sync_e["dur"]
+        async_sc_siblings = grp.get("async_sc_siblings", [])
+        if async_sc_siblings:
+            sc_ts_list = [s["ts"] for s in async_sc_siblings]
+            lo = bisect.bisect_left(sc_ts_list, sync_end)
+            if lo < len(async_sc_siblings):
+                async_sc = async_sc_siblings[lo]
+                sc_gpu = get_gpu_events_in_window(
+                    cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                    async_sc["ts"], async_sc["ts"] + async_sc["dur"],
+                    main_tid, corr_to_gpu, filter_names={"cudaMemcpyAsync"}
+                )
+                if len(sc_gpu) > 0: sc_mc1 = round(sc_gpu[0]["dur"], 3)
+                if len(sc_gpu) > 1: sc_mc2 = round(sc_gpu[1]["dur"], 3)
+
+    metrics = {
+        "load_weight":                    dur("load_weight"),
+        "load_hidden_compute":             dur("load_hidden_compute"),
+        "load-hidden-compute-cudamemcpy":  lhc_memcpy_dur,
+        "load_cache":                      dur("load_cache"),
+        "cpu-copy-1":                      cpu_copy1,
+        "cpu-copy-2":                      cpu_copy2,
+        "smart-copy-1":                    smart_copy1,
+        "smart-copy-2":                    smart_copy2,
+        "pin-memory-1":                    pin_mem1,
+        "pin-memory-2":                    pin_mem2,
+        "load-cache-cudamemcpy-1":         lc_mc1,
+        "load-cache-cudamemcpy-2":         lc_mc2,
+        "load_hidden":                     dur("load_hidden"),
+        "compute_layer":                   dur("compute_layer"),
+        "attention-value-cpu":             attn_value_cpu_dur,
+        "store_cache":                     dur("store_cache"),
+        "store-cache-cudamemcpy-1":        sc_mc1,
+        "store-cache-cudamemcpy-2":        sc_mc2,
+        "store_hidden":                    dur("store_hidden"),
+        "sync":                            dur("sync"),
+    }
+    for idx, gpu_ev in enumerate(cl_gpu_events, 1):
+        metrics[f"compute-cuda-{idx}"] = round(gpu_ev["dur"], 3)
 
     return metrics
 
@@ -862,7 +1131,8 @@ def extract_nosep_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
 # Main analysis
 # ---------------------------------------------------------------------------
 
-def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False, batched=False):
+def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False, batched=False,
+                   cpu_computation=False):
     print(f"Loading trace: {trace_path}", file=sys.stderr)
     with open(trace_path) as f:
         data = json.load(f)
@@ -884,7 +1154,27 @@ def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False, ba
 
     rows = []
 
-    if batched:
+    if cpu_computation:
+        print("Mode: CPU-COMPUTATION — identifying first-of-consecutive-cpu_mixed groups...",
+              file=sys.stderr)
+        groups = identify_cpu_computation_groups(events, parent_to_children, token_boundaries)
+        print(f"  {len(groups)} cpu-computation groups (warm-up skipped).", file=sys.stderr)
+        if max_groups is not None:
+            groups = groups[:max_groups]
+            print(f"  Limiting to first {max_groups} groups.", file=sys.stderr)
+
+        for group_num, grp in enumerate(groups, 1):
+            metrics = extract_cpu_computation_metrics(
+                grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
+                gpu_event_list, gpu_event_ts,
+                corr_to_gpu, ext_id_to_cpu_ops,
+                corrs_with_cpu_rt,
+                pin_mem_list, pin_mem_ts,
+                parent_to_children, main_tid
+            )
+            rows.append({"group": group_num, "token": grp["token"], **metrics})
+
+    elif batched:
         print("Mode: BATCHED — identifying first-of-consecutive-mha_gen groups...",
               file=sys.stderr)
         groups = identify_batched_groups(events, parent_to_children, token_boundaries)
@@ -964,7 +1254,9 @@ def analyze_trace(trace_path, max_groups=None, output_path=None, nosep=False, ba
     all_cols = fixed_cols + dynamic_cols
 
     if output_path is None:
-        if batched:
+        if cpu_computation:
+            suffix = "_cpu_computation_analysis.csv"
+        elif batched:
             suffix = "_batched_analysis.csv"
         elif nosep:
             suffix = "_nosep_analysis.csv"
@@ -1009,9 +1301,16 @@ def main():
         "--batched", action="store_true",
         help="Use batched mode: first group of each consecutive mha_gen->mha_gen pair.",
     )
+    mode_group.add_argument(
+        "--cpu-computation", action="store_true",
+        help="Use cpu-computation mode: first group of each consecutive "
+             "cpu_mixed->cpu_mixed pair (traces collected with "
+             "flex_opt_kvpr.py's --cpu-gpu-compute).",
+    )
     args = parser.parse_args()
     analyze_trace(args.trace, max_groups=args.max_groups,
-                  output_path=args.out, nosep=args.nosep, batched=args.batched)
+                  output_path=args.out, nosep=args.nosep, batched=args.batched,
+                  cpu_computation=args.cpu_computation)
 
 
 if __name__ == "__main__":
