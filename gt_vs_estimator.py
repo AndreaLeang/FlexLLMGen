@@ -61,6 +61,7 @@ import argparse
 import csv
 import dataclasses
 import glob
+import json
 import math
 import gzip
 import zstandard as zstd
@@ -82,6 +83,7 @@ try:
         CostModelConfig,
         get_available_offloadings,
         layer_prediction,
+        strategy_prediction,
         pinned_pred,
         transfer_pred,
         recomp_calc_pred,
@@ -365,6 +367,7 @@ class ExperimentConfig:
     flexllmgen_script: str = "flexllmgen/flex_opt_kvpr.py"
     trace_analyzer_script: str = "trace_analyzer.py"
     result_analyzer_script: str = "trace_result_analyzer.py"
+    bench_runner_script: str = "flex_bench_runner.py"
     output_dir: str = "./gt_vs_est_runs"
 
     # ---- pre-computed paths (populated by the runner) ----
@@ -1024,6 +1027,312 @@ def run_flexllm_profile_with_oom_retry(
                   f"offload_percent={next_off:.1f}%")
             exp = dataclasses.replace(exp, offload_percent=next_off)
             current = next_off
+
+
+# ===========================================================================
+# Section 3b – Direct (non-profiling) benchmarking pipeline
+#
+# Alternative to Section 3's profile-and-analyze pipeline: instead of
+# recording a PyTorch trace and deriving throughput/latency from it (Steps
+# 2-4 above), this launches flex_bench_runner.py, which calls
+# flex_opt_kvpr.run_flexllmgen() directly and reports its return value
+# (already prefill-excluded decode latency/throughput -- see that script's
+# docstring) as a single JSON line instead of a trace file. Used by
+# run_bench_comparison() for the batch_size x recompute_len optimal-config
+# search (see that function).
+# ===========================================================================
+
+FLEXBENCH_RESULT_PREFIX = "FLEXBENCH_RESULT "
+
+
+def build_flexllm_bench_command(
+    exp: ExperimentConfig,
+    hw: HardwareConfig,
+    bench_num_runs: int,
+) -> List[str]:
+    """
+    Build the subprocess command for flex_bench_runner.py -- the direct-
+    benchmark counterpart to build_flexllm_command(). Same --model/
+    --percent/--gpu-batch-size/... flags (see build_flexllm_command's
+    docstring for the percent[0..5] layout), minus --profile/--save-to
+    (flex_bench_runner.py never profiles), plus --bench-num-runs.
+
+    --cpu-computation experiments are out of scope for this path (the
+    optimal-config comparison is batch_size x recompute_len only -- see
+    run_bench_comparison) -- raises rather than silently mis-building the
+    command for a mode this path was never validated against.
+    """
+    if exp.cpu_computation:
+        raise ValueError(
+            "build_flexllm_bench_command: --cpu-computation experiments "
+            "are not supported by the direct-benchmark path -- see "
+            "run_bench_comparison."
+        )
+
+    offload = int(exp.offload_percent) if exp.offload_percent is not None else 0
+    kv_gpu = 100 - offload
+    kv_cpu = offload
+    percent_args = ["100", "0", str(kv_gpu), str(kv_cpu), "100", "0"]
+
+    python_exe = sys.executable
+    cmd = [
+        python_exe, exp.bench_runner_script,
+        "--model", exp.model,
+        "--prompt-len", str(exp.prompt_len),
+        "--gen-len", str(exp.gen_len),
+        "--gpu-batch-size", str(exp.batch_size),
+        "--num-gpu-batches", str(exp.num_batches),
+        "--percent", *percent_args,
+        "--recompute-len", str(exp.recompute_len),
+        "--sep-layer", "true",
+        "--bench-num-runs", str(bench_num_runs),
+    ]
+
+    if hw.cpu_bind is not None and hw.gpu_bind is not None:
+        numactl = [
+            "numactl",
+            f"--cpunodebind={hw.cpu_bind}",
+            f"--membind={hw.cpu_bind}",
+        ]
+        env_prefix = [f"CUDA_VISIBLE_DEVICES={hw.gpu_bind}"]
+        if hw.sudo_password:
+            cmd = (
+                ["bash", "-c",
+                 f"echo '{hw.sudo_password}' | sudo -S "
+                 + " ".join(numactl)
+                 + " env " + " ".join(env_prefix)
+                 + " " + " ".join(cmd)]
+            )
+        else:
+            cmd = numactl + ["env"] + env_prefix + cmd
+
+    return cmd
+
+
+def run_flexllm_bench(
+    exp: ExperimentConfig,
+    hw: HardwareConfig,
+    bench_num_runs: int,
+    dry_run: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Launch flex_bench_runner.py once (it internally repeats
+    run_flexllmgen() bench_num_runs times in-process -- see that script)
+    and return its per-run results, run 0 (warm-up) included. See
+    aggregate_bench_runs() for how the warm-up is dropped before averaging.
+
+    Unlike run_flexllm_profile(), stdout is fully captured (not streamed
+    live) -- flex_bench_runner.py's own progress/verbose prints are
+    forwarded to the console after the subprocess finishes, once we have
+    them, so nothing is lost, just delayed until the run completes; this
+    is necessary to reliably find its FLEXBENCH_RESULT line, which is the
+    only thing actually parsed here.
+
+    Raises OOMError on a real CUDA OOM (detected the same way as the
+    profiling path -- see _is_oom_output), or RuntimeError for anything
+    else, including a model-init failure (flex_bench_runner.py's "ok":
+    false payload -- see that script's docstring for why this can't be
+    told apart from a genuine OOM).
+    """
+    cmd = build_flexllm_bench_command(exp, hw, bench_num_runs)
+    print(f"  [run] flex_bench_runner: {' '.join(cmd)}")
+    if dry_run:
+        print("  [dry_run] would execute the above command.")
+        return []
+
+    result = subprocess.run(cmd, capture_output=True, text=True)
+
+    if result.stdout:
+        print(result.stdout, end="" if result.stdout.endswith("\n") else "\n")
+    if result.stderr:
+        print(result.stderr, file=sys.stderr,
+              end="" if result.stderr.endswith("\n") else "\n")
+
+    if result.returncode != 0:
+        if _is_oom_output(result.stderr or ""):
+            raise OOMError(
+                f"CUDA out-of-memory during direct benchmarking for {exp.experiment_id}"
+            )
+        raise RuntimeError(
+            f"flex_bench_runner.py failed (exit {result.returncode}) for "
+            f"{exp.experiment_id}: {_stderr_tail(result.stderr)}"
+        )
+
+    result_line = None
+    for line in (result.stdout or "").splitlines():
+        if line.startswith(FLEXBENCH_RESULT_PREFIX):
+            result_line = line[len(FLEXBENCH_RESULT_PREFIX):]
+    if result_line is None:
+        raise RuntimeError(
+            f"flex_bench_runner.py exited 0 but printed no "
+            f"{FLEXBENCH_RESULT_PREFIX.strip()} line for {exp.experiment_id} "
+            f"-- stdout:\n{result.stdout}"
+        )
+
+    payload = json.loads(result_line)
+    if not payload.get("ok", False):
+        raise RuntimeError(
+            f"flex_bench_runner.py reported failure for {exp.experiment_id}: "
+            f"{payload.get('error', '(no detail)')}"
+        )
+
+    return payload["runs"]
+
+
+def run_flexllm_bench_with_oom_retry(
+    exp: ExperimentConfig,
+    hw: HardwareConfig,
+    opt_config: Any,
+    bench_num_runs: int,
+    dry_run: bool = False,
+) -> Tuple[List[Dict[str, Any]], ExperimentConfig]:
+    """
+    Wrap run_flexllm_bench() with the same automatic offload-percent
+    escalation as run_flexllm_profile_with_oom_retry() -- see that
+    function's docstring for the rationale. Returns (runs, possibly-
+    updated exp), mirroring that function's return shape.
+    """
+    if not ESTIMATOR_AVAILABLE or exp.cpu_computation:
+        runs = run_flexllm_bench(exp, hw, bench_num_runs, dry_run=dry_run)
+        return runs, exp
+
+    try:
+        candidates = get_offload_candidates(exp, hw, opt_config)
+    except OOMError:
+        candidates = []
+
+    current = exp.offload_percent if exp.offload_percent is not None else 0.0
+    higher_candidates = sorted(c for c in candidates if c > current)
+
+    while True:
+        try:
+            runs = run_flexllm_bench(exp, hw, bench_num_runs, dry_run=dry_run)
+            return runs, exp
+        except OOMError:
+            if current >= 100.0 or not higher_candidates:
+                print(f"  [OOM] offload_percent={current:.1f}% is already the "
+                      f"highest feasible candidate — cannot offload further.")
+                raise
+            next_off = higher_candidates.pop(0)
+            print(f"  [OOM] real CUDA OOM at offload_percent={current:.1f}% "
+                  f"(analytical prediction was optimistic) — retrying at "
+                  f"offload_percent={next_off:.1f}%")
+            exp = dataclasses.replace(exp, offload_percent=next_off)
+            current = next_off
+
+
+def aggregate_bench_runs(runs: List[Dict[str, Any]]) -> Dict[str, float]:
+    """
+    Drop the warm-up run (run_idx==0 / is_warmup==True) and average the
+    rest.
+
+    Returns
+    -------
+    Dict with keys:
+      bench_num_runs_ok                       int   — measured runs averaged (excludes warm-up)
+      bench_mean_decode_latency_ms            float
+      bench_std_decode_latency_ms             float — 0.0 when only one measured run
+      bench_mean_decode_throughput_tok_per_s  float
+      bench_std_decode_throughput_tok_per_s   float
+      bench_mean_total_throughput_tok_per_s   float
+    """
+    measured = [r for r in runs if not r.get("is_warmup", r.get("run_idx") == 0)]
+    if not measured:
+        raise ValueError("aggregate_bench_runs: no measured (non-warmup) runs to average")
+
+    def _mean(xs):
+        return sum(xs) / len(xs)
+
+    def _std(xs, m):
+        if len(xs) < 2:
+            return 0.0
+        var = sum((x - m) ** 2 for x in xs) / (len(xs) - 1)
+        return var ** 0.5
+
+    lat = [r["decode_latency_s"] * 1e3 for r in measured]  # s -> ms
+    thr = [r["decode_throughput_tok_per_s"] for r in measured]
+    tot = [r["total_throughput"] for r in measured]
+
+    mean_lat, mean_thr, mean_tot = _mean(lat), _mean(thr), _mean(tot)
+    return {
+        "bench_num_runs_ok":                     len(measured),
+        "bench_mean_decode_latency_ms":           round(mean_lat, 3),
+        "bench_std_decode_latency_ms":             round(_std(lat, mean_lat), 3),
+        "bench_mean_decode_throughput_tok_per_s":  round(mean_thr, 3),
+        "bench_std_decode_throughput_tok_per_s":   round(_std(thr, mean_thr), 3),
+        "bench_mean_total_throughput_tok_per_s":   round(mean_tot, 3),
+    }
+
+
+def predict_decode_stats(
+    exp: ExperimentConfig,
+    hw: HardwareConfig,
+    opt_config: Any,
+    gpu_estimator: Any,
+) -> Dict[str, float]:
+    """
+    Whole-run decode-phase latency/throughput prediction from
+    kv_schedule_optimization.strategy_prediction(), for the optimal-config
+    comparison (run_bench_comparison). Unlike get_estimator_breakdown() (a
+    single representative layer's µs-level segment breakdown, used for the
+    trace-based per-segment comparison), this sums the predicted latency
+    across every layer and every decode step -- a whole-run number
+    directly comparable to aggregate_bench_runs()'s bench_mean_decode_*.
+
+    Forces the same "ideal" cost-model flags (use_ideal_bw/use_ideal_comp/
+    use_no_pinned) as main()'s default EstimatorMode(name="ideal", ...) for
+    the trace pipeline -- NOT just hw as passed in. Those three flags are
+    what route layer_calc_pred()/recomp_calc_pred() through their
+    closed-form formulas instead of the "Actual Model" branch, which calls
+    gpu_estimator.lookup(...) unconditionally. hw's use_ideal_* fields
+    default to False, so without this override, strategy_prediction()
+    would hit that branch and crash on gpu_estimator=None -- which is
+    exactly why the trace pipeline hasn't hit this (run_experiment always
+    routes hw through EstimatorMode.apply_to() first, e.g. the "ideal"
+    mode enabled by default in main()) but a plain hw passed straight
+    through here would. See EstimatorMode.apply_to().
+
+    decode=True makes strategy_prediction() skip the cur_gen_len==0
+    (prefill) contribution to tot_latency entirely, so the result is
+    already prefill-excluded, matching the measured decode_latency_s from
+    flex_bench_runner.py (both are "gen_len - 1 decode steps, no
+    prefill").
+    """
+    if not ESTIMATOR_AVAILABLE:
+        raise RuntimeError("kv_schedule_optimization is not importable.")
+
+    ideal_mode = EstimatorMode(
+        name="ideal", impl="kv_schedule",
+        use_ideal_bw=True, use_ideal_comp=True, use_no_pinned=True,
+    )
+    hw = ideal_mode.apply_to(hw)
+
+    hw_cfg = hw.to_cost_model_config(opt_config=opt_config)
+    offload_pct = exp.offload_percent if exp.offload_percent is not None else 0.0
+
+    (tot_energy, tot_latency, time_to_first_token, avg_energy_per_layer,
+     avg_latency_per_layer, pct_energy_offload, pct_energy_active,
+     pct_latency_transfer, component_breakdown) = strategy_prediction(
+        opt_config,
+        exp.num_prompts,
+        exp.prompt_len,
+        exp.gen_len,
+        hw_cfg,
+        exp.recompute_len,
+        offload_pct,
+        exp.batch_size,
+        exp.num_batches,
+        gpu_estimator,
+        decode=True,
+        break_MHA=False,
+    )
+
+    n_tokens = max(exp.gen_len - 1, 1)
+    decode_throughput = (exp.num_prompts * n_tokens) / max(tot_latency, 1e-10)
+    return {
+        "est_decode_latency_ms":           round(tot_latency * 1e3, 3),
+        "est_decode_throughput_tok_per_s": round(decode_throughput, 3),
+    }
 
 
 def _stderr_tail(stderr: Optional[str], max_lines: int = 20) -> str:
@@ -2637,6 +2946,317 @@ def run_comparison(
 
 
 # ===========================================================================
+# Section 6b – Bench-mode orchestration (optimal-config comparison)
+#
+# Direct-benchmark counterpart to Section 6 (run_experiment/run_comparison):
+# same batch_size x recompute_len grid (via the existing
+# sweep_batch_and_recompute(), which already resolves offload_percent to
+# the minimum feasible per point -- see that function), but each point is
+# measured via flex_bench_runner.py (Section 3b) instead of profiled, and
+# compared against kv_schedule_optimization's own whole-run prediction
+# (predict_decode_stats, Section 3b) instead of the single-layer
+# get_estimator_breakdown(). --cpu-computation is out of scope here -- see
+# build_flexllm_bench_command.
+# ===========================================================================
+
+BENCH_META_COLS = [
+    "experiment_id",
+    "model",
+    "prompt_len",
+    "gen_len",
+    "num_prompts",
+    "batch_size",
+    "num_batches",
+    "recompute_len",
+    "offload_percent",   # minimum feasible, as used (may have escalated on OOM retry)
+    "status",             # "ok" | "oom" | "error"
+    "skip_reason",
+    "bench_num_runs_ok",
+    "bench_mean_decode_latency_ms",
+    "bench_std_decode_latency_ms",
+    "bench_mean_decode_throughput_tok_per_s",
+    "bench_std_decode_throughput_tok_per_s",
+    "bench_mean_total_throughput_tok_per_s",
+    "est_decode_latency_ms",
+    "est_decode_throughput_tok_per_s",
+]
+
+
+def run_bench_experiment(
+    exp: ExperimentConfig,
+    hw: HardwareConfig,
+    opt_config: Any,
+    gpu_estimator: Any,
+    bench_num_runs: int,
+    dry_run: bool = False,
+) -> Dict[str, Any]:
+    """
+    Direct-benchmark counterpart to run_experiment(): Step 1 (resolve
+    offload_percent) is identical; the trace collect/analyze/parse steps
+    are replaced by a single run_flexllm_bench_with_oom_retry() call, and
+    the single-layer estimator call is replaced by predict_decode_stats().
+    Always returns a dict (never None) -- same status="ok"/"oom"/"error"
+    convention as run_experiment().
+    """
+    print(f"\n{'='*60}")
+    print(f"Bench experiment: {exp.experiment_id}")
+    print(f"{'='*60}")
+
+    row: Dict[str, Any] = {
+        "experiment_id": exp.experiment_id,
+        "model": exp.model,
+        "prompt_len": exp.prompt_len,
+        "gen_len": exp.gen_len,
+        "num_prompts": exp.num_prompts,
+        "batch_size": exp.batch_size,
+        "num_batches": exp.num_batches,
+        "recompute_len": exp.recompute_len,
+        "offload_percent": exp.offload_percent,
+        "status": STATUS_ERROR,
+        "skip_reason": "",
+    }
+
+    # Step 1: resolve offload_percent to the minimum feasible, same as
+    # run_experiment() -- every caller in practice goes through
+    # sweep_batch_and_recompute() first, which already does this, so this
+    # branch mainly matters for direct Python-API callers.
+    if exp.offload_percent is None:
+        if not ESTIMATOR_AVAILABLE:
+            row["skip_reason"] = "estimator not available; cannot resolve offload_percent"
+            return row
+        try:
+            exp = dataclasses.replace(
+                exp, offload_percent=get_min_offload_percent(exp, hw, opt_config)
+            )
+        except OOMError as e:
+            row["status"], row["skip_reason"] = STATUS_OOM, str(e)
+            return row
+        except Exception as e:
+            row["skip_reason"] = f"Step 1 failed: {e}"
+            return row
+    row["offload_percent"] = exp.offload_percent
+    print(f"  offload_percent = {exp.offload_percent:.1f}%")
+
+    try:
+        runs, exp = run_flexllm_bench_with_oom_retry(
+            exp, hw, opt_config, bench_num_runs, dry_run=dry_run
+        )
+    except OOMError as e:
+        row["status"], row["skip_reason"] = STATUS_OOM, str(e)
+        return row
+    except Exception as e:
+        row["skip_reason"] = f"benchmarking failed: {e}"
+        return row
+    row["offload_percent"] = exp.offload_percent  # may have escalated on OOM retry
+
+    if dry_run:
+        row["status"] = STATUS_OK
+        return row
+
+    try:
+        bench_stats = aggregate_bench_runs(runs)
+        row.update(bench_stats)
+        print(f"  Bench: {bench_stats['bench_num_runs_ok']} run(s) averaged — "
+              f"decode throughput {bench_stats['bench_mean_decode_throughput_tok_per_s']:.2f} tok/s, "
+              f"decode latency {bench_stats['bench_mean_decode_latency_ms']:.2f} ms")
+    except Exception as e:
+        row["skip_reason"] = f"aggregating bench runs failed: {e}"
+        return row
+
+    try:
+        est_stats = predict_decode_stats(exp, hw, opt_config, gpu_estimator)
+        row.update(est_stats)
+        print(f"  Estimator: predicted decode throughput "
+              f"{est_stats['est_decode_throughput_tok_per_s']:.2f} tok/s, "
+              f"decode latency {est_stats['est_decode_latency_ms']:.2f} ms")
+    except Exception as e:
+        print(f"  [warn] estimator prediction failed: {e}")
+        row["est_decode_latency_ms"] = ""
+        row["est_decode_throughput_tok_per_s"] = ""
+
+    row["status"] = STATUS_OK
+    return row
+
+
+def write_bench_csv(rows: List[Dict[str, Any]], output_csv: str) -> None:
+    """Write the per-config bench-vs-estimator CSV (BENCH_META_COLS)."""
+    with open(output_csv, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=BENCH_META_COLS)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({col: row.get(col, "") for col in BENCH_META_COLS})
+    print(f"\nWrote {len(rows)} row(s) to {output_csv}")
+
+
+def _config_key(row: Dict[str, Any]) -> Tuple[int, int]:
+    return (row["batch_size"], row["recompute_len"])
+
+
+def _find_best(
+    rows: List[Dict[str, Any]], value_key: str, higher_is_better: bool
+) -> Optional[Dict[str, Any]]:
+    """Row with the best (status==ok, non-blank) value_key, or None."""
+    candidates = [
+        r for r in rows
+        if r.get("status") == STATUS_OK and r.get(value_key) not in (None, "")
+    ]
+    if not candidates:
+        return None
+    return (max if higher_is_better else min)(candidates, key=lambda r: r[value_key])
+
+
+def find_optimal_configs(
+    rows: List[Dict[str, Any]]
+) -> Dict[str, Dict[str, Optional[Dict[str, Any]]]]:
+    """
+    For each objective, find the measured-optimal config (best
+    bench_mean_*) and the estimator-optimal config (best est_decode_*)
+    among `rows` (one row per (batch_size, recompute_len) point).
+
+    Note: with num_prompts and gen_len fixed across the whole grid (as
+    sweep_batch_and_recompute() keeps them -- only offload_percent/
+    batch_size/recompute_len vary), decode_throughput and decode_latency
+    are exact inverses of each other for every row (same token count,
+    different latency), so the two objectives below will always agree on
+    which config is optimal, on both the measured and the estimator side.
+    Both are still computed/reported -- this stops being true the moment
+    num_prompts or gen_len vary across the grid too.
+
+    Returns {objective: {"measured": row_or_None, "estimator": row_or_None}}.
+    """
+    return {
+        "decode_throughput": {
+            "measured":  _find_best(rows, "bench_mean_decode_throughput_tok_per_s", higher_is_better=True),
+            "estimator": _find_best(rows, "est_decode_throughput_tok_per_s",        higher_is_better=True),
+        },
+        "decode_latency": {
+            "measured":  _find_best(rows, "bench_mean_decode_latency_ms", higher_is_better=False),
+            "estimator": _find_best(rows, "est_decode_latency_ms",        higher_is_better=False),
+        },
+    }
+
+
+def write_optimal_summary(
+    rows: List[Dict[str, Any]],
+    optimal: Dict[str, Dict[str, Optional[Dict[str, Any]]]],
+    output_path: str,
+) -> str:
+    """
+    Write a small, separate report answering the actual question this
+    comparison is for: if you trusted the estimator's pick, how much
+    measured performance would you actually lose vs. the true (measured)
+    best? Deliberately NOT folded into the per-config CSV (write_bench_csv)
+    -- that one has a row per config; this has one answer per sweep.
+
+    "Regret" = the MEASURED value at the estimator's chosen (batch_size,
+    recompute_len) vs. the measured value at the measured-optimal config,
+    as a percentage of the true best. If both sides pick the same config,
+    match=True and there is no regret to report -- that's the estimator's
+    prediction being validated by ground truth for this sweep.
+
+    Returns the report text (also written to output_path and printed).
+    """
+    by_key = {_config_key(r): r for r in rows if r.get("status") == STATUS_OK}
+    lines = [
+        "Optimal configuration comparison (batch_size x recompute_len; "
+        "offload_percent = minimum feasible)",
+        "=" * 78,
+    ]
+
+    objective_specs = [
+        ("decode_throughput", True,  "tok/s", "bench_mean_decode_throughput_tok_per_s"),
+        ("decode_latency",    False, "ms",    "bench_mean_decode_latency_ms"),
+    ]
+    for objective, higher_is_better, unit, measured_key in objective_specs:
+        m = optimal.get(objective, {}).get("measured")
+        e = optimal.get(objective, {}).get("estimator")
+        lines.append(f"\nObjective: {objective}")
+        if m is None or e is None:
+            lines.append("  (insufficient data — one or both sides have no valid rows)")
+            continue
+
+        m_key, e_key = _config_key(m), _config_key(e)
+        match = (m_key == e_key)
+        lines.append(f"  Measured-optimal   : batch_size={m_key[0]}, recompute_len={m_key[1]} "
+                      f"({m[measured_key]:.2f} {unit})")
+        measured_at_estimator_choice = by_key.get(e_key, {}).get(measured_key)
+        moec_str = (f"{measured_at_estimator_choice:.2f} {unit}"
+                    if isinstance(measured_at_estimator_choice, (int, float)) else "n/a")
+        lines.append(f"  Estimator-optimal  : batch_size={e_key[0]}, recompute_len={e_key[1]} "
+                      f"(predicted best; measured value at this config: {moec_str})")
+        lines.append(f"  Configs match      : {match}")
+
+        if not match and isinstance(measured_at_estimator_choice, (int, float)):
+            measured_at_true_best = m[measured_key]
+            if higher_is_better:
+                regret_pct = 100.0 * (measured_at_true_best - measured_at_estimator_choice) / measured_at_true_best
+            else:
+                regret_pct = 100.0 * (measured_at_estimator_choice - measured_at_true_best) / measured_at_true_best
+            lines.append(f"  Regret if trusting estimator's pick: {regret_pct:.1f}% worse "
+                          f"{objective} than the true measured optimum")
+
+    report = "\n".join(lines)
+    with open(output_path, "w") as f:
+        f.write(report + "\n")
+    print("\n" + report)
+    print(f"\nWrote optimal-config summary to {output_path}")
+    return report
+
+
+def run_bench_comparison(
+    base: ExperimentConfig,
+    batch_sizes: List[int],
+    recompute_lens: List[int],
+    hw: HardwareConfig,
+    opt_config: Any,
+    gpu_estimator: Any,
+    bench_num_runs: int = 6,
+    output_csv: str = "bench_comparison_results.csv",
+    optimal_summary_path: str = "optimal_config_summary.txt",
+    dry_run: bool = False,
+) -> List[Dict[str, Any]]:
+    """
+    Direct-benchmark counterpart to run_comparison(): sweeps the
+    batch_size x recompute_len grid via sweep_batch_and_recompute() (which
+    sets offload_percent to the minimum feasible per point), measures each
+    point with flex_bench_runner.py instead of profiling, and writes both
+    the per-config CSV and the separate optimal-config summary.
+    """
+    if not ESTIMATOR_AVAILABLE:
+        raise RuntimeError(
+            "run_bench_comparison needs kv_schedule_optimization (for both "
+            "the offload_percent search and the decode-stats prediction) "
+            "— it is not importable."
+        )
+
+    experiments = sweep_batch_and_recompute(base, batch_sizes, recompute_lens, hw, opt_config)
+    print(f"\nBench sweep: {len(experiments)} (batch_size, recompute_len) point(s)")
+
+    rows = [
+        run_bench_experiment(exp, hw, opt_config, gpu_estimator, bench_num_runs, dry_run=dry_run)
+        for exp in experiments
+    ]
+
+    n_ok = sum(1 for r in rows if r.get("status") == STATUS_OK)
+    print(f"\nBench sweep complete: {n_ok}/{len(rows)} ok "
+          f"(out of {len(rows)} total)")
+
+    if not rows:
+        print("No experiments to write.")
+        return rows
+
+    write_bench_csv(rows, output_csv)
+
+    if dry_run:
+        print("[dry_run] skipping optimal-config summary (no bench data collected).")
+        return rows
+
+    optimal = find_optimal_configs(rows)
+    write_optimal_summary(rows, optimal, optimal_summary_path)
+    return rows
+
+
+# ===========================================================================
 # Section 7 – Entry point / example usage
 # ===========================================================================
 
@@ -2695,6 +3315,47 @@ def main():
     parser.add_argument(
         "--recompute-lens", type=int, nargs="+", default=[0, 256, 512, 1024],
         help="Recompute lengths to sweep (for recompute and batch_and_recompute sweeps).",
+    )
+    parser.add_argument(
+        "--bench", action="store_true",
+        help=(
+            "Run the direct (non-profiling) benchmark + optimal-config "
+            "comparison instead of the trace-based pipeline: flex_bench_runner.py "
+            "calls flex_opt_kvpr.run_flexllmgen() directly --bench-runs times "
+            "per (batch_size, recompute_len) point (--batch-sizes x "
+            "--recompute-lens, ignoring --sweep -- always the full cross-"
+            "product), offload_percent fixed to the minimum feasible as usual. "
+            "The first run is discarded as warm-up; the rest are averaged. "
+            "Writes --bench-output-csv (one row per config) and "
+            "--optimal-summary (measured-optimal vs. estimator-optimal config, "
+            "for both decode throughput and decode latency). Not compatible "
+            "with --cpu-computation, --collection-only, --analysis-only, "
+            "--num-runs, --trace-cleanup, or --estimator-impl -- those are "
+            "trace-pipeline-only options."
+        ),
+    )
+    parser.add_argument(
+        "--bench-runs", type=int, default=6, metavar="N",
+        help=(
+            "Total flex_opt_kvpr.run_flexllmgen() calls per config (default 6). "
+            "Run 0 is always discarded as warm-up; the remaining N-1 are "
+            "averaged. Only used with --bench."
+        ),
+    )
+    parser.add_argument(
+        "--bench-runner-script", default="flex_bench_runner.py",
+        help="Path to flex_bench_runner.py. Only used with --bench.",
+    )
+    parser.add_argument(
+        "--bench-output-csv", default="bench_comparison_results.csv",
+        help="Per-config CSV output path for --bench mode.",
+    )
+    parser.add_argument(
+        "--optimal-summary", default="optimal_config_summary.txt",
+        help=(
+            "Output path for the separate measured-vs-estimator optimal-"
+            "config report. Only used with --bench."
+        ),
     )
     parser.add_argument("--fixed-batch-size", type=int, default=2,
         help="Batch size for the recompute-only sweep.")
@@ -2966,8 +3627,35 @@ def main():
         flexllmgen_script=args.flexllm_script,
         trace_analyzer_script=args.trace_analyzer_script,
         result_analyzer_script=args.result_analyzer_script,
+        bench_runner_script=args.bench_runner_script,
     )
-    
+
+    # --- --bench: direct-benchmark + optimal-config comparison, entirely
+    # separate from the trace pipeline below (see run_bench_comparison). ---
+    if args.bench:
+        if args.cpu_computation:
+            print("ERROR: --bench is not compatible with --cpu-computation "
+                  "(the optimal-config comparison is batch_size x recompute_len "
+                  "only -- see build_flexllm_bench_command).")
+            sys.exit(1)
+        if args.collection_only or args.analysis_only:
+            print("ERROR: --bench is not compatible with --collection-only/"
+                  "--analysis-only (those are trace-pipeline-only options).")
+            sys.exit(1)
+        run_bench_comparison(
+            base=base,
+            batch_sizes=args.batch_sizes,
+            recompute_lens=args.recompute_lens,
+            hw=hw,
+            opt_config=opt_config,
+            gpu_estimator=gpu_estimator,
+            bench_num_runs=args.bench_runs,
+            output_csv=args.bench_output_csv,
+            optimal_summary_path=args.optimal_summary,
+            dry_run=args.dry_run,
+        )
+        return
+
     # --- Handle --trace-json shortcut (single experiment from existing trace) ---
     if args.trace_json is not None:
         trace_path = os.path.abspath(args.trace_json)

@@ -16,8 +16,8 @@ from flexllmgen.opt_config import get_opt_config
 # from flexllmgen.flex_opt import Policy
 from flexllmgen.utils import GB, T
 
-sys.path.append( '../energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
-from gee.gee_utils import get_gee
+# sys.path.append( '../energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
+# from gee.gee_utils import get_gee
 
 alpha_g = 0.8
 alpha_c = 0.8
@@ -157,8 +157,8 @@ def fast_strat_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_c
     avg_latency_per_layer["MHA"] = (fir_tot_MHA_latency + (gen_len - 1) *tot_MHA_latency, gen_len*num_batches*num_hidden_layers)
     avg_latency_per_layer["MLP"] = (fir_tot_MLP_latency+(gen_len - 1) *tot_MLP_latency, gen_len*num_batches*num_hidden_layers)
 
-    percent_energy_offloading = tot_transfer_energy / tot_energy * 100
-    percent_energy_active = tot_active_energy / tot_energy * 100
+    percent_energy_offloading = (tot_transfer_energy / tot_energy * 100) if tot_energy else 0.0
+    percent_energy_active = (tot_active_energy / tot_energy * 100) if tot_energy else 0.0
     percent_latency_transfer = tot_transfer_latency / tot_latency * 100
 
     # Total Time For Each Component 
@@ -268,8 +268,8 @@ def strategy_prediction(model, num_of_prompts, prompt_len, gen_len, hardware_con
         # print(f"total energy seen so far: {tot_energy}")
 
     # get total energy and latency and time_to_first_token
-    percent_energy_offloading = tot_transfer_energy / tot_energy *100
-    percent_energy_active = tot_active_energy / tot_energy * 100
+    percent_energy_offloading = (tot_transfer_energy / tot_energy * 100) if tot_energy else 0.0
+    percent_energy_active = (tot_active_energy / tot_energy * 100) if tot_energy else 0.0
     percent_latency_transfer = tot_transfer_latency / tot_latency * 100
 
     # Total Time For Each Component 
@@ -1286,7 +1286,7 @@ if __name__ == "__main__":
     print(f"using ideal comp: { config.use_ideal_comp}")
     
 
-    #TODO: specify hardware config
+    # TODO: specify hardware config
     print("currently getting gpu estimator")
     gpu_estimator = get_gee(gpu_yaml_path="../energaizer-ispass26-artifact/config/gpu/yz8.yaml", 
                         lut_yaml_path="../energaizer-ispass26-artifact/experiments_endtoend/exp_config/a100_dvfs_lut_config.yaml", 
