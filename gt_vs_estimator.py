@@ -1379,6 +1379,7 @@ def run_trace_analysis(
     dry_run: bool = False,
     run_idx: Optional[int] = None,
     force_reanalysis: bool = False,
+    crit_only_reanalysis: bool = False,
 ) -> str:
     """
     Run trace_analyzer.py (--batched) then trace_result_analyzer.py (--batched)
@@ -1401,6 +1402,21 @@ def run_trace_analysis(
         without re-running the (expensive) profiling step -- see
         _run_one_collection_and_analysis, which is the only caller and is
         the one that decides whether Step 2 (collection) even runs.
+
+    crit_only_reanalysis : if True, also skip the shortcut like
+        force_reanalysis, but additionally skip Step 1 (trace_analyzer.py)
+        entirely -- the raw per-op-duration analysis_csv from a prior run is
+        reused as-is, and only Step 2 (trace_result_analyzer.py, which
+        derives path1..path6/critical-path/critical-path-winner from the
+        already-extracted columns) re-runs. Use this to pick up a
+        trace_result_analyzer.py-only fix (e.g. a corrected critical-path
+        formula) without re-parsing the (large, slow) trace JSON at all.
+        Requires analysis_csv to already exist; raises otherwise, since
+        there is nothing to re-derive the critical path from. Mutually
+        exclusive with force_reanalysis at the caller level
+        (run_comparison) -- if both were set here, force_reanalysis would
+        just re-produce analysis_csv, making crit_only_reanalysis's whole
+        point (skip the JSON reparse) moot.
     """
     stem = Path(trace_json).stem
     if run_idx is not None:
@@ -1415,28 +1431,42 @@ def run_trace_analysis(
     analysis_csv = os.path.join(out_dir, stem + analysis_suffix)
     summary_csv  = os.path.join(out_dir, stem + summary_suffix)
 
-    if os.path.exists(summary_csv) and not force_reanalysis:
+    skip_shortcut = force_reanalysis or crit_only_reanalysis
+    if os.path.exists(summary_csv) and not skip_shortcut:
         print(f"  [skip] summary CSV already exists: {summary_csv}")
         return summary_csv
-    if os.path.exists(summary_csv) and force_reanalysis:
+    if os.path.exists(summary_csv) and skip_shortcut:
         print(f"  [force-reanalysis] summary CSV already exists but re-running "
               f"analysis anyway: {summary_csv}")
 
     # Step 1: trace_analyzer.py
-    cmd1 = [
-        sys.executable, exp.trace_analyzer_script,
-        trace_json, mode_flag, "--out", analysis_csv,
-    ]
-    print(f"  [run] trace_analyzer: {' '.join(cmd1)}")
-    if not dry_run:
-        r = subprocess.run(cmd1, stderr=subprocess.PIPE, text=True)
-        if r.returncode != 0:
-            if r.stderr:
-                print(r.stderr, file=sys.stderr, end="")
+    if crit_only_reanalysis:
+        if not os.path.isfile(analysis_csv):
             raise RuntimeError(
-                f"trace_analyzer.py failed (exit {r.returncode}) for {trace_json}: "
-                f"{_stderr_tail(r.stderr)}"
+                f"--crit-only-reanalysis requires an existing raw analysis CSV "
+                f"(trace_analyzer.py's output), but none was found at "
+                f"{analysis_csv}. This mode only re-derives the critical path "
+                f"from an already-parsed trace and never re-parses the JSON. "
+                f"Run once without --crit-only-reanalysis (or with "
+                f"--force-reanalysis) first to produce it."
             )
+        print(f"  [crit-only] skipping trace_analyzer.py (JSON re-parse) -- "
+              f"reusing existing raw analysis CSV: {analysis_csv}")
+    else:
+        cmd1 = [
+            sys.executable, exp.trace_analyzer_script,
+            trace_json, mode_flag, "--out", analysis_csv,
+        ]
+        print(f"  [run] trace_analyzer: {' '.join(cmd1)}")
+        if not dry_run:
+            r = subprocess.run(cmd1, stderr=subprocess.PIPE, text=True)
+            if r.returncode != 0:
+                if r.stderr:
+                    print(r.stderr, file=sys.stderr, end="")
+                raise RuntimeError(
+                    f"trace_analyzer.py failed (exit {r.returncode}) for {trace_json}: "
+                    f"{_stderr_tail(r.stderr)}"
+                )
 
     # Step 2: trace_result_analyzer.py
     cmd2 = [
@@ -1455,6 +1485,7 @@ def run_trace_analysis(
             )
 
     return summary_csv
+
 
 
 def compute_gt_decode_stats(
@@ -1601,8 +1632,8 @@ def load_gt_summary(
     There is NO separate "GPU batch" column in the summary CSV.  The
     critical-path analysis in trace_result_analyzer already selects the
     dominant path for each group independently, so every row is
-    self-contained: its `critical-path-winner` and `path1-inner-winner`
-    reflect the actual concurrent operations for that specific layer and batch.
+    self-contained: its `critical-path-winner` (one of path1..path6)
+    reflects the actual concurrent operations for that specific layer and batch.
 
     Averaging strategy
     ------------------
@@ -1710,8 +1741,9 @@ def load_gt_summary(
                 f"No critical-path-winner values found in {paths}. "
                 "Cannot apply --gt-dominant-path."
             )
-        # Tie-break: prefer path1 > path2 > path3 (alphabetical happens to work)
-        dominant = max(winner_counts, key=lambda w: (winner_counts[w], ["path3", "path2", "path1"].index(w) if w in ["path1", "path2", "path3"] else -1))
+        # Tie-break: prefer path1 > path2 > ... > path6 (alphabetical happens to work)
+        _PATH_LABELS = ["path1", "path2", "path3", "path4", "path5", "path6"]
+        dominant = max(winner_counts, key=lambda w: (winner_counts[w], list(reversed(_PATH_LABELS)).index(w) if w in _PATH_LABELS else -1))
         rows_before = len(rows)
         rows = [r for r in rows if r.get("critical-path-winner", "") == dominant]
         print(
@@ -1745,7 +1777,7 @@ def load_gt_summary(
     if dominant_path_only:        parts.append("dominant_path_only")
     filter_str = f"({', '.join(parts)})" if parts else "(no filter)"
     winners = {w: sum(1 for r in rows if r.get("critical-path-winner") == w)
-               for w in ["path1", "path2", "path3"]
+               for w in ["path1", "path2", "path3", "path4", "path5", "path6"]
                if any(r.get("critical-path-winner") == w for r in rows)}
     print(f"  GT: averaged {n} rows {filter_str} → winners: {winners}")
 
@@ -1765,11 +1797,10 @@ def build_gt_segments(row: Dict) -> Dict[str, float]:
     Extract latency breakdown from a batched summary row.
     Mirrors build_segments_batched() in plot_latency_single.py, but returns
     ALL segments (including those not on the critical path, where they are 0).
-    The critical-path segments come from the row; KVCache Store and Misc. CPU
-    are always present regardless of which path won.
+    Misc. CPU is always present regardless of which of the 6 paths won (see
+    analyze_row_batched() in trace_result_analyzer.py).
     """
     crit_winner = row.get("critical-path-winner", "")
-    inner_winner = row.get("path1-inner-winner", "")
 
     lhc = _fv(row, "load-hidden-compute-cudamemcpy")
     pm1 = _fv(row, "pin-memory-1")
@@ -1787,20 +1818,26 @@ def build_gt_segments(row: Dict) -> Dict[str, float]:
     segs["Misc. CPU"] = sum_all - crit
 
     if crit_winner == "path1":
-        if inner_winner == "subpath1":
-            segs["PinnedMemory CPU"] = pm1 + pm2
-            segs["KVCache Load"]     = lc2
-        elif inner_winner == "subpath2":
-            segs["PinnedMemory CPU"] = pm1
-            segs["KVCache Load"]     = lc1 + lc2
-        else:  # subpath3
-            segs["Recompute Load"] = lhc
-            segs["KVCache Load"]   = lc1 + lc2
+        segs["PinnedMemory CPU"] = pm1
+        segs["KVCache Load"]     = lc1 + lc2
+        segs["KVCache Store"]    = sc1 + sc2
     elif crit_winner == "path2":
+        segs["PinnedMemory CPU"] = pm1 + pm2
+        segs["KVCache Load"]     = lc2
+        segs["KVCache Store"]    = sc1 + sc2
+    elif crit_winner == "path3":
+        segs["Recompute Load"] = lhc
+        segs["KVCache Load"]   = lc1 + lc2
+        segs["KVCache Store"]  = sc1 + sc2
+    elif crit_winner == "path4":
         segs["Recompute Load"] = lhc
         segs["Recompute CUDA"] = recompute
         segs["MHA CUDA"]       = mha_cuda
-    else:  # path3
+    elif crit_winner == "path5":
+        segs["PinnedMemory CPU"] = pm1 + pm2
+        segs["Recompute CUDA"]   = recompute
+        segs["MHA CUDA"]         = mha_cuda
+    else:  # path6
         segs["PinnedMemory CPU"] = pm1 + pm2
         segs["KVCache Store"]    = sc1 + sc2
 
@@ -2172,6 +2209,7 @@ def _run_one_collection_and_analysis(
     run_idx: Optional[int] = None,
     trace_cleanup: str = TRACE_CLEANUP_NONE,
     force_reanalysis: bool = False,
+    crit_only_reanalysis: bool = False,
 ) -> Tuple[str, Optional[str], str, ExperimentConfig]:
     """
     Find-or-collect-or-analyze ONE run's trace/summary for the given
@@ -2216,6 +2254,17 @@ def _run_one_collection_and_analysis(
         there regardless) and composes with analysis_only (which only
         controls what happens when a trace is missing, not when a summary
         already exists).
+
+    crit_only_reanalysis : like force_reanalysis (also bypasses the Step 2+3
+        shortcut), but goes further -- Step 2 (trace collection) is skipped
+        unconditionally, never even checking for or touching the raw trace
+        JSON, since crit_only_reanalysis never needs it. Step 3 then runs
+        trace_result_analyzer.py only, against the existing raw analysis_csv
+        from a prior run (see run_trace_analysis). Use this to refresh
+        summaries after a trace_result_analyzer.py-only fix (e.g. a
+        corrected critical-path formula) without paying for either GPU
+        collection OR the JSON re-parse. Mutually exclusive with
+        collection_only, enforced by the caller (run_comparison).
 
     Returns (status, summary_csv, reason, updated_exp):
       status      : STATUS_OK | STATUS_COLLECTED | STATUS_NO_TRACE | STATUS_OOM | STATUS_ERROR
@@ -2275,6 +2324,7 @@ def _run_one_collection_and_analysis(
     have_summary = (
         not collection_only
         and not force_reanalysis
+        and not crit_only_reanalysis
         and (
             (exp.summary_csv_path and os.path.isfile(exp.summary_csv_path))
             or os.path.isfile(expected_summary_csv)
@@ -2299,9 +2349,19 @@ def _run_one_collection_and_analysis(
         exp = dataclasses.replace(exp, trace_json_path=trace_json, summary_csv_path=summary_csv)
         return STATUS_OK, summary_csv, "", exp
 
-    # ---- Step 2: trace collection (skip if trace_json_path already provided) ----
+    # ---- Step 2: trace collection (skip if trace_json_path already provided,
+    # or unconditionally under crit_only_reanalysis) ----
     trace_was_explicit_override = False
-    if exp.trace_json_path and os.path.isfile(exp.trace_json_path):
+    if crit_only_reanalysis:
+        # crit_only_reanalysis never touches the raw trace JSON (Step 1 is
+        # skipped too, inside run_trace_analysis) -- trace_json is only
+        # used below to derive analysis_csv/summary_csv's filename stem, so
+        # it doesn't need to exist on disk. Assumes collection_only=False;
+        # run_comparison() enforces that the two are mutually exclusive.
+        trace_json = exp.trace_json_path or expected_json
+        print(f"    Step 2: [skip] --crit-only-reanalysis never collects or "
+              f"reads the raw trace: {trace_json}")
+    elif exp.trace_json_path and os.path.isfile(exp.trace_json_path):
         print(f"    Step 2: [skip] using existing trace: {exp.trace_json_path}")
         trace_json = exp.trace_json_path
         trace_was_explicit_override = True
@@ -2356,12 +2416,14 @@ def _run_one_collection_and_analysis(
     print("    Step 3: running trace analysis pipeline...")
     try:
         summary_csv = run_trace_analysis(trace_json, exp, dry_run=dry_run, run_idx=run_idx,
-                                         force_reanalysis=force_reanalysis)
+                                         force_reanalysis=force_reanalysis,
+                                         crit_only_reanalysis=crit_only_reanalysis)
         exp = dataclasses.replace(exp, summary_csv_path=summary_csv)
     except Exception as e:
         return STATUS_ERROR, None, f"Step 3 trace analysis failed: {e}", exp
 
-    if analysis_only and not trace_was_explicit_override and trace_cleanup != TRACE_CLEANUP_NONE:
+    if (analysis_only and not trace_was_explicit_override and not crit_only_reanalysis
+            and trace_cleanup != TRACE_CLEANUP_NONE):
         # Mirrors the collection_only immediate-cleanup above, for the other
         # side of the same problem: --analysis-only may have just
         # decompressed an existing .json.tar.gz (via
@@ -2371,6 +2433,8 @@ def _run_one_collection_and_analysis(
         # not the raw trace, so there's no reason to leave it on disk until
         # the sweep's last experiment finishes. Skipped for explicit
         # trace_json_path overrides, same reasoning as collection_only.
+        # Also skipped under crit_only_reanalysis -- it never decompressed
+        # or even looked at the trace, so there's nothing to clean up.
         cleanup_traces([os.path.abspath(trace_json)], mode=trace_cleanup, dry_run=dry_run)
 
     return STATUS_OK, summary_csv, "", exp
@@ -2393,6 +2457,7 @@ def run_experiment(
     trace_cleanup: str = TRACE_CLEANUP_NONE,
     _generated_traces: Optional[List[str]] = None,
     force_reanalysis: bool = False,
+    crit_only_reanalysis: bool = False,
 ) -> Dict:
     """
     Execute the full pipeline for one experiment and return a CSV row dict.
@@ -2565,6 +2630,7 @@ def run_experiment(
             dry_run, collection_only, analysis_only, _generated_traces,
             run_idx=run_idx, trace_cleanup=trace_cleanup,
             force_reanalysis=force_reanalysis,
+            crit_only_reanalysis=crit_only_reanalysis,
         )
         if status == STATUS_OK:
             summary_csvs.append(summary_csv)
@@ -2812,6 +2878,7 @@ def run_comparison(
     analysis_only: bool = False,
     num_runs: int = 1,
     force_reanalysis: bool = False,
+    crit_only_reanalysis: bool = False,
 ) -> List[Dict]:
     """
     Run all experiments and write the comparison CSV.
@@ -2871,12 +2938,39 @@ def run_comparison(
                           experiment in the sweep might be missing its trace
                           entirely, to guarantee no fresh GPU collection is
                           triggered for those points either.
+    crit_only_reanalysis  If True, re-run trace_result_analyzer.py ONLY for
+                          every experiment (never trace_analyzer.py, never
+                          Step 2 collection), reusing each experiment's
+                          existing raw analysis_csv from a prior run. Use
+                          this to refresh a whole sweep's critical-path /
+                          Misc. CPU numbers after a trace_result_analyzer.py
+                          -only fix (e.g. a corrected critical-path formula)
+                          without paying for either GPU collection or the
+                          (also expensive) JSON re-parse. Raises per-
+                          experiment if analysis_csv doesn't exist yet for
+                          some point -- run a normal or --force-reanalysis
+                          pass first to produce it. Mutually exclusive with
+                          collection_only and with force_reanalysis.
     """
     if collection_only and analysis_only:
         raise ValueError(
             "--collection-only and --analysis-only are mutually exclusive "
             "(one skips analysis and only collects; the other skips "
             "collection and only analyzes what already exists)."
+        )
+    if collection_only and crit_only_reanalysis:
+        raise ValueError(
+            "--collection-only and --crit-only-reanalysis are mutually "
+            "exclusive (one only collects a trace and skips analysis "
+            "entirely; the other only re-derives the critical path and "
+            "never collects)."
+        )
+    if force_reanalysis and crit_only_reanalysis:
+        raise ValueError(
+            "--force-reanalysis and --crit-only-reanalysis are mutually "
+            "exclusive (force_reanalysis re-parses the trace JSON, which "
+            "would make crit_only_reanalysis's whole point -- skipping "
+            "that re-parse -- moot). Pick one."
         )
     validate_estimator_modes(estimator_modes)
     all_rows = []
@@ -2901,6 +2995,7 @@ def run_comparison(
             trace_cleanup=trace_cleanup,
             _generated_traces=generated_traces,
             force_reanalysis=force_reanalysis,
+            crit_only_reanalysis=crit_only_reanalysis,
         )
         all_rows.append(row)
         s = row.get("status", STATUS_OK)
@@ -3498,6 +3593,23 @@ def main():
         ),
     )
     parser.add_argument(
+        "--crit-only-reanalysis", action="store_true",
+        help=(
+            "Re-run trace_result_analyzer.py ONLY for every experiment -- "
+            "never trace_analyzer.py, never Step 2 collection -- reusing "
+            "each experiment's existing raw analysis_csv from a prior run. "
+            "Use this to refresh a whole sweep's critical-path / Misc. CPU "
+            "numbers after a trace_result_analyzer.py-only fix (e.g. a "
+            "corrected critical-path formula), without paying for either "
+            "GPU collection or the (also expensive) JSON re-parse that "
+            "--force-reanalysis still does. Requires analysis_csv to "
+            "already exist for each experiment -- run once without this "
+            "flag (or with --force-reanalysis) first if it doesn't. "
+            "Mutually exclusive with --collection-only and with "
+            "--force-reanalysis."
+        ),
+    )
+    parser.add_argument(
         "--num-runs", type=int, default=1, metavar="N",
         help=(
             "Repeat trace collection + analysis N times per experiment "
@@ -3764,6 +3876,7 @@ def main():
         analysis_only=args.analysis_only,
         num_runs=args.num_runs,
         force_reanalysis=args.force_reanalysis,
+        crit_only_reanalysis=args.crit_only_reanalysis,
     )
 
 

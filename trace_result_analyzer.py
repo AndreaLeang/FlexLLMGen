@@ -266,17 +266,18 @@ def analyze_row_batched(row, all_cols):
     mha-gen-cuda:
       Sum of compute-cuda-N ops whose origin is 'mha_gen'.
 
-    Critical path = max(path1, path2, path3):
+    Critical path = max of six dependency chains through the sub-op
+    timings. Numbering: 1=pin-memory-1, 2=pin-memory-2,
+    3=load-hidden-compute-cudamemcpy, 4=recompute-cuda, 5=mha-gen-cuda,
+    6=load-cache-cudamemcpy-1, 7=load-cache-cudamemcpy-2,
+    8=store-cache-cudamemcpy-1, 9=store-cache-cudamemcpy-2.
 
-      path1 = max(subpath1, subpath2, subpath3) + load-cache-cudamemcpy-2
-        subpath1 = pin-memory-1 + pin-memory-2
-        subpath2 = pin-memory-1 + load-cache-cudamemcpy-1
-        subpath3 = load-hidden-compute-cudamemcpy + load-cache-cudamemcpy-1
-
-      path2 = load-hidden-compute-cudamemcpy + recompute-cuda + mha-gen-cuda
-
-      path3 = pin-memory-1 + pin-memory-2
-              + store-cache-cudamemcpy-1 + store-cache-cudamemcpy-2
+      path1: 1->6->7->8->9  = pm1 + lc1 + lc2 + sc1 + sc2
+      path2: 1->2->7->8->9  = pm1 + pm2 + lc2 + sc1 + sc2
+      path3: 3->6->7->8->9  = lhc + lc1 + lc2 + sc1 + sc2
+      path4: 3->4->5        = lhc + recompute-cuda + mha-gen-cuda
+      path5: 1->2->4->5     = pm1 + pm2 + recompute-cuda + mha-gen-cuda
+      path6: 1->2->8->9     = pm1 + pm2 + sc1 + sc2
     """
     result = dict(row)
 
@@ -286,7 +287,6 @@ def analyze_row_batched(row, all_cols):
     ]
     result["sum-all"] = sum_cols(row, OPS_8)
 
-    # Split compute-cuda ops by origin
     cuda_cols = sorted(
         [c for c in all_cols if c.startswith("compute-cuda-")
          and not c.endswith("-origin")],
@@ -314,32 +314,19 @@ def analyze_row_batched(row, all_cols):
     sc1 = fv(row, "store-cache-cudamemcpy-1")
     sc2 = fv(row, "store-cache-cudamemcpy-2")
 
-    # --- path1 ---
-    sp1 = round(pm1 + pm2, 3)
-    sp2 = round(pm1 + lc1, 3)
-    sp3 = round(lhc + lc1, 3)
-    result["path1-subpath1"] = sp1
-    result["path1-subpath2"] = sp2
-    result["path1-subpath3"] = sp3
+    path1 = round(pm1 + lc1 + lc2 + sc1 + sc2, 3)
+    path2 = round(pm1 + pm2 + lc2 + sc1 + sc2, 3)
+    path3 = round(lhc + lc1 + lc2 + sc1 + sc2, 3)
+    path4 = round(lhc + recompute_total + mha_gen_total, 3)
+    path5 = round(pm1 + pm2 + recompute_total + mha_gen_total, 3)
+    path6 = round(pm1 + pm2 + sc1 + sc2, 3)
 
-    path1_inner     = max(sp1, sp2, sp3)
-    path1_inner_idx = [sp1, sp2, sp3].index(path1_inner) + 1
-    path1           = round(path1_inner + lc2, 3)
-    result["path1-inner"]        = path1_inner
-    result["path1-inner-winner"] = f"subpath{path1_inner_idx}"
-    result["path1"]              = path1
+    result["path1"], result["path2"], result["path3"] = path1, path2, path3
+    result["path4"], result["path5"], result["path6"] = path4, path5, path6
 
-    # --- path2 ---
-    path2 = round(lhc + recompute_total + mha_gen_total, 3)
-    result["path2"] = path2
-
-    # --- path3 ---
-    path3 = round(pm1 + pm2 + sc1 + sc2, 3)
-    result["path3"] = path3
-
-    # --- critical path ---
-    crit = max(path1, path2, path3)
-    crit_idx = [path1, path2, path3].index(crit) + 1
+    paths = [path1, path2, path3, path4, path5, path6]
+    crit = max(paths)
+    crit_idx = paths.index(crit) + 1
     result["critical-path"]        = crit
     result["critical-path-winner"] = f"path{crit_idx}"
 
@@ -474,14 +461,11 @@ def analyze_csv(input_path, output_path=None, nosep=None, batched=False, cpu_com
     elif mode == "batched":
         results = [analyze_row_batched(row, all_cols) for row in rows]
         derived_cols = [
-            "sum-all",
-            "recompute-cuda", "mha-gen-cuda",
-            "path1-subpath1", "path1-subpath2", "path1-subpath3",
-            "path1-inner", "path1-inner-winner", "path1",
-            "path2",
-            "path3",
-            "critical-path", "critical-path-winner",
-        ]
+        "sum-all",
+        "recompute-cuda", "mha-gen-cuda",
+        "path1", "path2", "path3", "path4", "path5", "path6",
+        "critical-path", "critical-path-winner",
+    ]
     elif mode == "nosep":
         results = [analyze_row_nosep(row, all_cols) for row in rows]
         derived_cols = [
