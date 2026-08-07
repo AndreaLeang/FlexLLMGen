@@ -130,6 +130,74 @@ def is_op8(event):
     return any(op in event.get("name", "") for op in OP8_NAMES)
 
 
+# ---------------------------------------------------------------------------
+# Interval overlap helpers
+# ---------------------------------------------------------------------------
+#
+# Used to decompose PCIe (cudaMemcpyAsync) and CPU-side (aten::pin_memory,
+# general_copy, _attention_value) op latencies into the portion that is
+# actually hidden behind other device activity vs. the portion that is not
+# (and therefore sits on the true critical path), by comparing each op's
+# real [ts, ts+dur) window against the windows of the ops it is meant to be
+# overlapped with. All three helpers operate on plain (start, end) tuples in
+# the trace's own timestamp units (us).
+
+def _merge_intervals(intervals):
+    """Sort + coalesce overlapping/touching (start, end) tuples."""
+    ivs = sorted((s, e) for s, e in intervals if e > s)
+    merged = []
+    for s, e in ivs:
+        if merged and s <= merged[-1][1]:
+            if e > merged[-1][1]:
+                merged[-1] = (merged[-1][0], e)
+        else:
+            merged.append((s, e))
+    return merged
+
+
+def interval_union_duration(intervals):
+    """Total duration covered by the union of (start, end) tuples (no double-counting)."""
+    return sum(e - s for s, e in _merge_intervals(intervals))
+
+
+def interval_overlap_duration(intervals_a, intervals_b):
+    """Total duration where union(intervals_a) overlaps union(intervals_b)."""
+    ma = _merge_intervals(intervals_a)
+    mb = _merge_intervals(intervals_b)
+    i, j = 0, 0
+    total = 0.0
+    while i < len(ma) and j < len(mb):
+        s = max(ma[i][0], mb[j][0])
+        e = min(ma[i][1], mb[j][1])
+        if s < e:
+            total += e - s
+        if ma[i][1] < mb[j][1]:
+            i += 1
+        else:
+            j += 1
+    return total
+
+
+def overlap_breakdown(intervals, ref_intervals):
+    """
+    Decompose `intervals` (e.g. all PCIe memcpys of one category) against
+    `ref_intervals` (e.g. all GPU-compute windows) into
+    (total, overlapped, non_overlapped), each in us, 3-decimal rounded.
+    non_overlapped is the portion of `intervals` NOT hidden behind
+    `ref_intervals` -- i.e. the portion that still sits on the wall-clock
+    critical path.
+    """
+    total = interval_union_duration(intervals)
+    overlap = interval_overlap_duration(intervals, ref_intervals)
+    nonoverlap = max(total - overlap, 0.0)
+    return round(total, 3), round(overlap, 3), round(nonoverlap, 3)
+
+
+def events_to_intervals(events):
+    """[event, ...] with 'ts'/'dur' keys -> [(start, end), ...], skipping None."""
+    return [(e["ts"], e["ts"] + e["dur"]) for e in events if e is not None]
+
+
 def get_cuda_rt_in_window(cuda_rt_by_tid, cuda_rt_ts_by_tid, ts_start, ts_end, main_tid):
     """Return cuda_runtime/cuda_driver dispatch events for main_tid in [ts_start, ts_end] using bisect."""
     lst = cuda_rt_by_tid.get(main_tid)
@@ -587,8 +655,9 @@ def extract_batched_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
         main_tid, corr_to_gpu, ext_id_to_cpu_ops, corrs_with_cpu_rt
     )
 
-    # load_hidden_compute cudaMemcpyAsync
+    # load_hidden_compute cudaMemcpyAsync (recompute-related PCIe transfer)
     lhc = evts.get("load_hidden_compute")
+    lhc_gpu = []
     lhc_memcpy_dur = None
     if lhc:
         lhc_gpu = get_gpu_events_in_window(
@@ -599,8 +668,9 @@ def extract_batched_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
         if lhc_gpu:
             lhc_memcpy_dur = round(lhc_gpu[0]["dur"], 3)
 
-    # load_cache: pin_memory x2, cudaMemcpyAsync x2
+    # load_cache: pin_memory x2 (CPU pageable->pinned), cudaMemcpyAsync x2 (KV cache load, PCIe)
     lc = evts.get("load_cache")
+    pins, lc_gpu = [], []
     pm1, pm2, lc_mc1, lc_mc2 = None, None, None, None
     if lc:
         lc_ts_s, lc_ts_e = lc["ts"], lc["ts"] + lc["dur"]
@@ -622,6 +692,7 @@ def extract_batched_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
     # same generation_loop parent. identify_batched_groups pre-builds a sorted list
     # of these siblings; we bisect to find the first one after sync ends.
     sync_e = evts.get("sync")
+    sc_gpu = []
     sc_mc1, sc_mc2 = None, None
     if sync_e is not None:
         sync_end = sync_e["ts"] + sync_e["dur"]
@@ -639,6 +710,43 @@ def extract_batched_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
                 if len(sc_gpu) > 0: sc_mc1 = round(sc_gpu[0]["dur"], 3)
                 if len(sc_gpu) > 1: sc_mc2 = round(sc_gpu[1]["dur"], 3)
 
+    # -----------------------------------------------------------------
+    # Overlap-aware breakdown.
+    #
+    # GPU busy window = union of all compute_layer CUDA kernels (both
+    # mha_gen- and fwd_pre_mha/recompute-origin -- anything running on the
+    # GPU compute stream counts as "GPU busy" for the purpose of deciding
+    # whether a PCIe transfer was hidden).
+    #
+    # PCIe categories (each is its own cudaMemcpyAsync pair/singleton,
+    # dispatched on the copy engine, so they use their OWN [ts, ts+dur)
+    # windows -- not the CPU-thread dispatcher's window):
+    #   - KV cache load  : load-cache-cudamemcpy-1/2  (H2D)
+    #   - KV cache store  : store-cache-cudamemcpy-1/2 (D2H)
+    #   - recompute memcpy: load-hidden-compute-cudamemcpy
+    # For each, we report total / overlapped-with-GPU / non-overlapped.
+    #
+    # CPU category (pageable->pinned only in --batched mode; --cpu-computation
+    # mode adds internal-copy and cpu-mha-compute, see extract_cpu_computation_metrics):
+    #   - pin-memory-1/2, checked against GPU-busy UNION all-PCIe-busy,
+    #     since a pin_memory call fully hidden behind either a GPU kernel or
+    #     a PCIe transfer is not on the critical path.
+    # -----------------------------------------------------------------
+    gpu_intervals = events_to_intervals([gpu_ev for gpu_ev, _origin in tagged_gpu_ops])
+
+    kv_load_intervals  = events_to_intervals(lc_gpu[:2])
+    kv_store_intervals = events_to_intervals(sc_gpu[:2])
+    recompute_mc_intervals = events_to_intervals(lhc_gpu[:1])
+    pcie_all_intervals = kv_load_intervals + kv_store_intervals + recompute_mc_intervals
+
+    kv_load_total, kv_load_ov, kv_load_nonov = overlap_breakdown(kv_load_intervals, gpu_intervals)
+    kv_store_total, kv_store_ov, kv_store_nonov = overlap_breakdown(kv_store_intervals, gpu_intervals)
+    recompute_mc_total, recompute_mc_ov, recompute_mc_nonov = overlap_breakdown(recompute_mc_intervals, gpu_intervals)
+
+    device_intervals = gpu_intervals + pcie_all_intervals  # GPU compute UNION all PCIe
+    pin_intervals = events_to_intervals(pins[:2])
+    pin_total, pin_ov, pin_nonov = overlap_breakdown(pin_intervals, device_intervals)
+
     metrics = {
         "load_weight":                    dur("load_weight"),
         "load_hidden_compute":             dur("load_hidden_compute"),
@@ -655,6 +763,20 @@ def extract_batched_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
         "store-cache-cudamemcpy-2":        sc_mc2,
         "store_hidden":                    dur("store_hidden"),
         "sync":                            dur("sync"),
+        # --- overlap-aware PCIe breakdown (all in us) ---
+        "pcie-kv-load-total-us":              kv_load_total,
+        "pcie-kv-load-overlapped-us":         kv_load_ov,
+        "pcie-kv-load-nonoverlapped-us":      kv_load_nonov,
+        "pcie-kv-store-total-us":             kv_store_total,
+        "pcie-kv-store-overlapped-us":        kv_store_ov,
+        "pcie-kv-store-nonoverlapped-us":     kv_store_nonov,
+        "pcie-recompute-memcpy-total-us":         recompute_mc_total,
+        "pcie-recompute-memcpy-overlapped-us":    recompute_mc_ov,
+        "pcie-recompute-memcpy-nonoverlapped-us": recompute_mc_nonov,
+        # --- overlap-aware CPU (misc) breakdown (all in us) ---
+        "cpu-pageable-pinned-total-us":         pin_total,
+        "cpu-pageable-pinned-overlapped-us":    pin_ov,
+        "cpu-pageable-pinned-nonoverlapped-us": pin_nonov,
     }
     for idx, (gpu_ev, origin) in enumerate(tagged_gpu_ops, 1):
         metrics[f"compute-cuda-{idx}"] = round(gpu_ev["dur"], 3)
@@ -791,6 +913,7 @@ def extract_cpu_computation_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
 
     # --- load_hidden_compute cudaMemcpyAsync (only relevant when recompute_len > 0) ---
     lhc = evts.get("load_hidden_compute")
+    lhc_gpu = []
     lhc_memcpy_dur = None
     if lhc:
         lhc_gpu = get_gpu_events_in_window(
@@ -807,6 +930,8 @@ def extract_cpu_computation_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
     smart_copy1 = smart_copy2 = None
     pin_mem1 = pin_mem2 = None
     lc_mc1 = lc_mc2 = None
+    outer_general_copies, lc_gpu = [], []
+    pm1, pm2 = [], []
     if lc:
         lc_id = lc["args"]["Python id"]
         smart_copies = find_descendants_by_name(parent_to_children, lc_id, "smart_copy")
@@ -867,6 +992,7 @@ def extract_cpu_computation_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
 
     # --- store_cache: identical mechanism to --batched (see extract_batched_metrics) ---
     sync_e = evts.get("sync")
+    sc_gpu = []
     sc_mc1 = sc_mc2 = None
     if sync_e is not None:
         sync_end = sync_e["ts"] + sync_e["dur"]
@@ -883,6 +1009,38 @@ def extract_cpu_computation_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
                 )
                 if len(sc_gpu) > 0: sc_mc1 = round(sc_gpu[0]["dur"], 3)
                 if len(sc_gpu) > 1: sc_mc2 = round(sc_gpu[1]["dur"], 3)
+
+    # -----------------------------------------------------------------
+    # Overlap-aware breakdown (see extract_batched_metrics for the general
+    # approach). In --cpu-computation mode, "GPU busy" is every CUDA-stream
+    # op dispatched anywhere in compute_layer's window (cl_gpu_events --
+    # no mha_gen/fwd_pre_mha origin split is available here). CPU
+    # sub-categories add "internal cpu copy" (the 2 general_copy calls
+    # outside of smart_copy) and "cpu mha compute" (the CPU-thread
+    # _attention_value call) on top of --batched's pageable->pinned.
+    # -----------------------------------------------------------------
+    gpu_intervals = events_to_intervals(cl_gpu_events)
+
+    kv_load_intervals  = events_to_intervals(lc_gpu[:2])
+    kv_store_intervals = events_to_intervals(sc_gpu[:2])
+    recompute_mc_intervals = events_to_intervals(lhc_gpu[:1])
+    pcie_all_intervals = kv_load_intervals + kv_store_intervals + recompute_mc_intervals
+
+    kv_load_total, kv_load_ov, kv_load_nonov = overlap_breakdown(kv_load_intervals, gpu_intervals)
+    kv_store_total, kv_store_ov, kv_store_nonov = overlap_breakdown(kv_store_intervals, gpu_intervals)
+    recompute_mc_total, recompute_mc_ov, recompute_mc_nonov = overlap_breakdown(recompute_mc_intervals, gpu_intervals)
+
+    device_intervals = gpu_intervals + pcie_all_intervals  # GPU compute UNION all PCIe
+
+    pin_events = ([pm1[0]] if pm1 else []) + ([pm2[0]] if pm2 else [])
+    pin_intervals = events_to_intervals(pin_events)
+    pin_total, pin_ov, pin_nonov = overlap_breakdown(pin_intervals, device_intervals)
+
+    copy_intervals = events_to_intervals(outer_general_copies[:2])
+    copy_total, copy_ov, copy_nonov = overlap_breakdown(copy_intervals, device_intervals)
+
+    mha_cpu_intervals = events_to_intervals(cpu_side[:1])
+    mha_cpu_total, mha_cpu_ov, mha_cpu_nonov = overlap_breakdown(mha_cpu_intervals, device_intervals)
 
     metrics = {
         "load_weight":                    dur("load_weight"),
@@ -905,6 +1063,26 @@ def extract_cpu_computation_metrics(grp, cuda_rt_by_tid, cuda_rt_ts_by_tid,
         "store-cache-cudamemcpy-2":        sc_mc2,
         "store_hidden":                    dur("store_hidden"),
         "sync":                            dur("sync"),
+        # --- overlap-aware PCIe breakdown (all in us) ---
+        "pcie-kv-load-total-us":              kv_load_total,
+        "pcie-kv-load-overlapped-us":         kv_load_ov,
+        "pcie-kv-load-nonoverlapped-us":      kv_load_nonov,
+        "pcie-kv-store-total-us":             kv_store_total,
+        "pcie-kv-store-overlapped-us":        kv_store_ov,
+        "pcie-kv-store-nonoverlapped-us":     kv_store_nonov,
+        "pcie-recompute-memcpy-total-us":         recompute_mc_total,
+        "pcie-recompute-memcpy-overlapped-us":    recompute_mc_ov,
+        "pcie-recompute-memcpy-nonoverlapped-us": recompute_mc_nonov,
+        # --- overlap-aware CPU (misc) breakdown (all in us) ---
+        "cpu-pageable-pinned-total-us":         pin_total,
+        "cpu-pageable-pinned-overlapped-us":    pin_ov,
+        "cpu-pageable-pinned-nonoverlapped-us": pin_nonov,
+        "cpu-internal-copy-total-us":           copy_total,
+        "cpu-internal-copy-overlapped-us":      copy_ov,
+        "cpu-internal-copy-nonoverlapped-us":   copy_nonov,
+        "cpu-mha-compute-total-us":             mha_cpu_total,
+        "cpu-mha-compute-overlapped-us":        mha_cpu_ov,
+        "cpu-mha-compute-nonoverlapped-us":     mha_cpu_nonov,
     }
     for idx, gpu_ev in enumerate(cl_gpu_events, 1):
         metrics[f"compute-cuda-{idx}"] = round(gpu_ev["dur"], 3)

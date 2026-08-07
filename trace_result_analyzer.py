@@ -330,6 +330,57 @@ def analyze_row_batched(row, all_cols):
     result["critical-path"]        = crit
     result["critical-path-winner"] = f"path{crit_idx}"
 
+    # -----------------------------------------------------------------
+    # Overlap-aware breakdown (uses the per-group ts-based decomposition
+    # already computed in trace_analyzer.py's extract_batched_metrics --
+    # see pcie-kv-load/-store/-recompute-memcpy-{total,overlapped,
+    # nonoverlapped}-us and cpu-pageable-pinned-{...}-us columns).
+    #
+    # Unlike critical-path/-winner above (an abstract worst-case-chain
+    # estimate over the 8 op sub-durations), critical-path-overlap is
+    # built directly from measured device-timeline overlap:
+    #
+    #   critical-path-overlap = mha-gen-cuda + recompute-cuda
+    #                          + (KV load, KV store, recompute-memcpy
+    #                             PCIe latency NOT hidden behind GPU compute)
+    #                          + (pageable->pinned CPU latency NOT hidden
+    #                             behind GPU compute or PCIe)
+    #
+    # pcie-overlapped-with-gpu-us is purely informational (the portion of
+    # PCIe that WAS successfully hidden behind GPU compute) and is
+    # deliberately excluded from critical-path-overlap to avoid double-
+    # counting time already charged to mha-gen-cuda/recompute-cuda.
+    #
+    # cpu-misc-other-nonoverlapped-us is the residual CPU-thread time
+    # (Python/dispatch overhead, tensor bookkeeping, etc.) not explained
+    # by any of the above -- the piece of "Misc. CPU" that pinned-memory
+    # accounting alone does not capture.
+    # -----------------------------------------------------------------
+    pcie_kv_load_nonov  = fv(row, "pcie-kv-load-nonoverlapped-us")
+    pcie_kv_store_nonov = fv(row, "pcie-kv-store-nonoverlapped-us")
+    pcie_recomp_nonov   = fv(row, "pcie-recompute-memcpy-nonoverlapped-us")
+    pcie_kv_load_ov     = fv(row, "pcie-kv-load-overlapped-us")
+    pcie_kv_store_ov    = fv(row, "pcie-kv-store-overlapped-us")
+    pcie_recomp_ov      = fv(row, "pcie-recompute-memcpy-overlapped-us")
+    cpu_pin_nonov       = fv(row, "cpu-pageable-pinned-nonoverlapped-us")
+
+    result["pcie-nonoverlapped-us"] = round(
+        pcie_kv_load_nonov + pcie_kv_store_nonov + pcie_recomp_nonov, 3
+    )
+    result["pcie-overlapped-with-gpu-us"] = round(
+        pcie_kv_load_ov + pcie_kv_store_ov + pcie_recomp_ov, 3
+    )
+
+    critical_path_overlap = round(
+        recompute_total + mha_gen_total
+        + pcie_kv_load_nonov + pcie_kv_store_nonov + pcie_recomp_nonov
+        + cpu_pin_nonov, 3
+    )
+    result["critical-path-overlap"] = critical_path_overlap
+    result["cpu-misc-other-nonoverlapped-us"] = round(
+        max(result["sum-all"] - critical_path_overlap, 0.0), 3
+    )
+
     return result
 
 
@@ -403,6 +454,43 @@ def analyze_row_cpu_computation(row, all_cols):
         load_weight + load_hidden_compute + sub1 + store_hidden + load_hidden + sub2, 3
     )
 
+    # -----------------------------------------------------------------
+    # Overlap-aware breakdown (mirrors analyze_row_batched's, using the
+    # ts-based decomposition from trace_analyzer.py's
+    # extract_cpu_computation_metrics). GPU busy here is compute-cuda-sum
+    # (no mha_gen/fwd_pre_mha origin split exists in this mode). CPU
+    # non-overlapped sub-ops now include cpu-internal-copy (the 2
+    # general_copy calls outside of smart_copy) and cpu-mha-compute (the
+    # CPU-thread _attention_value call), on top of pageable->pinned.
+    # -----------------------------------------------------------------
+    pcie_kv_load_nonov  = fv(row, "pcie-kv-load-nonoverlapped-us")
+    pcie_kv_store_nonov = fv(row, "pcie-kv-store-nonoverlapped-us")
+    pcie_recomp_nonov   = fv(row, "pcie-recompute-memcpy-nonoverlapped-us")
+    pcie_kv_load_ov     = fv(row, "pcie-kv-load-overlapped-us")
+    pcie_kv_store_ov    = fv(row, "pcie-kv-store-overlapped-us")
+    pcie_recomp_ov      = fv(row, "pcie-recompute-memcpy-overlapped-us")
+
+    cpu_pin_nonov  = fv(row, "cpu-pageable-pinned-nonoverlapped-us")
+    cpu_copy_nonov = fv(row, "cpu-internal-copy-nonoverlapped-us")
+    cpu_mha_nonov  = fv(row, "cpu-mha-compute-nonoverlapped-us")
+
+    result["pcie-nonoverlapped-us"] = round(
+        pcie_kv_load_nonov + pcie_kv_store_nonov + pcie_recomp_nonov, 3
+    )
+    result["pcie-overlapped-with-gpu-us"] = round(
+        pcie_kv_load_ov + pcie_kv_store_ov + pcie_recomp_ov, 3
+    )
+
+    critical_path_overlap = round(
+        compute_cuda_sum
+        + pcie_kv_load_nonov + pcie_kv_store_nonov + pcie_recomp_nonov
+        + cpu_pin_nonov + cpu_copy_nonov + cpu_mha_nonov, 3
+    )
+    result["critical-path-overlap"] = critical_path_overlap
+    result["cpu-misc-other-nonoverlapped-us"] = round(
+        max(result["sum-all"] - critical_path_overlap, 0.0), 3
+    )
+
     return result
 
 
@@ -457,6 +545,9 @@ def analyze_csv(input_path, output_path=None, nosep=None, batched=False, cpu_com
             "sub-winner2-compute_layer+store_cache+sync", "sub-winner2-compute-cuda-sum",
             "sub-winner2", "sub-winner2-winner",
             "critical-path",
+            # overlap-aware breakdown
+            "pcie-nonoverlapped-us", "pcie-overlapped-with-gpu-us",
+            "critical-path-overlap", "cpu-misc-other-nonoverlapped-us",
         ]
     elif mode == "batched":
         results = [analyze_row_batched(row, all_cols) for row in rows]
@@ -465,6 +556,9 @@ def analyze_csv(input_path, output_path=None, nosep=None, batched=False, cpu_com
         "recompute-cuda", "mha-gen-cuda",
         "path1", "path2", "path3", "path4", "path5", "path6",
         "critical-path", "critical-path-winner",
+        # overlap-aware breakdown
+        "pcie-nonoverlapped-us", "pcie-overlapped-with-gpu-us",
+        "critical-path-overlap", "cpu-misc-other-nonoverlapped-us",
     ]
     elif mode == "nosep":
         results = [analyze_row_nosep(row, all_cols) for row in rows]

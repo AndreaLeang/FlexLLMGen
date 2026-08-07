@@ -66,6 +66,7 @@ import math
 import gzip
 import zstandard as zstd
 import shutil
+import statistics
 import tarfile
 import os
 import subprocess
@@ -121,7 +122,11 @@ except ImportError:
     BASELINE_AVAILABLE = False
 
 sys.path.append( '../energaizer-ispass26-artifact/') # to be able to find energaizer-ispass26-artifact
-from gee.gee_utils import get_gee
+try:
+    from gee.gee_utils import get_gee
+    GEE_AVAILABLE = True
+except ImportError:
+    GEE_AVAILABLE = False
 
 
 # ---------------------------------------------------------------------------
@@ -1615,6 +1620,7 @@ def load_gt_summary(
     dominant_path_only: bool = False,
     segment_names: Optional[List[str]] = None,
     segment_builder: Optional[Any] = None,
+    agg: str = "mean",
 ) -> Dict[str, float]:
     """
     Load a batched-mode summary CSV, compute per-row segment breakdowns, and
@@ -1638,11 +1644,12 @@ def load_gt_summary(
     Averaging strategy
     ------------------
     `build_gt_segments` is called on EACH row individually so that every row
-    uses its own winner label.  The resulting segment dicts are then averaged.
-    This is correct even when winners vary across rows (e.g. some layers are
-    path2 under recomputation, others are path1).  Averaging the raw op
-    durations first and then applying one winner label would give wrong results
-    whenever the winner distribution is not uniform.
+    uses its own winner label.  The resulting segment dicts are then
+    aggregated per `agg` (see below).  Per-row segment computation is correct
+    even when winners vary across rows (e.g. some layers are path2 under
+    recomputation, others are path1); averaging the raw op durations first
+    and then applying one winner label would give wrong results whenever the
+    winner distribution is not uniform.
 
     Multi-run pooling
     ------------------
@@ -1653,8 +1660,12 @@ def load_gt_summary(
     on the pooled list, not per-file. This is deliberate: each row is
     already an independent sample of one layer/batch/token's segment
     breakdown, so pooling more of them (regardless of which run they came
-    from) directly is what gives multi-run averaging its "more stable
-    estimate" benefit — there's no need to average-then-average.
+    from) directly is what gives multi-run pooling its "more stable
+    estimate" benefit — there's no need to average-then-average. This
+    matters more the larger `agg` relies on tail behavior (median,
+    representative): a bigger pooled N gives a materially more stable
+    estimate of the median/percentiles than averaging several small
+    per-run point estimates together would.
 
     Filtering and slicing (applied in order)
     -----------------------------------------
@@ -1670,12 +1681,52 @@ def load_gt_summary(
                             Any value from 1 upward; None = all remaining rows.
     4. dominant_path_only — if True, tally the critical-path-winner distribution
                             across the working set, keep only rows whose winner
-                            matches the most frequent path, then average those
+                            matches the most frequent path, then aggregate those
                             rows exclusively.  Ties are broken by path label order
                             (path1 > path2 > path3).  The minority rows are
                             discarded — use with care when the winner distribution
-                            is highly mixed, as it changes what the average
-                            represents.  Default False (mix all rows as before).
+                            is highly mixed, as it changes what the result
+                            represents. Note this filters on the OLD abstract
+                            6-path critical-path heuristic regardless of which
+                            segment taxonomy `agg`/`segment_builder` use, so it
+                            has no defined relationship to overlap-aware segments
+                            (see build_gt_segments_overlap) -- it can introduce a
+                            real, sizeable selection bias on top of whatever
+                            `agg` computes. Default False (mix all rows).
+    5. agg                — how the (possibly filtered) working set is
+                            collapsed to one segment dict; see below. Applied
+                            last, after all filtering above.
+
+    Aggregation methods (`agg`)
+    ----------------------------
+    Real trace latency (especially CPU-side ops like pinned-memory) tends to
+    be right-skewed with a heavy tail from occasional severe stalls (cgroup
+    throttling, noisy-neighbor CPU contention, etc.) rather than roughly
+    symmetric noise -- on one real trace, mean/median ratios of 1.1-1.4x and
+    p99/median ratios up to ~24x were observed for CPU-bound segments. "mean"
+    is dominated by those rare severe-stall rows and overstates typical
+    per-iteration latency; "median" or "representative" are recommended for
+    a "what does this workload typically cost" summary.
+      "mean"           : (default, unchanged from before this parameter
+                          existed) arithmetic mean of each segment
+                          independently across the working set.
+      "median"         : median of each segment independently across the
+                          working set. Robust to outliers, but NOT additive
+                          -- each segment's median can come from a different
+                          row, so the reported segments will not generally
+                          sum to the median of the rows' totals. Fine for
+                          "typical magnitude per segment" but not for a
+                          breakdown that must reconstruct a real total.
+      "representative" : selects the ONE row (after filtering) whose total
+                          (sum of all its segment values) is closest to the
+                          median of all working-set rows' totals, and returns
+                          THAT row's own segment dict unchanged. Additive by
+                          construction (it's a real, physically-consistent
+                          observation, not a synthesized composite across
+                          rows) and robust to outliers the same way median
+                          is, since it's anchored on the median TOTAL rather
+                          than the mean. Recommended default for a paper
+                          table/stacked-bar summary of "typical" behavior.
 
     Parameters
     ----------
@@ -1683,8 +1734,10 @@ def load_gt_summary(
     token_filter       : decode-step index to filter on (None = all tokens).
     skip_first_n       : rows to drop from the top of the filtered list (default 0).
     first_n            : max rows to include after skipping (None = all).
-    dominant_path_only : if True, restrict averaging to rows with the most
+    dominant_path_only : if True, restrict aggregation to rows with the most
                          frequent critical-path-winner (default False).
+    agg                : "mean" (default), "median", or "representative" --
+                         see "Aggregation methods" above.
 
     Returns
     -------
@@ -1756,18 +1809,38 @@ def load_gt_summary(
                 f"in {paths}."
             )
 
-    # Compute segments per row, then average — never average raw ops first.
+    # Compute segments per row, then aggregate — never average raw ops first.
     # segment_names/segment_builder let callers swap in the cpu_computation
     # taxonomy (GT_SEGMENT_NAMES_CPU_COMPUTE / build_gt_segments_cpu_computation)
     # without altering the default --batched behavior below.
+    if agg not in ("mean", "median", "representative"):
+        raise ValueError(f"load_gt_summary: agg must be 'mean', 'median', or "
+                          f"'representative', got {agg!r}")
     names = segment_names if segment_names is not None else GT_SEGMENT_NAMES
     builder = segment_builder if segment_builder is not None else build_gt_segments
     all_segs = [builder(r) for r in rows]
     n = len(all_segs)
-    averaged: Dict[str, float] = {
-        seg: round(sum(s[seg] for s in all_segs) / n, 3)
-        for seg in names
-    }
+
+    rep_info = ""  # extra detail appended to the summary log line below
+    if agg == "mean":
+        aggregated: Dict[str, float] = {
+            seg: round(sum(s[seg] for s in all_segs) / n, 3)
+            for seg in names
+        }
+    elif agg == "median":
+        aggregated = {
+            seg: round(statistics.median(s[seg] for s in all_segs), 3)
+            for seg in names
+        }
+    else:  # "representative"
+        totals = [sum(s.values()) for s in all_segs]
+        med_total = statistics.median(totals)
+        rep_idx = min(range(n), key=lambda i: abs(totals[i] - med_total))
+        aggregated = {seg: round(all_segs[rep_idx][seg], 3) for seg in names}
+        rep_row = rows[rep_idx]
+        rep_info = (f", representative row: group={rep_row.get('group', '?')} "
+                     f"token={rep_row.get('token', '?')} "
+                     f"total={totals[rep_idx]:.1f}us (median total={med_total:.1f}us)")
 
     parts = []
     if len(paths) > 1:             parts.append(f"{len(paths)} runs pooled")
@@ -1775,13 +1848,14 @@ def load_gt_summary(
     if skip_first_n > 0:          parts.append(f"skip={skip_first_n}")
     if first_n is not None:       parts.append(f"first_n={first_n}")
     if dominant_path_only:        parts.append("dominant_path_only")
+    parts.append(f"agg={agg}")
     filter_str = f"({', '.join(parts)})" if parts else "(no filter)"
     winners = {w: sum(1 for r in rows if r.get("critical-path-winner") == w)
                for w in ["path1", "path2", "path3", "path4", "path5", "path6"]
                if any(r.get("critical-path-winner") == w for r in rows)}
-    print(f"  GT: averaged {n} rows {filter_str} → winners: {winners}")
+    print(f"  GT: aggregated {n} rows {filter_str} → winners: {winners}{rep_info}")
 
-    return averaged
+    return aggregated
 
 
 def _fv(row: Dict, key: str) -> float:
@@ -1939,6 +2013,73 @@ def build_gt_segments_cpu_computation(row: Dict) -> Dict[str, float]:
 
     accounted = sum(v for k, v in segs.items() if k != "Misc. CPU")
     segs["Misc. CPU"] = round(sum_all - accounted, 3)
+    return segs
+
+
+# ---------------------------------------------------------------------------
+# Overlap-aware GT segment taxonomy (trace_analyzer.py's ts-based PCIe/CPU
+# overlap decomposition — see extract_batched_metrics/extract_cpu_computation_metrics
+# and trace_result_analyzer.py's critical-path-overlap). Unlike GT_SEGMENT_NAMES
+# (--batched, abstract 6-path worst-case chain) and GT_SEGMENT_NAMES_CPU_COMPUTE
+# (--cpu-computation, 2-way sub-winner races), this taxonomy is built from each
+# op's REAL device-timeline [ts, ts+dur) window: a PCIe transfer or CPU op only
+# counts toward the total if it was NOT actually hidden behind GPU compute (for
+# PCIe) or behind GPU compute + PCIe (for CPU ops).
+#
+# Works for BOTH --batched and --cpu-computation summary rows unmodified — the
+# columns each mode doesn't have (e.g. "mha-gen-cuda" in --cpu-computation, or
+# "cpu-internal-copy-nonoverlapped-us" in --batched) are simply absent, and
+# _fv() defaults absent/blank cells to 0.0. "GPU Compute (unsplit)" only
+# applies to --cpu-computation rows (which have no mha_gen/fwd_pre_mha origin
+# split -- see extract_cpu_computation_metrics's compute-cuda-N columns); it
+# is 0 for --batched rows, whose GPU time is instead split across "MHA CUDA"
+# and "Recompute CUDA".
+#
+# Deliberately excluded from this taxonomy (and therefore from gt_total_us):
+# the portion of PCIe that WAS hidden behind GPU compute
+# (pcie-overlapped-with-gpu-us). Including it would double-count time already
+# charged to MHA/Recompute/GPU-Compute above. It remains available per-row in
+# the batched/cpu_computation summary CSV for diagnostic purposes.
+# ---------------------------------------------------------------------------
+GT_SEGMENT_NAMES_OVERLAP = [
+    "MHA CUDA",
+    "Recompute CUDA",
+    "GPU Compute (unsplit)",
+    "PCIe KVCache Load (non-overlapped)",
+    "PCIe KVCache Store (non-overlapped)",
+    "PCIe Recompute Load (non-overlapped)",
+    "CPU PageableToPinned (non-overlapped)",
+    "CPU InternalCopy (non-overlapped)",
+    "CPU MHACompute (non-overlapped)",
+    "CPU Misc Other (non-overlapped)",
+]
+
+
+def build_gt_segments_overlap(row: Dict) -> Dict[str, float]:
+    """
+    Extract the overlap-aware latency breakdown from a --batched or
+    --cpu-computation summary row that has been through the updated
+    trace_result_analyzer.py (analyze_row_batched / analyze_row_cpu_computation),
+    i.e. one that carries the pcie-*-nonoverlapped-us / cpu-*-nonoverlapped-us /
+    cpu-misc-other-nonoverlapped-us columns.
+
+    Every segment here already IS the "exposed" (not hidden behind other
+    device activity) latency — there is no further winner-selection step
+    like build_gt_segments()'s critical-path-winner branch, because overlap
+    is determined per-op from real timestamps rather than inferred from
+    which abstract dependency chain is longest. Segments sum to sum-all.
+    """
+    segs: Dict[str, float] = {k: 0.0 for k in GT_SEGMENT_NAMES_OVERLAP}
+    segs["MHA CUDA"]                 = _fv(row, "mha-gen-cuda")
+    segs["Recompute CUDA"]           = _fv(row, "recompute-cuda")
+    segs["GPU Compute (unsplit)"]    = _fv(row, "compute-cuda-sum")
+    segs["PCIe KVCache Load (non-overlapped)"]    = _fv(row, "pcie-kv-load-nonoverlapped-us")
+    segs["PCIe KVCache Store (non-overlapped)"]   = _fv(row, "pcie-kv-store-nonoverlapped-us")
+    segs["PCIe Recompute Load (non-overlapped)"]  = _fv(row, "pcie-recompute-memcpy-nonoverlapped-us")
+    segs["CPU PageableToPinned (non-overlapped)"] = _fv(row, "cpu-pageable-pinned-nonoverlapped-us")
+    segs["CPU InternalCopy (non-overlapped)"]     = _fv(row, "cpu-internal-copy-nonoverlapped-us")
+    segs["CPU MHACompute (non-overlapped)"]       = _fv(row, "cpu-mha-compute-nonoverlapped-us")
+    segs["CPU Misc Other (non-overlapped)"]       = _fv(row, "cpu-misc-other-nonoverlapped-us")
     return segs
 
 
@@ -2458,6 +2599,8 @@ def run_experiment(
     _generated_traces: Optional[List[str]] = None,
     force_reanalysis: bool = False,
     crit_only_reanalysis: bool = False,
+    gt_overlap_breakdown: bool = False,
+    gt_agg: str = "mean",
 ) -> Dict:
     """
     Execute the full pipeline for one experiment and return a CSV row dict.
@@ -2529,6 +2672,26 @@ def run_experiment(
         profiled OR decompressed from .gz are appended here, making them
         eligible for --trace-cleanup at run end. Pre-existing .json files
         (the [skip] branch) are never appended.
+
+    gt_overlap_breakdown : if True, use the ts-based overlap-aware GT segment
+        taxonomy (GT_SEGMENT_NAMES_OVERLAP / build_gt_segments_overlap) instead
+        of the default critical-path-winner taxonomy (GT_SEGMENT_NAMES, or
+        GT_SEGMENT_NAMES_CPU_COMPUTE for --cpu-computation experiments). Takes
+        precedence over exp.cpu_computation's taxonomy choice — the overlap
+        taxonomy works unmodified for both --batched and --cpu-computation
+        summary rows (see build_gt_segments_overlap's docstring). Requires
+        trace_result_analyzer.py to have written the pcie-*-nonoverlapped-us /
+        cpu-*-nonoverlapped-us columns (i.e. an up-to-date summary CSV; use
+        --force-reanalysis or --crit-only-reanalysis on older ones).
+
+    gt_agg : how the per-row GT segments are collapsed into this experiment's
+        one reported row -- "mean" (default), "median", or "representative".
+        Passed straight through to load_gt_summary(); see its docstring
+        ("Aggregation methods") for the full explanation. Real trace latency
+        is often right-skewed with a heavy tail from occasional severe CPU
+        stalls, so "mean" can overstate typical per-iteration cost -- prefer
+        "representative" (an actual row closest to the median total, additive)
+        or "median" (per-segment, not additive) for a "typical case" summary.
     """
     print(f"\n{'='*60}")
     print(f"Experiment: {exp.experiment_id}")
@@ -2539,8 +2702,16 @@ def run_experiment(
     # cpu_computation experiments use a different GT segment taxonomy (see
     # GT_SEGMENT_NAMES_CPU_COMPUTE / build_gt_segments_cpu_computation) —
     # None for both here reproduces the exact default --batched behavior.
-    gt_segment_names = GT_SEGMENT_NAMES_CPU_COMPUTE if exp.cpu_computation else None
-    gt_segment_builder = build_gt_segments_cpu_computation if exp.cpu_computation else None
+    # gt_overlap_breakdown takes precedence over both (see docstring above).
+    if gt_overlap_breakdown:
+        gt_segment_names = GT_SEGMENT_NAMES_OVERLAP
+        gt_segment_builder = build_gt_segments_overlap
+    elif exp.cpu_computation:
+        gt_segment_names = GT_SEGMENT_NAMES_CPU_COMPUTE
+        gt_segment_builder = build_gt_segments_cpu_computation
+    else:
+        gt_segment_names = None
+        gt_segment_builder = None
 
     # Step 1: resolve offload_percent (if the caller hasn't already -- note
     # every sweep_* helper calls get_min_offload_percent() itself and bakes
@@ -2706,6 +2877,7 @@ def run_experiment(
                 dominant_path_only=gt_dominant_path_only,
                 segment_names=gt_segment_names,
                 segment_builder=gt_segment_builder,
+                agg=gt_agg,
             )
             print("  GT segments (µs):")
             for k, v in gt_segs.items():
@@ -2879,6 +3051,8 @@ def run_comparison(
     num_runs: int = 1,
     force_reanalysis: bool = False,
     crit_only_reanalysis: bool = False,
+    gt_overlap_breakdown: bool = False,
+    gt_agg: str = "mean",
 ) -> List[Dict]:
     """
     Run all experiments and write the comparison CSV.
@@ -2951,6 +3125,18 @@ def run_comparison(
                           some point -- run a normal or --force-reanalysis
                           pass first to produce it. Mutually exclusive with
                           collection_only and with force_reanalysis.
+    gt_overlap_breakdown  If True, every experiment uses the ts-based
+                          overlap-aware GT segment taxonomy (see
+                          run_experiment's docstring) instead of the default
+                          critical-path-winner taxonomy, both per-row and in
+                          this sweep's final CSV header.
+    gt_agg                How each experiment's per-row GT segments are
+                          collapsed to its one CSV row -- "mean" (default),
+                          "median", or "representative". Passed straight
+                          through to run_experiment/load_gt_summary; see
+                          load_gt_summary's docstring for the full
+                          explanation of each mode and why "mean" can
+                          overstate typical latency on right-skewed traces.
     """
     if collection_only and analysis_only:
         raise ValueError(
@@ -2996,6 +3182,8 @@ def run_comparison(
             _generated_traces=generated_traces,
             force_reanalysis=force_reanalysis,
             crit_only_reanalysis=crit_only_reanalysis,
+            gt_overlap_breakdown=gt_overlap_breakdown,
+            gt_agg=gt_agg,
         )
         all_rows.append(row)
         s = row.get("status", STATUS_OK)
@@ -3012,11 +3200,15 @@ def run_comparison(
         # experiments in one sweep are all-or-nothing --cpu-computation (set
         # by main()'s CLI wiring), so the first experiment's flag decides
         # which GT segment taxonomy every row in this CSV should use.
-        gt_segment_names = (
-            GT_SEGMENT_NAMES_CPU_COMPUTE
-            if experiments and experiments[0].cpu_computation
-            else None
-        )
+        # gt_overlap_breakdown (also all-or-nothing for the sweep, passed
+        # in directly rather than read off ExperimentConfig) takes
+        # precedence, matching run_experiment's per-row selection above.
+        if gt_overlap_breakdown:
+            gt_segment_names = GT_SEGMENT_NAMES_OVERLAP
+        elif experiments and experiments[0].cpu_computation:
+            gt_segment_names = GT_SEGMENT_NAMES_CPU_COMPUTE
+        else:
+            gt_segment_names = None
         write_comparison_csv(all_rows, output_csv, estimator_modes,
                              gt_segment_names=gt_segment_names)
         if n_oom or n_err:
@@ -3530,6 +3722,46 @@ def main():
         )
     )
     parser.add_argument(
+        "--gt-overlap-breakdown", action="store_true", default=False,
+        help=(
+            "Use the ts-based overlap-aware GT segment taxonomy (MHA CUDA / "
+            "Recompute CUDA / GPU Compute, PCIe KVCache Load/Store/Recompute "
+            "Load each split into non-overlapped, CPU PageableToPinned / "
+            "InternalCopy / MHACompute each non-overlapped, CPU Misc Other) "
+            "instead of the default critical-path-winner taxonomy. Each "
+            "PCIe/CPU op's real device-timeline window decides whether it "
+            "was actually hidden behind GPU compute (PCIe) or behind GPU "
+            "compute + PCIe (CPU ops), rather than inferring it from which "
+            "abstract dependency chain is longest. Works for both --batched "
+            "and --cpu-computation experiments; takes precedence over the "
+            "--cpu-computation-only taxonomy switch. Requires an up-to-date "
+            "summary CSV (re-run with --force-reanalysis or "
+            "--crit-only-reanalysis if the trace was analyzed before this "
+            "flag existed). Default: off."
+        )
+    )
+    parser.add_argument(
+        "--gt-agg", choices=["mean", "median", "representative"], default="mean",
+        help=(
+            "How the (possibly filtered/pooled) per-row GT segments are "
+            "collapsed into one reported row. 'mean' (default, unchanged "
+            "prior behavior): arithmetic mean per segment. 'median': median "
+            "per segment independently -- robust to outliers, but the "
+            "reported segments will not generally sum back to the median of "
+            "the rows' totals (not additive). 'representative': selects the "
+            "one real row whose total is closest to the median total across "
+            "the working set, and reports that row's own segments unchanged "
+            "-- additive (it's an actual observation) and robust to "
+            "outliers. Real trace latency (especially CPU-bound segments "
+            "like pinned-memory) tends to be right-skewed with a heavy tail "
+            "from occasional severe stalls rather than symmetric noise, so "
+            "'mean' can noticeably overstate typical per-iteration cost -- "
+            "'representative' is recommended for a 'typical case' summary "
+            "table or plot; use 'mean' only if you specifically want total "
+            "expected latency (e.g. for a throughput estimate)."
+        )
+    )
+    parser.add_argument(
         "--trace-cleanup",
         choices=[TRACE_CLEANUP_NONE, TRACE_CLEANUP_COMPRESS, TRACE_CLEANUP_DELETE],
         default=TRACE_CLEANUP_NONE,
@@ -3877,6 +4109,8 @@ def main():
         num_runs=args.num_runs,
         force_reanalysis=args.force_reanalysis,
         crit_only_reanalysis=args.crit_only_reanalysis,
+        gt_overlap_breakdown=args.gt_overlap_breakdown,
+        gt_agg=args.gt_agg,
     )
 
 

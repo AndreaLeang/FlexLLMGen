@@ -125,6 +125,47 @@ GT_STACK_ORDER_CPU_COMPUTE = [
     "Misc. CPU",
 ]
 
+# ---------------------------------------------------------------------------
+# Color palette / stacking order for the overlap-aware GT segment taxonomy
+# (see GT_SEGMENT_NAMES_OVERLAP / build_gt_segments_overlap in
+# gt_vs_estimator.py, and trace_analyzer.py's ts-based PCIe/CPU overlap
+# decomposition). Every segment here is already the "exposed" (non-hidden)
+# latency for its category -- there's no separate "winner" concept like
+# GT_STACK_ORDER's path-based one. "GPU Compute (unsplit)" only appears for
+# --cpu-computation traces (0 for --batched, whose GPU time is instead in
+# "MHA CUDA"/"Recompute CUDA"); the two colorings deliberately share the
+# same blue family so the "total GPU time" band reads consistently either
+# way. Stack order runs roughly device-timeline shape: GPU compute first,
+# then each PCIe category, then each CPU category, with the residual
+# "CPU Misc Other" last (mirrors GT_STACK_ORDER's "Misc. CPU" placement).
+# ---------------------------------------------------------------------------
+
+GT_COLORS_OVERLAP = {
+    "MHA CUDA":                             "#2196F3",   # blue
+    "Recompute CUDA":                       "#90CAF9",   # light blue
+    "GPU Compute (unsplit)":                "#1565C0",   # dark blue
+    "PCIe KVCache Load (non-overlapped)":   "#9C27B0",   # purple
+    "PCIe KVCache Store (non-overlapped)":  "#E91E63",   # pink
+    "PCIe Recompute Load (non-overlapped)": "#FF9800",   # orange
+    "CPU PageableToPinned (non-overlapped)":"#FFC107",   # amber
+    "CPU InternalCopy (non-overlapped)":    "#FDD835",   # yellow
+    "CPU MHACompute (non-overlapped)":      "#00BCD4",   # cyan
+    "CPU Misc Other (non-overlapped)":      "#9E9E9E",   # grey
+}
+
+GT_STACK_ORDER_OVERLAP = [
+    "Recompute CUDA",
+    "MHA CUDA",
+    "GPU Compute (unsplit)",
+    "PCIe Recompute Load (non-overlapped)",
+    "PCIe KVCache Load (non-overlapped)",
+    "PCIe KVCache Store (non-overlapped)",
+    "CPU PageableToPinned (non-overlapped)",
+    "CPU InternalCopy (non-overlapped)",
+    "CPU MHACompute (non-overlapped)",
+    "CPU Misc Other (non-overlapped)",
+]
+
 BAR_ALPHA = 0.92
 EDGE_COLOR = "white"
 EDGE_WIDTH = 0.5
@@ -194,6 +235,28 @@ def get_gt_segments_cpu_computation(row: Dict) -> Dict[str, float]:
     return {seg: _fv(row, col) for seg, col in mapping.items()}
 
 
+def get_gt_segments_overlap(row: Dict) -> Dict[str, float]:
+    """
+    Same idea as get_gt_segments(), but reads the columns produced by
+    gt_vs_estimator.py's --gt-overlap-breakdown (GT_SEGMENT_NAMES_OVERLAP /
+    build_gt_segments_overlap) -- the ts-based PCIe/CPU overlap decomposition,
+    valid for both --batched and --cpu-computation sweeps.
+    """
+    mapping = {
+        "MHA CUDA":                              "gt_MHA_CUDA_us",
+        "Recompute CUDA":                        "gt_Recompute_CUDA_us",
+        "GPU Compute (unsplit)":                 "gt_GPU_Compute_unsplit_us",
+        "PCIe KVCache Load (non-overlapped)":    "gt_PCIe_KVCache_Load_non-overlapped_us",
+        "PCIe KVCache Store (non-overlapped)":   "gt_PCIe_KVCache_Store_non-overlapped_us",
+        "PCIe Recompute Load (non-overlapped)":  "gt_PCIe_Recompute_Load_non-overlapped_us",
+        "CPU PageableToPinned (non-overlapped)": "gt_CPU_PageableToPinned_non-overlapped_us",
+        "CPU InternalCopy (non-overlapped)":     "gt_CPU_InternalCopy_non-overlapped_us",
+        "CPU MHACompute (non-overlapped)":       "gt_CPU_MHACompute_non-overlapped_us",
+        "CPU Misc Other (non-overlapped)":       "gt_CPU_Misc_Other_non-overlapped_us",
+    }
+    return {seg: _fv(row, col) for seg, col in mapping.items()}
+
+
 def is_ok(row: Dict) -> bool:
     return (row.get("status") or "").strip().lower() == "ok"
 
@@ -248,6 +311,7 @@ def plot_gt_breakdown(
     show_values: bool = True,
     show_title: bool = True,
     cpu_computation: bool = False,
+    overlap_breakdown: bool = False,
 ) -> plt.Figure:
     """
     Create the ground-truth-only latency breakdown plot with a throughput
@@ -316,10 +380,33 @@ def plot_gt_breakdown(
         GT_STACK_ORDER_CPU_COMPUTE /
         GT_COLORS_CPU_COMPUTE / get_gt_segments_cpu_computation). Default:
         False (unchanged --batched behavior).
+    overlap_breakdown
+        If True, read the GT segment columns produced by
+        gt_vs_estimator.py's --gt-overlap-breakdown instead: stacks
+        Recompute CUDA/MHA CUDA/GPU Compute (unsplit)/PCIe Recompute Load
+        (non-overlapped)/PCIe KVCache Load (non-overlapped)/PCIe KVCache
+        Store (non-overlapped)/CPU PageableToPinned (non-overlapped)/CPU
+        InternalCopy (non-overlapped)/CPU MHACompute (non-overlapped)/CPU
+        Misc Other (non-overlapped) (see GT_STACK_ORDER_OVERLAP /
+        GT_COLORS_OVERLAP / get_gt_segments_overlap). Every segment is
+        already the ts-based "exposed" (not hidden behind other device
+        activity) latency for its category. Valid for CSVs from either a
+        --batched or a --cpu-computation sweep (that flag doesn't need to
+        also be set). Takes precedence over cpu_computation if both are
+        somehow set. Default: False (unchanged --batched behavior).
     """
-    stack_order = GT_STACK_ORDER_CPU_COMPUTE if cpu_computation else GT_STACK_ORDER
-    colors = GT_COLORS_CPU_COMPUTE if cpu_computation else GT_COLORS
-    segment_fn = get_gt_segments_cpu_computation if cpu_computation else get_gt_segments
+    if overlap_breakdown:
+        stack_order = GT_STACK_ORDER_OVERLAP
+        colors = GT_COLORS_OVERLAP
+        segment_fn = get_gt_segments_overlap
+    elif cpu_computation:
+        stack_order = GT_STACK_ORDER_CPU_COMPUTE
+        colors = GT_COLORS_CPU_COMPUTE
+        segment_fn = get_gt_segments_cpu_computation
+    else:
+        stack_order = GT_STACK_ORDER
+        colors = GT_COLORS
+        segment_fn = get_gt_segments
 
     rows, fieldnames = load_csv(csv_path)
     if not rows:
@@ -435,7 +522,10 @@ def plot_gt_breakdown(
     }
     ax.set_xlabel(_x_axis_labels.get(x_axis, x_axis), fontsize=10)
 
-    mode_suffix = " (CPU/GPU Compute Split)" if cpu_computation else ""
+    mode_suffix = (
+        " (Overlap-aware)" if overlap_breakdown else
+        " (CPU/GPU Compute Split)" if cpu_computation else ""
+    )
     default_title = (
         f"Ground Truth Latency Breakdown{mode_suffix} (total, all iterations)"
         if normalize else
@@ -620,6 +710,21 @@ def main():
             "Default: off (unchanged --batched behavior)."
         ),
     )
+    parser.add_argument(
+        "--overlap-breakdown", action="store_true",
+        help=(
+            "Plot a sweep CSV produced by gt_vs_estimator.py "
+            "--gt-overlap-breakdown instead of the default critical-path-"
+            "winner CSV: stacks the ts-based overlap-aware GT segment "
+            "taxonomy (Recompute CUDA/MHA CUDA/GPU Compute (unsplit)/PCIe "
+            "Recompute Load/PCIe KVCache Load/PCIe KVCache Store, each "
+            "non-overlapped/CPU PageableToPinned/InternalCopy/MHACompute, "
+            "each non-overlapped/CPU Misc Other non-overlapped). Valid for "
+            "CSVs from either a --batched or a --cpu-computation sweep. "
+            "Takes precedence over --cpu-computation if both are passed. "
+            "Default: off."
+        ),
+    )
     args = parser.parse_args()
 
     out = args.out or str(Path(args.csv).with_suffix(".png"))
@@ -638,6 +743,7 @@ def main():
         show_values=not args.hide_values,
         show_title=not args.no_title,
         cpu_computation=args.cpu_computation,
+        overlap_breakdown=args.overlap_breakdown,
     )
 
 
