@@ -1612,6 +1612,133 @@ def compute_gt_decode_stats(
     }
 
 
+# Raw-CSV "signature" columns that only ever appear in the output of one
+# specific trace_result_analyzer.py mode -- used by _validate_summary_csv_mode
+# to catch a summary CSV being read with a GT segment builder from the wrong
+# mode (e.g. a --batched summary CSV reused under a --cpu-computation sweep
+# because summary_csv_path was reused instead of re-analyzed -- see
+# ExperimentConfig.summary_csv_path's "skip analysis if already provided"
+# shortcut). analyze_row_batched/analyze_row_cpu_computation in
+# trace_result_analyzer.py always write ALL of their mode's derived columns
+# (fixed DictWriter schema), so a genuinely-matching CSV always has every
+# column in the relevant set below, not just some.
+_BATCHED_SIGNATURE_COLS = {"mha-gen-cuda", "recompute-cuda", "critical-path-winner"}
+_CPU_COMPUTATION_SIGNATURE_COLS = {"compute-cuda-sum", "sub-winner1-winner", "sub-winner2-winner"}
+_OVERLAP_SIGNATURE_COLS = {"pcie-kv-load-nonoverlapped-us", "cpu-pageable-pinned-nonoverlapped-us"}
+
+
+def _validate_summary_csv_mode(sample_row: Dict, builder: Any, paths: List[str]) -> None:
+    """
+    Guard against load_gt_summary silently returning all-zero/garbled
+    segments because `builder` expects raw analysis columns
+    (mha-gen-cuda/recompute-cuda for --batched, or compute-cuda-sum/
+    sub-winner*-winner for --cpu-computation) that the actual summary CSV
+    doesn't have -- most likely because a pre-existing summary_csv_path was
+    reused (ExperimentConfig's "skip analysis if summary CSV already
+    exists" shortcut) under a mismatched --cpu-computation flag, rather than
+    re-analyzed for this run. Every builder here reads columns via _fv(),
+    which defaults missing ones to 0.0, so this failure mode produces no
+    exception on its own -- just wrong numbers (see build_gt_segments_overlap
+    reading a --batched CSV: shared column names like "PinnedMemory CPU"
+    pass through fine, but everything else silently collapses into
+    "Misc. CPU").  Raises ValueError naming the actual detected mode so the
+    fix is immediate.
+    """
+    fieldset = set(sample_row.keys())
+    has_batched = _BATCHED_SIGNATURE_COLS.issubset(fieldset)
+    has_cpu_computation = _CPU_COMPUTATION_SIGNATURE_COLS.issubset(fieldset)
+    has_overlap = _OVERLAP_SIGNATURE_COLS.issubset(fieldset)
+
+    if builder is build_gt_segments_cpu_computation and not has_cpu_computation:
+        actual = "batched" if has_batched else "unknown/unrecognized"
+        raise ValueError(
+            f"load_gt_summary: mode mismatch in {paths}.\n"
+            f"  Requested --cpu-computation GT taxonomy (build_gt_segments_cpu_computation), "
+            f"but this summary CSV's columns look like '{actual}' mode "
+            f"(missing {sorted(_CPU_COMPUTATION_SIGNATURE_COLS - fieldset)}).\n"
+            f"  Likely cause: a pre-existing summary_csv_path was reused without "
+            f"matching --cpu-computation. Re-run trace_result_analyzer.py with "
+            f"--cpu-computation on the underlying trace (or --force-reanalysis / "
+            f"--crit-only-reanalysis), or drop --cpu-computation to match this CSV."
+        )
+    if builder is build_gt_segments and not has_batched:
+        actual = "cpu_computation" if has_cpu_computation else "unknown/unrecognized"
+        raise ValueError(
+            f"load_gt_summary: mode mismatch in {paths}.\n"
+            f"  Requested default --batched GT taxonomy (build_gt_segments), "
+            f"but this summary CSV's columns look like '{actual}' mode "
+            f"(missing {sorted(_BATCHED_SIGNATURE_COLS - fieldset)}).\n"
+            f"  Likely cause: a pre-existing summary_csv_path was reused without "
+            f"matching modes. Re-run trace_result_analyzer.py --batched on the "
+            f"underlying trace (or --force-reanalysis / --crit-only-reanalysis), "
+            f"or pass --cpu-computation to match this CSV."
+        )
+    if builder is build_gt_segments_overlap and not has_overlap:
+        raise ValueError(
+            f"load_gt_summary: mode mismatch in {paths}.\n"
+            f"  Requested --gt-overlap-breakdown GT taxonomy (build_gt_segments_overlap), "
+            f"but this summary CSV predates the overlap-aware columns "
+            f"(missing {sorted(_OVERLAP_SIGNATURE_COLS - fieldset)}).\n"
+            f"  Re-run trace_result_analyzer.py on the underlying trace with the "
+            f"current version (or --force-reanalysis / --crit-only-reanalysis) to "
+            f"get pcie-*-nonoverlapped-us / cpu-*-nonoverlapped-us columns."
+        )
+    # Unrecognized custom segment_builder: no check, caller's responsibility.
+
+
+def _select_medoid_row(all_segs: List[Dict[str, float]]) -> int:
+    """
+    Pick the index of the row whose FULL segment breakdown is, in aggregate,
+    closest to "typical" across every segment simultaneously -- unlike
+    "representative" (agg="representative"), which only matches the scalar
+    TOTAL. Matching only the total leaves every individual segment
+    unconstrained: two rows can have the same total via completely
+    different combinations (e.g. one with above-typical PCIe load and
+    below-typical CPU overhead, another the reverse), and "representative"
+    has no way to prefer the one that's ALSO typical in composition, not
+    just in total. On one real 279-row trace, "representative" picked a row
+    where CPU Misc Other sat at the 15th percentile of its own distribution
+    (unusually low) -- masked in the total only because the dominant
+    segment (CPU PageableToPinned) happened to be near ITS OWN median.
+
+    Method: for every segment with any variance across the working set
+    (constant segments -- e.g. always-0 for a --batched trace with
+    recompute_len=0 -- carry no information and are excluded, since their
+    tie-breaking order would just add noise), compute this row's PERCENTILE
+    RANK within that segment's own distribution (0=smallest, 1=largest --
+    scale-free, so segments differing by orders of magnitude, e.g. MHA CUDA
+    in the hundreds of us vs. CPU PageableToPinned in the tens of
+    thousands, are directly comparable). Weight each segment's contribution
+    to the distance by its own median value as a fraction of the median
+    TOTAL, so matching the shape of the few segments that actually dominate
+    the total matters far more than matching a segment that's usually ~0
+    with occasional noise. Return the row minimizing the weighted sum of
+    squared deviation from the 50th percentile across all active segments.
+    """
+    n = len(all_segs)
+    if n <= 1:
+        return 0
+    names = list(all_segs[0].keys())
+    active = [seg for seg in names if len({round(s[seg], 6) for s in all_segs}) > 1]
+    if not active:
+        return 0  # every segment constant -- any row is equally "representative"
+
+    pct: List[Dict[str, float]] = [dict() for _ in range(n)]
+    for seg in active:
+        order = sorted(range(n), key=lambda i: all_segs[i][seg])
+        for rank_pos, row_i in enumerate(order):
+            pct[row_i][seg] = rank_pos / (n - 1)
+
+    medians = {seg: statistics.median(s[seg] for s in all_segs) for seg in active}
+    median_total = statistics.median(sum(s.values()) for s in all_segs)
+    weights = {seg: max(medians[seg], 1e-9) / max(median_total, 1e-9) for seg in active}
+
+    def _dist(i: int) -> float:
+        return sum(weights[seg] * (pct[i][seg] - 0.5) ** 2 for seg in active)
+
+    return min(range(n), key=_dist)
+
+
 def load_gt_summary(
     summary_csv: Union[str, List[str]],
     token_filter: Optional[int] = None,
@@ -1725,8 +1852,51 @@ def load_gt_summary(
                           observation, not a synthesized composite across
                           rows) and robust to outliers the same way median
                           is, since it's anchored on the median TOTAL rather
-                          than the mean. Recommended default for a paper
-                          table/stacked-bar summary of "typical" behavior.
+                          than the mean.
+                          CAVEAT: matching only the scalar total leaves every
+                          individual segment unconstrained -- two rows can
+                          reach the same total via very different
+                          compositions (e.g. above-typical PCIe + below-
+                          typical CPU overhead vs. the reverse), and this
+                          method has no way to prefer the one that's ALSO
+                          typical in composition. On one real trace this
+                          picked a row where a minor segment sat at the 15th
+                          percentile of its own distribution, masked in the
+                          total only because the dominant segment happened
+                          to be near ITS median. See "medoid" below for a
+                          shape-aware alternative.
+      "medoid"          : like "representative" (selects one real row,
+                          additive by construction), but instead of matching
+                          only the total, selects the row whose FULL
+                          breakdown is closest to typical across every
+                          segment simultaneously -- see _select_medoid_row's
+                          docstring for the exact method (percentile rank
+                          per segment, weighted by that segment's share of
+                          the median total). Directly addresses
+                          "representative"'s caveat above. Its own total
+                          will generally differ a bit from the median total
+                          (it's optimizing for typical SHAPE, not typical
+                          total) -- see "medoid-scaled" if you want both.
+      "medoid-scaled"   : selects the same medoid row as "medoid", then
+                          rescales every one of its segments by a single
+                          constant factor so they sum EXACTLY to the median
+                          of the working set's totals (same total
+                          "representative" would give you), while every
+                          segment's relative proportion -- inherited from
+                          the medoid row's own typical shape -- is
+                          unchanged by a uniform rescale. On one real trace
+                          this put every segment within a few percent of
+                          its own median, simultaneously, while still being
+                          anchored to the exact median total. Trade-off: no
+                          longer a literal single observation (it's the
+                          medoid row's shape, resized) -- if you need the
+                          reported numbers to correspond to something that
+                          actually happened in one execution, use "medoid"
+                          instead. Recommended when you want a breakdown
+                          that's both typical in shape AND exactly matches
+                          the median total, e.g. so a plotted total lines
+                          up exactly with a separately-reported median
+                          latency number.
 
     Parameters
     ----------
@@ -1736,8 +1906,9 @@ def load_gt_summary(
     first_n            : max rows to include after skipping (None = all).
     dominant_path_only : if True, restrict aggregation to rows with the most
                          frequent critical-path-winner (default False).
-    agg                : "mean" (default), "median", or "representative" --
-                         see "Aggregation methods" above.
+    agg                : "mean" (default), "median", "representative",
+                         "medoid", or "medoid-scaled" -- see "Aggregation
+                         methods" above.
 
     Returns
     -------
@@ -1813,15 +1984,16 @@ def load_gt_summary(
     # segment_names/segment_builder let callers swap in the cpu_computation
     # taxonomy (GT_SEGMENT_NAMES_CPU_COMPUTE / build_gt_segments_cpu_computation)
     # without altering the default --batched behavior below.
-    if agg not in ("mean", "median", "representative"):
-        raise ValueError(f"load_gt_summary: agg must be 'mean', 'median', or "
-                          f"'representative', got {agg!r}")
+    if agg not in ("mean", "median", "representative", "medoid", "medoid-scaled"):
+        raise ValueError(f"load_gt_summary: agg must be 'mean', 'median', "
+                          f"'representative', 'medoid', or 'medoid-scaled', got {agg!r}")
     names = segment_names if segment_names is not None else GT_SEGMENT_NAMES
     builder = segment_builder if segment_builder is not None else build_gt_segments
+    _validate_summary_csv_mode(rows[0], builder, paths)
     all_segs = [builder(r) for r in rows]
     n = len(all_segs)
 
-    rep_info = ""  # extra detail appended to the summary log line below
+    rep_info = ""  # extra detail appended to the summary line below
     if agg == "mean":
         aggregated: Dict[str, float] = {
             seg: round(sum(s[seg] for s in all_segs) / n, 3)
@@ -1832,7 +2004,7 @@ def load_gt_summary(
             seg: round(statistics.median(s[seg] for s in all_segs), 3)
             for seg in names
         }
-    else:  # "representative"
+    elif agg == "representative":
         totals = [sum(s.values()) for s in all_segs]
         med_total = statistics.median(totals)
         rep_idx = min(range(n), key=lambda i: abs(totals[i] - med_total))
@@ -1841,6 +2013,27 @@ def load_gt_summary(
         rep_info = (f", representative row: group={rep_row.get('group', '?')} "
                      f"token={rep_row.get('token', '?')} "
                      f"total={totals[rep_idx]:.1f}us (median total={med_total:.1f}us)")
+    elif agg == "medoid":
+        totals = [sum(s.values()) for s in all_segs]
+        med_total = statistics.median(totals)
+        medoid_idx = _select_medoid_row(all_segs)
+        aggregated = {seg: round(all_segs[medoid_idx][seg], 3) for seg in names}
+        rep_row = rows[medoid_idx]
+        rep_info = (f", medoid row: group={rep_row.get('group', '?')} "
+                     f"token={rep_row.get('token', '?')} "
+                     f"total={totals[medoid_idx]:.1f}us (median total={med_total:.1f}us)")
+    else:  # "medoid-scaled"
+        totals = [sum(s.values()) for s in all_segs]
+        med_total = statistics.median(totals)
+        medoid_idx = _select_medoid_row(all_segs)
+        medoid_total = totals[medoid_idx]
+        scale = (med_total / medoid_total) if medoid_total > 0 else 1.0
+        aggregated = {seg: round(all_segs[medoid_idx][seg] * scale, 3) for seg in names}
+        rep_row = rows[medoid_idx]
+        rep_info = (f", medoid-scaled row: group={rep_row.get('group', '?')} "
+                     f"token={rep_row.get('token', '?')} "
+                     f"medoid_total={medoid_total:.1f}us scaled_to={med_total:.1f}us "
+                     f"(scale={scale:.4f})")
 
     parts = []
     if len(paths) > 1:             parts.append(f"{len(paths)} runs pooled")
@@ -2685,7 +2878,8 @@ def run_experiment(
         --force-reanalysis or --crit-only-reanalysis on older ones).
 
     gt_agg : how the per-row GT segments are collapsed into this experiment's
-        one reported row -- "mean" (default), "median", or "representative".
+        one reported row -- "mean" (default), "median", "representative",
+        "medoid", or "medoid-scaled".
         Passed straight through to load_gt_summary(); see its docstring
         ("Aggregation methods") for the full explanation. Real trace latency
         is often right-skewed with a heavy tail from occasional severe CPU
@@ -3132,8 +3326,9 @@ def run_comparison(
                           this sweep's final CSV header.
     gt_agg                How each experiment's per-row GT segments are
                           collapsed to its one CSV row -- "mean" (default),
-                          "median", or "representative". Passed straight
-                          through to run_experiment/load_gt_summary; see
+                          "median", "representative", "medoid", or
+                          "medoid-scaled". Passed straight through to
+                          run_experiment/load_gt_summary; see
                           load_gt_summary's docstring for the full
                           explanation of each mode and why "mean" can
                           overstate typical latency on right-skewed traces.
@@ -3741,7 +3936,8 @@ def main():
         )
     )
     parser.add_argument(
-        "--gt-agg", choices=["mean", "median", "representative"], default="mean",
+        "--gt-agg", choices=["mean", "median", "representative", "medoid", "medoid-scaled"],
+        default="mean",
         help=(
             "How the (possibly filtered/pooled) per-row GT segments are "
             "collapsed into one reported row. 'mean' (default, unchanged "
@@ -3749,16 +3945,29 @@ def main():
             "per segment independently -- robust to outliers, but the "
             "reported segments will not generally sum back to the median of "
             "the rows' totals (not additive). 'representative': selects the "
-            "one real row whose total is closest to the median total across "
+            "one real row whose TOTAL is closest to the median total across "
             "the working set, and reports that row's own segments unchanged "
             "-- additive (it's an actual observation) and robust to "
-            "outliers. Real trace latency (especially CPU-bound segments "
-            "like pinned-memory) tends to be right-skewed with a heavy tail "
-            "from occasional severe stalls rather than symmetric noise, so "
+            "outliers, but can pick a row that's atypical in individual "
+            "segments as long as they happen to sum to a typical total. "
+            "'medoid': also selects one real row (additive), but matches "
+            "the row's FULL breakdown shape to what's typical across every "
+            "segment simultaneously (percentile rank per segment, weighted "
+            "by that segment's share of the total) rather than only the "
+            "scalar total -- fixes 'representative''s blind spot above, at "
+            "the cost of its own total drifting a bit from the median total. "
+            "'medoid-scaled': the same medoid row, uniformly rescaled so its "
+            "segments sum EXACTLY to the median total -- same total as "
+            "'representative', same typical shape as 'medoid', but no "
+            "longer a literal single observation (a resized composite). "
+            "Real trace latency (especially CPU-bound segments like "
+            "pinned-memory) tends to be right-skewed with a heavy tail from "
+            "occasional severe stalls rather than symmetric noise, so "
             "'mean' can noticeably overstate typical per-iteration cost -- "
-            "'representative' is recommended for a 'typical case' summary "
-            "table or plot; use 'mean' only if you specifically want total "
-            "expected latency (e.g. for a throughput estimate)."
+            "'medoid' or 'medoid-scaled' is recommended for a 'typical "
+            "case' summary table or plot; use 'mean' only if you "
+            "specifically want total expected latency (e.g. for a "
+            "throughput estimate)."
         )
     )
     parser.add_argument(

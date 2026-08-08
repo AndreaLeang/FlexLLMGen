@@ -61,6 +61,7 @@ def get_available_offloadings(opt_config, hardware_config, batch_sizes, num_of_p
         4:[0, 25, 50, 75, 100],
         8:[i * (1./8.) * 100. for i in range(0, 9)],
         16:[i * (1./16.) * 100. for i in range(0, 17)],
+        32:[i * (1./32.) * 100. for i in range(0, 33)]
     }
 
     feasible_strategies = {}
