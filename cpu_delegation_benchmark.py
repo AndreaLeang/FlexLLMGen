@@ -13,6 +13,14 @@ where CPU compute crosses cache/memory-bandwidth boundaries and where H2D
 transfer crosses into PCIe-bandwidth-saturated territory -- independent of
 which model you're actually running.
 
+Iteration counts are auto-sized per payload size rather than fixed: a small
+number of warmup calls (--warmup) is timed, and its median per-iteration
+time is used to pick an iteration count that runs the measured phase for at
+least --min-duration-sec (clamped to [--min-iters, --max-iters]). This means
+fast, small-payload points get many samples (good percentile resolution)
+and slow, large-payload points don't run forever. Pass --iters to override
+with a fixed count instead (skips auto-sizing).
+
 Three independent benchmarks, selectable with --bench:
 
   bmm     CPU torch.bmm(A, B) cost for square (batch, dim, dim) operands,
@@ -27,7 +35,7 @@ Three independent benchmarks, selectable with --bench:
           this mirrors the relay path in general_copy() (`src =
           src.pin_memory(); dst.copy_(src, non_blocking=True)`), the likely
           source of the batch-size-dependent pin_memory latency fluctuation
-          observed earlier.
+          observed earlier. Reports achieved GB/s for both steps.
 
   stall   CPU-side latency inflation from vCPU oversubscription: runs a
           fixed-size bmm workload (--stall-size-mb / --stall-batch) while
@@ -46,22 +54,31 @@ Usage:
   python cpu_delegation_microbench.py --bench xfer \
       --xfer-sizes-mb 1 2 4 8 16 32 64 128 256 512 1024
 
+  # give non-contiguous more samples than contiguous (e.g. if it's noisier)
+  python cpu_delegation_microbench.py --bench xfer \
+      --xfer-min-iters-noncontiguous 30 --xfer-min-iters-contiguous 5
+
   python cpu_delegation_microbench.py --bench stall --oversub 0.5 1 2 4
 
-  # isolate host-level (cloud vCPU) jitter with zero self-induced contention
-  python cpu_delegation_microbench.py --bench stall --no-bg --iters 2000
+  # isolate host-level (cloud vCPU) jitter with zero self-induced contention,
+  # widening the observation window to catch intermittent stalls
+  python cpu_delegation_microbench.py --bench stall --no-bg --min-duration-sec 10
+
+  # fixed iteration count instead of duration-based auto-sizing
+  python cpu_delegation_microbench.py --bench bmm --iters 50
 
   python cpu_delegation_microbench.py --bench all --out results.csv
 """
 
 import argparse
 import csv
+import math
 import multiprocessing as mp
 import os
 import statistics
 import time
 from dataclasses import dataclass
-from typing import List
+from typing import List, Optional
 
 import torch
 
@@ -100,6 +117,18 @@ def summarize(latencies_s: List[float]) -> Timing:
         min_ms=ms[0],
         max_ms=ms[-1],
     )
+
+
+def auto_iters(per_iter_s: float, min_duration_s: float, min_iters: int, max_iters: int) -> int:
+    """Pick an iteration count so the measured phase runs for roughly
+    min_duration_s, given a per-iteration time estimate (e.g. the warmup
+    median). Clamped to [min_iters, max_iters] -- min_iters keeps percentile
+    stats meaningful even for very slow ops that will overshoot the target
+    duration regardless; max_iters caps runaway counts for very fast ops."""
+    if per_iter_s <= 0:
+        return max_iters
+    n = math.ceil(min_duration_s / per_iter_s)
+    return max(min_iters, min(max_iters, n))
 
 
 def dtype_size(dtype) -> int:
@@ -222,17 +251,29 @@ def report_cpu_backend():
 # 1) CPU bmm() payload-size sweep
 # --------------------------------------------------------------------------
 
-def bench_bmm(batch, dim, warmup=10, iters=50, dtype=torch.float32):
+def bench_bmm(batch, dim, warmup=5, iters: Optional[int] = None, min_duration_s=2.0,
+              min_iters=5, max_iters=200_000, dtype=torch.float32):
     """Generic CPU torch.bmm(A, B) benchmark, A/B: (batch, dim, dim).
     dtype defaults to float32 because the real CPU-delegated attention path
     upcasts via `.float()` before running on CPU (CPU fp16 matmul is
     unsupported/very slow) -- see pytorch_backend.py's `q.float().cpu()`.
+
+    If iters is None, it's auto-sized from the warmup-measured median
+    per-iteration time so the measured phase runs for ~min_duration_s.
+    Returns (Timing, gflops, gbps, iters_used).
     """
     a = torch.randn(batch, dim, dim, dtype=dtype)
     b = torch.randn(batch, dim, dim, dtype=dtype)
 
+    warmup_lat = []
     for _ in range(warmup):
+        t0 = time.perf_counter()
         _ = torch.bmm(a, b)
+        warmup_lat.append(time.perf_counter() - t0)
+
+    if iters is None:
+        per_iter = statistics.median(warmup_lat) if warmup_lat else 0.0
+        iters = auto_iters(per_iter, min_duration_s, min_iters, max_iters)
 
     lat = []
     for _ in range(iters):
@@ -246,24 +287,31 @@ def bench_bmm(batch, dim, warmup=10, iters=50, dtype=torch.float32):
     read_bytes = 2 * batch * dim * dim * dtype_size(dtype)  # A + B read per call
     gbps = (read_bytes / mean_s) / 1e9 if mean_s > 0 else float("nan")
 
-    return summarize(lat), gflops, gbps
+    return summarize(lat), gflops, gbps, iters
 
 
 def run_bmm_benchmark(args):
     report_cpu_backend()
     rows = []
     print(f"\n{'target(MB)':>11} {'batch':>6} {'dim':>6} {'actual(MB)':>11} | "
-          f"{'median(ms)':>12} {'p99(ms)':>10} {'GFLOP/s':>9} {'GB/s':>8}")
+          f"{'iters':>8} {'wall(s)':>8} {'median(ms)':>12} {'p99(ms)':>10} "
+          f"{'GFLOP/s':>9} {'GB/s':>8}")
     for size_mb in args.bmm_sizes_mb:
         target_bytes = mb_to_bytes(size_mb)
         dim, actual_bytes = square_bmm_dim(args.bmm_batch, target_bytes, torch.float32)
-        t, gflops, gbps = bench_bmm(args.bmm_batch, dim, warmup=args.warmup, iters=args.iters)
+        t, gflops, gbps, n_iters = bench_bmm(
+            args.bmm_batch, dim, warmup=args.warmup, iters=args.iters,
+            min_duration_s=args.min_duration_sec, min_iters=args.min_iters,
+            max_iters=args.max_iters)
         actual_mb = actual_bytes / (1024 * 1024)
+        wall_s = t.mean_ms * n_iters / 1000.0
         print(f"{size_mb:>11.4g} {args.bmm_batch:>6} {dim:>6} {actual_mb:>11.4f} | "
-              f"{t.median_ms:>12.4f} {t.p99_ms:>10.4f} {gflops:>9.2f} {gbps:>8.2f}")
+              f"{n_iters:>8} {wall_s:>8.2f} {t.median_ms:>12.4f} {t.p99_ms:>10.4f} "
+              f"{gflops:>9.2f} {gbps:>8.2f}")
         rows.append({
             "target_mb": size_mb, "batch": args.bmm_batch, "dim": dim,
-            "actual_mb": actual_mb, "median_ms": t.median_ms, "p99_ms": t.p99_ms,
+            "actual_mb": actual_mb, "iters": n_iters, "wall_s": wall_s,
+            "median_ms": t.median_ms, "p99_ms": t.p99_ms,
             "std_ms": t.std_ms, "gflops": gflops, "gbps": gbps,
         })
     return rows
@@ -287,10 +335,19 @@ def make_noncontiguous(t: torch.Tensor) -> torch.Tensor:
     return view
 
 
-def bench_h2d_transfer(target_bytes, dtype=torch.float16, cols=4096, warmup=5, iters=20):
+def bench_h2d_transfer(target_bytes, dtype=torch.float16, cols=4096, warmup=5,
+                        iters: Optional[int] = None, min_duration_s=2.0,
+                        min_iters=5, max_iters=200_000,
+                        min_iters_by_layout: Optional[dict] = None):
+    """If iters is None, it's auto-sized per layout from the warmup-measured
+    median total (pin_memory + copy) time so the measured phase runs for
+    ~min_duration_s. min_iters_by_layout optionally overrides the min_iters
+    floor per layout (e.g. {"non_contiguous": 20}) -- keys not present fall
+    back to min_iters. Returns a dict per layout including 'iters' used."""
     if not torch.cuda.is_available():
         return None
 
+    min_iters_by_layout = min_iters_by_layout or {}
     elem_bytes = dtype_size(dtype)
     total_elems = max(cols, int(target_bytes // elem_bytes))
     rows = max(1, total_elems // cols)
@@ -307,11 +364,11 @@ def bench_h2d_transfer(target_bytes, dtype=torch.float16, cols=4096, warmup=5, i
     results = {"shape": shape, "actual_bytes": actual_bytes}
     for label, src in sources.items():
         assert src.is_contiguous() == (label == "contiguous")
-        pin_lat, copy_lat, total_lat = [], [], []
+        layout_min_iters = min_iters_by_layout.get(label, min_iters)
         start_evt = torch.cuda.Event(enable_timing=True)
         end_evt = torch.cuda.Event(enable_timing=True)
 
-        for i in range(warmup + iters):
+        def one_iter():
             t0 = time.perf_counter()
             pinned = src.pin_memory()  # mirrors general_copy(): `src = src.pin_memory()`
             t1 = time.perf_counter()
@@ -322,20 +379,36 @@ def bench_h2d_transfer(target_bytes, dtype=torch.float16, cols=4096, warmup=5, i
             end_evt.record()
             torch.cuda.synchronize()
             t2 = time.perf_counter()
+            return (t1 - t0), (start_evt.elapsed_time(end_evt) / 1000.0), (t2 - t0)
 
-            if i >= warmup:
-                pin_lat.append(t1 - t0)
-                copy_lat.append(start_evt.elapsed_time(end_evt) / 1000.0)
-                total_lat.append(t2 - t0)
+        warmup_total = []
+        for _ in range(warmup):
+            _, _, tot = one_iter()
+            warmup_total.append(tot)
 
+        n_iters = iters
+        if n_iters is None:
+            per_iter = statistics.median(warmup_total) if warmup_total else 0.0
+            n_iters = auto_iters(per_iter, min_duration_s, layout_min_iters, max_iters)
+
+        pin_lat, copy_lat, total_lat = [], [], []
+        for _ in range(n_iters):
+            p, c, tot = one_iter()
+            pin_lat.append(p)
+            copy_lat.append(c)
+            total_lat.append(tot)
+
+        pin_median_s = statistics.median(pin_lat)
         copy_median_s = statistics.median(copy_lat)
         total_median_s = statistics.median(total_lat)
         results[label] = {
             "pin_memory": summarize(pin_lat),
             "copy_": summarize(copy_lat),
             "total": summarize(total_lat),
+            "pin_gbps": (actual_bytes / pin_median_s) / 1e9 if pin_median_s > 0 else float("nan"),
             "copy_gbps": (actual_bytes / copy_median_s) / 1e9 if copy_median_s > 0 else float("nan"),
             "total_gbps": (actual_bytes / total_median_s) / 1e9 if total_median_s > 0 else float("nan"),
+            "iters": n_iters,
         }
     return results
 
@@ -348,27 +421,43 @@ def run_xfer_benchmark(args):
 
     print(f"\nGPU: {torch.cuda.get_device_name(0)}")
     if max(args.xfer_sizes_mb) >= 256:
-        print("Note: large payload points will take a while, since pin_memory() "
-              "re-pins the full buffer every iteration (matching general_copy()'s "
-              "behavior) -- reduce --iters if this is too slow.")
+        print("Note: large payload points can take a while -- pin_memory() re-pins the "
+              "full buffer every iteration (matching general_copy()'s behavior), and "
+              "--min-duration-sec targets a minimum wall time per point. Lower "
+              "--min-duration-sec or pass --iters for a fixed, smaller count.")
     rows = []
+    min_iters_by_layout = {
+        "contiguous": args.xfer_min_iters_contiguous
+        if args.xfer_min_iters_contiguous is not None else args.min_iters,
+        "non_contiguous": args.xfer_min_iters_noncontiguous
+        if args.xfer_min_iters_noncontiguous is not None else args.min_iters,
+    }
     print(f"\n{'target(MB)':>11} {'actual(MB)':>11} {'layout':>15} | "
-          f"{'pin_memory median(ms)':>22} {'copy_ median(ms)':>17} {'copy GB/s':>10} "
-          f"{'total median(ms)':>17} {'total p99(ms)':>14}")
+          f"{'iters':>7} {'wall(s)':>8} {'pin_memory median(ms)':>22} {'pin GB/s':>9} "
+          f"{'copy_ median(ms)':>17} {'copy GB/s':>10} {'total median(ms)':>17} "
+          f"{'total p99(ms)':>14}")
     for size_mb in args.xfer_sizes_mb:
         target_bytes = mb_to_bytes(size_mb)
         res = bench_h2d_transfer(target_bytes, dtype=torch.float16, cols=args.xfer_cols,
-                                  warmup=args.warmup, iters=args.iters)
+                                  warmup=args.warmup, iters=args.iters,
+                                  min_duration_s=args.min_duration_sec,
+                                  min_iters=args.min_iters, max_iters=args.max_iters,
+                                  min_iters_by_layout=min_iters_by_layout)
         actual_mb = res["actual_bytes"] / (1024 * 1024)
         for layout in ("contiguous", "non_contiguous"):
             r = res[layout]
+            wall_s = r["total"].mean_ms * r["iters"] / 1000.0
             print(f"{size_mb:>11.4g} {actual_mb:>11.4f} {layout:>15} | "
-                  f"{r['pin_memory'].median_ms:>22.4f} {r['copy_'].median_ms:>17.4f} "
-                  f"{r['copy_gbps']:>10.2f} {r['total'].median_ms:>17.4f} {r['total'].p99_ms:>14.4f}")
+                  f"{r['iters']:>7} {wall_s:>8.2f} "
+                  f"{r['pin_memory'].median_ms:>22.4f} {r['pin_gbps']:>9.2f} "
+                  f"{r['copy_'].median_ms:>17.4f} {r['copy_gbps']:>10.2f} "
+                  f"{r['total'].median_ms:>17.4f} {r['total'].p99_ms:>14.4f}")
             rows.append({
                 "target_mb": size_mb, "actual_mb": actual_mb, "layout": layout,
+                "iters": r["iters"], "wall_s": wall_s,
                 "pin_memory_median_ms": r["pin_memory"].median_ms,
                 "pin_memory_p99_ms": r["pin_memory"].p99_ms,
+                "pin_memory_gbps": r["pin_gbps"],
                 "copy_median_ms": r["copy_"].median_ms,
                 "copy_p99_ms": r["copy_"].p99_ms,
                 "copy_gbps": r["copy_gbps"],
@@ -395,7 +484,8 @@ def _bg_worker(stop_flag, batch, dim):
         _ = torch.bmm(a, b)
 
 
-def bench_oversubscription(n_bg_procs, batch, dim, warmup=10, iters=100):
+def bench_oversubscription(n_bg_procs, batch, dim, warmup=5, iters: Optional[int] = None,
+                            min_duration_s=2.0, min_iters=5, max_iters=200_000):
     """Runs `n_bg_procs` background bmm workers concurrently with a
     foreground measurement loop doing the same workload, quantifying how
     much vCPU oversubscription / noisy-neighbor contention inflates and
@@ -404,7 +494,11 @@ def bench_oversubscription(n_bg_procs, batch, dim, warmup=10, iters=100):
     host's own scheduling (real vCPU oversubscription / co-tenant noise)
     rather than contention this script generates itself.
 
-    Returns (Timing, n_spikes_gt_2x_median, n_spikes_gt_5x_median).
+    If iters is None, it's auto-sized from the warmup-measured median
+    per-iteration time (already under contention, since background workers
+    start before warmup) so the measured phase runs for ~min_duration_s.
+
+    Returns (Timing, n_spikes_gt_2x_median, n_spikes_gt_5x_median, iters_used).
     """
     torch.set_num_threads(1)
     a = torch.randn(batch, dim, dim)
@@ -419,11 +513,19 @@ def bench_oversubscription(n_bg_procs, batch, dim, warmup=10, iters=100):
         time.sleep(0.5)  # let background workers ramp up
 
     try:
+        warmup_lat = []
         for _ in range(warmup):
+            t0 = time.perf_counter()
             _ = torch.bmm(a, b)
+            warmup_lat.append(time.perf_counter() - t0)
+
+        n_iters = iters
+        if n_iters is None:
+            per_iter = statistics.median(warmup_lat) if warmup_lat else 0.0
+            n_iters = auto_iters(per_iter, min_duration_s, min_iters, max_iters)
 
         lat = []
-        for _ in range(iters):
+        for _ in range(n_iters):
             t0 = time.perf_counter()
             _ = torch.bmm(a, b)
             lat.append(time.perf_counter() - t0)
@@ -437,7 +539,7 @@ def bench_oversubscription(n_bg_procs, batch, dim, warmup=10, iters=100):
     median_s = statistics.median(lat)
     n_spikes_2x = sum(1 for x in lat if x > 2 * median_s)
     n_spikes_5x = sum(1 for x in lat if x > 5 * median_s)
-    return summarize(lat), n_spikes_2x, n_spikes_5x
+    return summarize(lat), n_spikes_2x, n_spikes_5x, n_iters
 
 
 def run_stall_benchmark(args):
@@ -455,32 +557,36 @@ def run_stall_benchmark(args):
         print("--no-bg set: spawning zero background processes, --oversub is ignored. "
               "Any spikes/tail latency below reflect the host's own vCPU scheduling "
               "rather than contention this script is generating -- consider a larger "
-              "--iters to widen the observation window, since host-level noisy-neighbor "
-              "events can be intermittent.\n")
+              "--min-duration-sec to widen the observation window, since host-level "
+              "noisy-neighbor events can be intermittent.\n")
         runs = [("no_bg", 0)]
     else:
         runs = [(mult, max(0, int(round(mult * cores)) - 1)) for mult in args.oversub]
 
-    print(f"{'mode':>10} {'bg procs':>9} {'median(ms)':>12} {'p95(ms)':>10} "
-          f"{'p99(ms)':>10} {'max(ms)':>10} {'std(ms)':>10} "
+    print(f"{'mode':>10} {'bg procs':>9} {'iters':>7} {'wall(s)':>8} {'median(ms)':>12} "
+          f"{'p95(ms)':>10} {'p99(ms)':>10} {'max(ms)':>10} {'std(ms)':>10} "
           f"{'spikes>2x':>10} {'spikes>5x':>10} {'throttled_delta(ms)':>20}")
     rows = []
     for mode, n_bg in runs:
         before = read_cgroup_cpu_info()
-        t, n_spikes_2x, n_spikes_5x = bench_oversubscription(
-            n_bg, args.stall_batch, dim, warmup=args.warmup, iters=args.iters)
+        t, n_spikes_2x, n_spikes_5x, n_iters = bench_oversubscription(
+            n_bg, args.stall_batch, dim, warmup=args.warmup, iters=args.iters,
+            min_duration_s=args.min_duration_sec, min_iters=args.min_iters,
+            max_iters=args.max_iters)
         after = read_cgroup_cpu_info()
 
         throttled_delta = None
         if before["throttled_time_ns"] is not None and after["throttled_time_ns"] is not None:
             throttled_delta = (after["throttled_time_ns"] - before["throttled_time_ns"]) / 1e6
 
+        wall_s = t.mean_ms * n_iters / 1000.0
         delta_str = f"{throttled_delta:.2f}" if throttled_delta is not None else "n/a"
-        print(f"{str(mode):>10} {n_bg:>9} {t.median_ms:>12.4f} {t.p95_ms:>10.4f} "
-              f"{t.p99_ms:>10.4f} {t.max_ms:>10.4f} {t.std_ms:>10.4f} "
+        print(f"{str(mode):>10} {n_bg:>9} {n_iters:>7} {wall_s:>8.2f} {t.median_ms:>12.4f} "
+              f"{t.p95_ms:>10.4f} {t.p99_ms:>10.4f} {t.max_ms:>10.4f} {t.std_ms:>10.4f} "
               f"{n_spikes_2x:>10} {n_spikes_5x:>10} {delta_str:>20}")
         rows.append({
             "mode": mode, "bg_procs": n_bg, "batch": args.stall_batch, "dim": dim,
+            "iters": n_iters, "wall_s": wall_s,
             "median_ms": t.median_ms, "p95_ms": t.p95_ms,
             "p99_ms": t.p99_ms, "max_ms": t.max_ms, "std_ms": t.std_ms,
             "n_spikes_gt_2x_median": n_spikes_2x, "n_spikes_gt_5x_median": n_spikes_5x,
@@ -511,6 +617,14 @@ def build_argparser():
     p.add_argument("--xfer-cols", type=int, default=4096,
                     help="inner (contiguous) dimension used to shape transfer tensors; "
                          "row count is derived to hit the target payload size")
+    p.add_argument("--xfer-min-iters-contiguous", type=int, default=None,
+                    help="override --min-iters for the contiguous-layout xfer measurement "
+                         "only (default: falls back to --min-iters)")
+    p.add_argument("--xfer-min-iters-noncontiguous", type=int, default=None,
+                    help="override --min-iters for the non-contiguous-layout xfer "
+                         "measurement only (default: falls back to --min-iters); e.g. set "
+                         "this higher if non-contiguous pin_memory is noisier and needs "
+                         "more samples for stable percentiles")
 
     p.add_argument("--stall-size-mb", type=float, default=1.0,
                     help="payload size (MB) of one bmm operand used for the stall workload")
@@ -527,8 +641,27 @@ def build_argparser():
                          "host's own vCPU scheduling, independent of any contention this "
                          "script generates itself")
 
-    p.add_argument("--warmup", type=int, default=10)
-    p.add_argument("--iters", type=int, default=50)
+    p.add_argument("--warmup", type=int, default=5,
+                    help="warmup iterations, timed and used to estimate per-iteration "
+                         "time for auto-sizing --iters when --iters is not given")
+    p.add_argument("--iters", type=int, default=None,
+                    help="fixed iteration count for the measured phase. If omitted "
+                         "(default), it's auto-computed per payload size from the "
+                         "warmup-measured per-iteration time so the measured phase runs "
+                         "for at least --min-duration-sec (clamped to [--min-iters, "
+                         "--max-iters])")
+    p.add_argument("--min-duration-sec", type=float, default=2.0,
+                    help="target minimum wall-clock duration of the measured phase per "
+                         "payload size when auto-sizing --iters (default: 2.0)")
+    p.add_argument("--min-iters", type=int, default=5,
+                    help="floor on the auto-sized iteration count regardless of "
+                         "--min-duration-sec, so percentile stats stay meaningful for "
+                         "slow/large-payload points")
+    p.add_argument("--max-iters", type=int, default=200_000,
+                    help="ceiling on the auto-sized iteration count, so very fast/small "
+                         "payload points can't blow up into an extreme number of "
+                         "iterations chasing --min-duration-sec")
+
     p.add_argument("--out", type=str, default=None,
                     help="CSV path stem to append results to -- since bmm/xfer/stall have "
                          "different columns, each is written to its own file "

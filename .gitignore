@@ -49,3 +49,5 @@ experiments/
 
 tmpscript.sh
 *condaenv*
+
+*.tar.gz
