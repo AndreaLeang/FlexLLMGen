@@ -1062,22 +1062,27 @@ def build_flexllm_bench_command(
     docstring for the percent[0..5] layout), minus --profile/--save-to
     (flex_bench_runner.py never profiles), plus --bench-num-runs.
 
-    --cpu-computation experiments are out of scope for this path (the
-    optimal-config comparison is batch_size x recompute_len only -- see
-    run_bench_comparison) -- raises rather than silently mis-building the
-    command for a mode this path was never validated against.
+    cpu_computation mode (exp.cpu_computation=True)
+    ------------------------------------------------
+    Mirrors build_flexllm_command()'s percent[2]/[3] reuse for the CPU/GPU
+    attention-compute split ratio, and appends --cpu-gpu-compute the same
+    way -- see that function's docstring for the full rationale.
     """
     if exp.cpu_computation:
-        raise ValueError(
-            "build_flexllm_bench_command: --cpu-computation experiments "
-            "are not supported by the direct-benchmark path -- see "
-            "run_bench_comparison."
-        )
+        ratio = int(exp.cpu_gpu_ratio) if exp.cpu_gpu_ratio is not None else 0
+        if ratio == 0:
+            kv_gpu = 0
+            kv_cpu = 100
+        else:
+            kv_gpu = 100 - ratio
+            kv_cpu = ratio
+    else:
+        offload = int(exp.offload_percent) if exp.offload_percent is not None else 0
+        kv_gpu = 100 - offload
+        kv_cpu = offload
 
-    offload = int(exp.offload_percent) if exp.offload_percent is not None else 0
-    kv_gpu = 100 - offload
-    kv_cpu = offload
-    percent_args = ["100", "0", str(kv_gpu), str(kv_cpu), "100", "0"]
+    w_gpu, w_cpu = 100, 0
+    percent_args = [str(w_gpu), str(w_cpu), str(kv_gpu), str(kv_cpu), "100", "0"]
 
     python_exe = sys.executable
     cmd = [
@@ -1092,6 +1097,9 @@ def build_flexllm_bench_command(
         "--sep-layer", "true",
         "--bench-num-runs", str(bench_num_runs),
     ]
+
+    if exp.cpu_computation and (exp.cpu_gpu_ratio or 0) > 0:
+        cmd.append("--cpu-gpu-compute")
 
     if hw.cpu_bind is not None and hw.gpu_bind is not None:
         numactl = [
@@ -3451,6 +3459,8 @@ BENCH_META_COLS = [
     "num_batches",
     "recompute_len",
     "offload_percent",   # minimum feasible, as used (may have escalated on OOM retry)
+    "cpu_computation",   # True for --cpu-gpu-compute runs (see ExperimentConfig)
+    "cpu_gpu_ratio",     # CPU/GPU attention-compute split ratio, cpu_computation only
     "status",             # "ok" | "oom" | "error"
     "skip_reason",
     "bench_num_runs_ok",
@@ -3494,6 +3504,8 @@ def run_bench_experiment(
         "num_batches": exp.num_batches,
         "recompute_len": exp.recompute_len,
         "offload_percent": exp.offload_percent,
+        "cpu_computation": exp.cpu_computation,
+        "cpu_gpu_ratio": round(exp.cpu_gpu_ratio, 2) if exp.cpu_gpu_ratio is not None else "",
         "status": STATUS_ERROR,
         "skip_reason": "",
     }
@@ -3502,20 +3514,27 @@ def run_bench_experiment(
     # run_experiment() -- every caller in practice goes through
     # sweep_batch_and_recompute() first, which already does this, so this
     # branch mainly matters for direct Python-API callers.
+    # cpu_computation experiments don't use offload_percent at all (see
+    # ExperimentConfig / build_flexllm_command) -- get_min_offload_percent()'s
+    # KV-cache-placement search doesn't apply to a compute-split sweep, so
+    # it's pinned to 0.0 here instead, mirroring run_experiment()'s Step 1.
     if exp.offload_percent is None:
-        if not ESTIMATOR_AVAILABLE:
+        if exp.cpu_computation:
+            exp = dataclasses.replace(exp, offload_percent=0.0)
+        elif not ESTIMATOR_AVAILABLE:
             row["skip_reason"] = "estimator not available; cannot resolve offload_percent"
             return row
-        try:
-            exp = dataclasses.replace(
-                exp, offload_percent=get_min_offload_percent(exp, hw, opt_config)
-            )
-        except OOMError as e:
-            row["status"], row["skip_reason"] = STATUS_OOM, str(e)
-            return row
-        except Exception as e:
-            row["skip_reason"] = f"Step 1 failed: {e}"
-            return row
+        else:
+            try:
+                exp = dataclasses.replace(
+                    exp, offload_percent=get_min_offload_percent(exp, hw, opt_config)
+                )
+            except OOMError as e:
+                row["status"], row["skip_reason"] = STATUS_OOM, str(e)
+                return row
+            except Exception as e:
+                row["skip_reason"] = f"Step 1 failed: {e}"
+                return row
     row["offload_percent"] = exp.offload_percent
     print(f"  offload_percent = {exp.offload_percent:.1f}%")
 
@@ -3545,16 +3564,26 @@ def run_bench_experiment(
         row["skip_reason"] = f"aggregating bench runs failed: {e}"
         return row
 
-    try:
-        est_stats = predict_decode_stats(exp, hw, opt_config, gpu_estimator)
-        row.update(est_stats)
-        print(f"  Estimator: predicted decode throughput "
-              f"{est_stats['est_decode_throughput_tok_per_s']:.2f} tok/s, "
-              f"decode latency {est_stats['est_decode_latency_ms']:.2f} ms")
-    except Exception as e:
-        print(f"  [warn] estimator prediction failed: {e}")
+    # Step 5 (estimator): kv_schedule_optimization / baseline_model have no
+    # cpu_gpu_compute-aware implementation (same reason the trace pipeline
+    # omits est_* columns for --cpu-computation -- see main()'s help text).
+    # predict_decode_stats() would silently predict against offload_percent=0.0
+    # (i.e. as if cpu_gpu_ratio didn't exist) rather than the actual compute
+    # split being benched, so it's skipped entirely here -- GT-only.
+    if exp.cpu_computation:
         row["est_decode_latency_ms"] = ""
         row["est_decode_throughput_tok_per_s"] = ""
+    else:
+        try:
+            est_stats = predict_decode_stats(exp, hw, opt_config, gpu_estimator)
+            row.update(est_stats)
+            print(f"  Estimator: predicted decode throughput "
+                  f"{est_stats['est_decode_throughput_tok_per_s']:.2f} tok/s, "
+                  f"decode latency {est_stats['est_decode_latency_ms']:.2f} ms")
+        except Exception as e:
+            print(f"  [warn] estimator prediction failed: {e}")
+            row["est_decode_latency_ms"] = ""
+            row["est_decode_throughput_tok_per_s"] = ""
 
     row["status"] = STATUS_OK
     return row
@@ -3696,6 +3725,7 @@ def run_bench_comparison(
     output_csv: str = "bench_comparison_results.csv",
     optimal_summary_path: str = "optimal_config_summary.txt",
     dry_run: bool = False,
+    cpu_computation_ratios: Optional[List[float]] = None,
 ) -> List[Dict[str, Any]]:
     """
     Direct-benchmark counterpart to run_comparison(): sweeps the
@@ -3703,16 +3733,46 @@ def run_bench_comparison(
     sets offload_percent to the minimum feasible per point), measures each
     point with flex_bench_runner.py instead of profiling, and writes both
     the per-config CSV and the separate optimal-config summary.
+
+    cpu_computation mode (base.cpu_computation=True)
+    ---------------------------------------------------
+    GT-only, matching the trace pipeline's --cpu-computation convention
+    (see main()): offload_percent is fixed at 0.0 (no search) and no
+    decode-stats prediction is made (see run_bench_experiment) -- so
+    kv_schedule_optimization is NOT required to be importable for this
+    mode, unlike the normal offload-sweep path below. sweep_batch_and_recompute()
+    doesn't apply either -- builds batch_sizes x recompute_lens x
+    cpu_computation_ratios directly instead. est_decode_* comes back blank
+    for every point; only the measured (bench_mean_*) columns in the
+    per-config CSV are meaningful. find_optimal_configs()/_config_key()
+    also group by (batch_size, recompute_len) only, so if you sweep more
+    than one ratio, the "measured-optimal" summary line won't disambiguate
+    which cpu_gpu_ratio won -- check the per-config CSV's cpu_gpu_ratio
+    column instead.
     """
-    if not ESTIMATOR_AVAILABLE:
+    if not ESTIMATOR_AVAILABLE and not base.cpu_computation:
         raise RuntimeError(
             "run_bench_comparison needs kv_schedule_optimization (for both "
             "the offload_percent search and the decode-stats prediction) "
             "— it is not importable."
         )
 
-    experiments = sweep_batch_and_recompute(base, batch_sizes, recompute_lens, hw, opt_config)
-    print(f"\nBench sweep: {len(experiments)} (batch_size, recompute_len) point(s)")
+    if base.cpu_computation:
+        ratios = cpu_computation_ratios if cpu_computation_ratios else [50.0]
+        experiments = [
+            dataclasses.replace(
+                base, batch_size=bs, recompute_len=rc,
+                offload_percent=0.0, cpu_computation=True, cpu_gpu_ratio=ratio,
+            )
+            for bs in batch_sizes
+            for rc in recompute_lens
+            for ratio in ratios
+        ]
+        print(f"\nBench sweep: {len(experiments)} (batch_size, recompute_len, "
+              f"cpu_gpu_ratio) point(s)")
+    else:
+        experiments = sweep_batch_and_recompute(base, batch_sizes, recompute_lens, hw, opt_config)
+        print(f"\nBench sweep: {len(experiments)} (batch_size, recompute_len) point(s)")
 
     rows = [
         run_bench_experiment(exp, hw, opt_config, gpu_estimator, bench_num_runs, dry_run=dry_run)
@@ -3804,16 +3864,20 @@ def main():
             "Run the direct (non-profiling) benchmark + optimal-config "
             "comparison instead of the trace-based pipeline: flex_bench_runner.py "
             "calls flex_opt_kvpr.run_flexllmgen() directly --bench-runs times "
-            "per (batch_size, recompute_len) point (--batch-sizes x "
-            "--recompute-lens, ignoring --sweep -- always the full cross-"
-            "product), offload_percent fixed to the minimum feasible as usual. "
-            "The first run is discarded as warm-up; the rest are averaged. "
-            "Writes --bench-output-csv (one row per config) and "
-            "--optimal-summary (measured-optimal vs. estimator-optimal config, "
-            "for both decode throughput and decode latency). Not compatible "
-            "with --cpu-computation, --collection-only, --analysis-only, "
-            "--num-runs, --trace-cleanup, or --estimator-impl -- those are "
-            "trace-pipeline-only options."
+            "per config point, offload_percent fixed to the minimum feasible "
+            "as usual (or 0.0, unused, under --cpu-computation). Sweeps "
+            "--batch-sizes x --recompute-lens (ignoring --sweep -- always the "
+            "full cross-product); combined with --cpu-computation, also "
+            "crosses in --cpu-computation-ratios. The first run is discarded "
+            "as warm-up; the rest are averaged. Writes --bench-output-csv "
+            "(one row per config) and --optimal-summary (measured-optimal vs. "
+            "estimator-optimal config -- under --cpu-computation the "
+            "estimator side is always blank, since kv_schedule_optimization/"
+            "baseline_model have no cpu_gpu_compute-aware implementation; use "
+            "the per-config CSV's measured columns instead). Not compatible "
+            "with --collection-only, --analysis-only, --num-runs, "
+            "--trace-cleanup, or --estimator-impl -- those are trace-"
+            "pipeline-only options."
         ),
     )
     parser.add_argument(
@@ -4186,17 +4250,13 @@ def main():
     # --- --bench: direct-benchmark + optimal-config comparison, entirely
     # separate from the trace pipeline below (see run_bench_comparison). ---
     if args.bench:
-        if args.cpu_computation:
-            print("ERROR: --bench is not compatible with --cpu-computation "
-                  "(the optimal-config comparison is batch_size x recompute_len "
-                  "only -- see build_flexllm_bench_command).")
-            sys.exit(1)
         if args.collection_only or args.analysis_only:
             print("ERROR: --bench is not compatible with --collection-only/"
                   "--analysis-only (those are trace-pipeline-only options).")
             sys.exit(1)
+        bench_base = dataclasses.replace(base, cpu_computation=args.cpu_computation)
         run_bench_comparison(
-            base=base,
+            base=bench_base,
             batch_sizes=args.batch_sizes,
             recompute_lens=args.recompute_lens,
             hw=hw,
@@ -4206,6 +4266,7 @@ def main():
             output_csv=args.bench_output_csv,
             optimal_summary_path=args.optimal_summary,
             dry_run=args.dry_run,
+            cpu_computation_ratios=args.cpu_computation_ratios if args.cpu_computation else None,
         )
         return
 
